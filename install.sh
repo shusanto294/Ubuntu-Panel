@@ -405,11 +405,35 @@ fi
 # ------------------------------------------------------------------- admin ---
 log "Creating the administrator"
 
+# Piped from curl, this script *is* stdin, so an interactive prompt inside
+# artisan would have nothing to read. Ask here, from the terminal, and hand the
+# answers over as arguments.
+if [[ -z "$ADMIN_EMAIL" ]] && [[ -r /dev/tty ]]; then
+    printf '    Administrator email: '
+    read -r ADMIN_EMAIL < /dev/tty || true
+fi
+
+if [[ -z "$ADMIN_PASSWORD" ]] && [[ -r /dev/tty ]]; then
+    while :; do
+        printf '    Administrator password (min 8 characters): '
+        read -rs ADMIN_PASSWORD < /dev/tty || true
+        printf '\n'
+
+        [[ ${#ADMIN_PASSWORD} -ge 8 ]] && break
+        printf '    Too short.\n'
+    done
+fi
+
 INSTALL_ARGS=()
 [[ -n "$ADMIN_EMAIL" ]] && INSTALL_ARGS+=(--email="$ADMIN_EMAIL")
 [[ -n "$ADMIN_PASSWORD" ]] && INSTALL_ARGS+=(--password="$ADMIN_PASSWORD")
 
-sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]:-}"
+# An empty array must expand to nothing at all, not to one empty argument.
+if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
+    sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]}"
+else
+    sudo -u "$PANEL_USER" php artisan panel:install
+fi
 
 printf '\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
 printf '\033[1;32m  Ubuntu Panel is installed.\033[0m\n'
