@@ -9,7 +9,9 @@
 #   sudo bash install.sh
 #   sudo bash install.sh --port 9000 --email me@example.com --password 'secret123'
 #
-set -euo pipefail
+set -eu
+
+trap 'printf "\n\033[0;31mInstall failed\033[0m at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 PANEL_USER="${PANEL_USER:-ubuntupanel}"
 PANEL_DIR="${PANEL_DIR:-/opt/ubuntu-panel}"
@@ -92,7 +94,7 @@ if ! have_package "php${PHP_VERSION}-fpm"; then
 fi
 
 if ! have_package "php${PHP_VERSION}-fpm"; then
-    DISTRO_PHP="$(apt-cache depends php-fpm 2>/dev/null | awk -F'php' '/Depends: php[0-9]/ {print $2; exit}' | cut -d- -f1)"
+    DISTRO_PHP="$(apt-cache depends php-fpm 2>/dev/null | awk -F'php' '/Depends: php[0-9]/ {print $2; exit}' | cut -d- -f1 || true)"
 
     if [[ -n "${DISTRO_PHP:-}" ]] && have_package "php${DISTRO_PHP}-fpm"; then
         printf '    \033[0;33m!\033[0m php%s is not available on %s; using php%s instead\n' \
@@ -119,7 +121,7 @@ if ! command -v composer >/dev/null; then
     php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer --quiet
     rm -f /tmp/composer-setup.php
 fi
-ok "composer $(composer --version --no-ansi 2>/dev/null | awk '{print $3}')"
+ok "composer $(composer --version --no-ansi 2>/dev/null | awk '{print $3}' || true)"
 
 if ! command -v node >/dev/null; then
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null 2>&1 || true
@@ -192,7 +194,7 @@ if [[ ! -f .env ]]; then
     sudo -u "$PANEL_USER" cp .env.example .env
 fi
 
-HOST_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)"
+HOST_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1 || true)"
 HOST_IP="${HOST_IP:-127.0.0.1}"
 
 set_env() {
@@ -204,8 +206,9 @@ set_env() {
     fi
 }
 
+# Absent keys are normal on a first install, so a miss must not be an error.
 read_env() {
-    grep -E "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'
+    grep -E "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true
 }
 
 systemctl enable --now mariadb >/dev/null 2>&1 || true
@@ -216,6 +219,10 @@ DB_USER="${PANEL_DB_USER:-ubuntu_panel}"
 # working instead of being locked out by a fresh one.
 DB_PASS="$(read_env DB_PASSWORD)"
 [[ -n "$DB_PASS" ]] || DB_PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
+
+if ! mysql --protocol=socket -uroot -e 'SELECT 1' >/dev/null 2>&1; then
+    die "Cannot log in to MariaDB as root over the unix socket. If you have set a root password, create the database manually and put the credentials in ${PANEL_DIR}/.env, then re-run."
+fi
 
 mysql --protocol=socket -uroot <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
