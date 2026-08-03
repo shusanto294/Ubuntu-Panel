@@ -3,6 +3,16 @@
 return [
 
     /*
+    | Where this panel came from and what version it is. The update check
+    | compares the installed commit against the tip of `update_branch`, so
+    | pushing to that branch is how an update ships.
+    */
+    'version' => '0.1.0',
+    'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
+    'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
+    'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
+
+    /*
     | PHP versions the panel can install and assign to sites.
     */
     'php_versions' => ['8.5', '8.4', '8.3', '8.2', '8.1'],

@@ -4,11 +4,13 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import LiveUsage from '@/Components/LiveUsage.vue';
 import TaskConsole from '@/Components/TaskConsole.vue';
+import VersionCard from '@/Components/VersionCard.vue';
 import { Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
     metrics: Object,
+    update: Object,
     counts: Object,
     sites: Array,
     activeTask: Object,
@@ -132,6 +134,10 @@ const installProgress = computed(() =>
                     {{ system.mail_hostname }}
                 </p>
             </div>
+        </div>
+
+        <div class="mt-6">
+            <VersionCard :update="update" />
         </div>
 
         <div v-if="activeTask" class="mt-6">

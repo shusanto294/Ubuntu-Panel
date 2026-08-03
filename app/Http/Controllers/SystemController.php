@@ -10,6 +10,7 @@ use App\Models\Site;
 use App\Services\System\ServiceCatalog;
 use App\Services\System\ServiceInstaller;
 use App\Services\System\SystemMetrics;
+use App\Services\System\UpdateChecker;
 use App\Support\Settings;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -27,13 +28,15 @@ class SystemController extends Controller
         protected Settings $settings,
     ) {}
 
-    public function overview(Request $request, SystemMetrics $metrics)
+    public function overview(Request $request, SystemMetrics $metrics, UpdateChecker $updates)
     {
         // Servers set up before a service joined the catalogue get their row here.
         $this->installer->syncRows();
 
         return Inertia::render('System/Overview', [
             'system' => $this->summary(),
+            // Cached, so the overview never waits on GitHub.
+            'update' => $updates->status(),
             // Rendered immediately; the page then polls for live figures.
             'metrics' => $metrics->read(),
             'counts' => [
@@ -184,6 +187,12 @@ class SystemController extends Controller
         }
 
         return back()->with('success', 'Settings saved.');
+    }
+
+    /** Re-ask GitHub whether a newer version is published. */
+    public function checkForUpdates(UpdateChecker $updates)
+    {
+        return response()->json($updates->status(fresh: true));
     }
 
     /** Service credentials the panel generated during installation. */

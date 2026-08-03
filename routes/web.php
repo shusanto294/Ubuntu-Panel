@@ -24,6 +24,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('system/metrics', [SystemController::class, 'metrics'])->name('system.metrics');
     Route::get('system/credentials', [SystemController::class, 'credentials'])->name('system.credentials');
     Route::patch('system/settings', [SystemController::class, 'updateSettings'])->name('system.settings');
+    Route::get('system/updates', [SystemController::class, 'checkForUpdates'])->name('system.updates');
 
     // Software
     Route::get('services', [SystemController::class, 'services'])->name('services.index');

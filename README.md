@@ -74,19 +74,49 @@ less install.sh
 sudo bash install.sh
 ```
 
-### Updating
+## Updating
+
+One command, from anywhere on the server:
 
 ```bash
-cd /opt/ubuntu-panel
-sudo -u ubuntupanel git pull
-sudo -u ubuntupanel composer install --no-dev --optimize-autoloader
-sudo -u ubuntupanel npm ci && sudo -u ubuntupanel npm run build
-sudo -u ubuntupanel php artisan migrate --force
-sudo systemctl restart ubuntu-panel-queue ubuntu-panel-terminal
+cd /opt/ubuntu-panel && sudo -u ubuntupanel php artisan panel:update
 ```
 
-The daemons hold the application in memory, so **restart them after any update** — a worker
-running old code is the usual reason a change appears to have no effect.
+It checks what is published, and if you are behind it fetches the code, installs
+dependencies, rebuilds the assets, runs migrations, refreshes the caches, and restarts the
+services. If you are already current it says so and does nothing.
+
+```bash
+php artisan panel:update --force        # reinstall the current version anyway
+php artisan panel:update --no-restart   # apply everything, restart later yourself
+```
+
+The restart is scheduled a few seconds out through `systemd-run`, not run as a child of the
+update — otherwise the update would kill itself halfway through restarting the worker that
+is running it.
+
+Re-running the installer works too and is equivalent; it keeps your `.env`, database and
+administrator account:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/install.sh | sudo bash
+```
+
+### Knowing when there is an update
+
+The panel's **Server** page shows the installed version and commit, and marks itself
+`update available` when the repository has moved ahead. "Check for updates" re-asks
+immediately; otherwise the answer is cached for an hour so the page never waits on GitHub.
+
+Updating is deliberately a command rather than a button: it restarts the services that would
+be serving the click, so it belongs somewhere you can watch it finish. The page shows the
+exact command to paste — or run it straight from the panel's own **Terminal**.
+
+### Publishing an update (maintainers)
+
+Push to `main`. Every install compares its commit against the tip of that branch, so a push
+is all it takes for panels to report an update. Cut a GitHub release and the version number
+is used instead of the commit.
 
 ### Service management
 
