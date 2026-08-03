@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+#
+# Ubuntu Panel installer.
+#
+# Installs the panel and everything it needs on the machine you run it on, then
+# hands you a URL and an administrator account. Safe to run again: every step
+# checks before it acts.
+#
+#   sudo bash install.sh
+#   sudo bash install.sh --port 9000 --email me@example.com --password 'secret123'
+#
+set -euo pipefail
+
+PANEL_USER="${PANEL_USER:-ubuntupanel}"
+PANEL_DIR="${PANEL_DIR:-/opt/ubuntu-panel}"
+PANEL_PORT="${PANEL_PORT:-8443}"
+PHP_VERSION="${PHP_VERSION:-8.3}"
+BRANCH="${PANEL_BRANCH:-main}"
+NODE_MAJOR="${NODE_MAJOR:-22}"
+ADMIN_EMAIL=""
+ADMIN_PASSWORD=""
+REPO="${PANEL_REPO:-https://github.com/shusanto294/Ubuntu-Panel.git}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) PANEL_PORT="$2"; shift 2 ;;
+        --dir) PANEL_DIR="$2"; shift 2 ;;
+        --user) PANEL_USER="$2"; shift 2 ;;
+        --php) PHP_VERSION="$2"; shift 2 ;;
+        --repo) REPO="$2"; shift 2 ;;
+        --branch) BRANCH="$2"; shift 2 ;;
+        --email) ADMIN_EMAIL="$2"; shift 2 ;;
+        --password) ADMIN_PASSWORD="$2"; shift 2 ;;
+        -h|--help)
+            cat <<'USAGE'
+Ubuntu Panel installer
+
+  --port <n>        Port to serve the panel on (default 8443)
+  --dir <path>      Where to install it (default /opt/ubuntu-panel)
+  --user <name>     System user to run it as (default ubuntupanel)
+  --php <version>   PHP version to install (default 8.3)
+  --repo <url>      Git source to clone when not run from a checkout
+  --branch <name>   Branch to clone (default main)
+  --email <email>   Administrator email (prompted if omitted)
+  --password <pw>   Administrator password (prompted if omitted)
+USAGE
+            exit 0 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+log()  { printf '\n\033[1;33m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
+ok()   { printf '    \033[0;32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\n\033[0;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "Run this as root: sudo bash install.sh"
+[[ -f /etc/os-release ]] || die "This installer is for Ubuntu."
+. /etc/os-release
+[[ "${ID:-}" == "ubuntu" ]] || die "This installer is for Ubuntu (found ${PRETTY_NAME:-unknown})."
+
+export DEBIAN_FRONTEND=noninteractive
+
+# ---------------------------------------------------------------- packages ---
+log "Installing what the panel needs"
+
+apt-get update -qq
+apt-get install -y -qq software-properties-common curl git unzip ca-certificates gnupg ufw >/dev/null
+
+# ondrej's PPA carries every supported PHP version; Ubuntu ships only one.
+if ! grep -Rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
+    add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1
+    apt-get update -qq
+fi
+
+apt-get install -y -qq nginx \
+    "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mbstring" \
+    "php${PHP_VERSION}-xml" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-zip" \
+    "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-bcmath" \
+    "php${PHP_VERSION}-intl" "php${PHP_VERSION}-gd" "php${PHP_VERSION}-posix" >/dev/null
+ok "nginx and PHP ${PHP_VERSION}"
+
+if ! command -v composer >/dev/null; then
+    curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
+    php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer --quiet
+    rm -f /tmp/composer-setup.php
+fi
+ok "composer $(composer --version --no-ansi 2>/dev/null | awk '{print $3}')"
+
+if ! command -v node >/dev/null; then
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null 2>&1
+    apt-get install -y -qq nodejs >/dev/null
+fi
+ok "node $(node --version)"
+
+# ------------------------------------------------------------------- user ----
+log "Creating the ${PANEL_USER} system user"
+
+if ! id -u "$PANEL_USER" >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir "/home/${PANEL_USER}" --shell /bin/bash "$PANEL_USER"
+fi
+
+# The panel manages this machine: installs packages, writes vhosts, restarts
+# services. It needs root, and it must never sit waiting for a password prompt.
+cat > /etc/sudoers.d/ubuntu-panel <<SUDOERS
+# Managed by the Ubuntu Panel installer
+${PANEL_USER} ALL=(ALL) NOPASSWD: ALL
+Defaults:${PANEL_USER} !requiretty
+SUDOERS
+chmod 440 /etc/sudoers.d/ubuntu-panel
+visudo -cf /etc/sudoers.d/ubuntu-panel >/dev/null || die "Wrote an invalid sudoers file."
+ok "${PANEL_USER} can run privileged commands without a password"
+
+# ------------------------------------------------------------------ source ---
+log "Putting the panel in ${PANEL_DIR}"
+
+SOURCE_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+if [[ -n "$SOURCE_DIR" && -f "${SOURCE_DIR}/artisan" && "${SOURCE_DIR}" != "${PANEL_DIR}" ]]; then
+    mkdir -p "$PANEL_DIR"
+    # Copy the checkout this script came from, minus anything machine-specific.
+    tar -C "$SOURCE_DIR" \
+        --exclude=.git --exclude=node_modules --exclude=vendor \
+        --exclude=.env --exclude='database/*.sqlite' --exclude=storage/logs \
+        -cf - . | tar -C "$PANEL_DIR" -xf -
+elif [[ -f "${PANEL_DIR}/artisan" ]]; then
+    # Already installed: pull the latest code, keep .env and the database.
+    sudo -u "$PANEL_USER" git -C "$PANEL_DIR" pull --ff-only 2>/dev/null || true
+else
+    [[ -n "$REPO" ]] || die "No panel source found. Run this from a checkout, or pass --repo <git-url>."
+    git clone --depth 1 --branch "$BRANCH" "$REPO" "$PANEL_DIR"
+fi
+
+chown -R "${PANEL_USER}:${PANEL_USER}" "$PANEL_DIR"
+ok "source in place"
+
+log "Installing dependencies and building assets"
+sudo -u "$PANEL_USER" -H bash -c "cd '$PANEL_DIR' && composer install --no-dev --no-interaction --optimize-autoloader --quiet"
+sudo -u "$PANEL_USER" -H bash -c "cd '$PANEL_DIR' && npm ci --silent && npm run build --silent" >/dev/null
+ok "dependencies installed, assets built"
+
+# ------------------------------------------------------------- application ---
+log "Configuring the application"
+
+cd "$PANEL_DIR"
+
+if [[ ! -f .env ]]; then
+    sudo -u "$PANEL_USER" cp .env.example .env
+fi
+
+HOST_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1)"
+HOST_IP="${HOST_IP:-127.0.0.1}"
+
+set_env() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" .env; then
+        sed -i "s|^${key}=.*|${key}=${value}|" .env
+    else
+        printf '%s=%s\n' "$key" "$value" >> .env
+    fi
+}
+
+set_env APP_ENV production
+set_env APP_DEBUG false
+set_env APP_URL "https://${HOST_IP}:${PANEL_PORT}"
+set_env DB_CONNECTION sqlite
+set_env QUEUE_CONNECTION database
+set_env SESSION_DRIVER database
+set_env CACHE_STORE database
+
+sudo -u "$PANEL_USER" touch database/database.sqlite
+sudo -u "$PANEL_USER" php artisan key:generate --force --quiet
+sudo -u "$PANEL_USER" php artisan migrate --force --quiet
+sudo -u "$PANEL_USER" php artisan config:cache --quiet
+sudo -u "$PANEL_USER" php artisan route:cache --quiet
+chown -R "${PANEL_USER}:${PANEL_USER}" storage bootstrap/cache database
+ok "application configured"
+
+# ----------------------------------------------------------------- services --
+log "Installing services"
+
+cat > /etc/systemd/system/ubuntu-panel-queue.service <<UNIT
+# Managed by the Ubuntu Panel installer
+[Unit]
+Description=Ubuntu Panel queue worker
+After=network.target
+
+[Service]
+Type=simple
+User=${PANEL_USER}
+WorkingDirectory=${PANEL_DIR}
+ExecStart=/usr/bin/php ${PANEL_DIR}/artisan queue:work --tries=1 --timeout=3600 --sleep=1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/systemd/system/ubuntu-panel-terminal.service <<UNIT
+# Managed by the Ubuntu Panel installer
+[Unit]
+Description=Ubuntu Panel terminal server
+After=network.target
+
+[Service]
+Type=simple
+User=${PANEL_USER}
+WorkingDirectory=${PANEL_DIR}
+ExecStart=/usr/bin/php ${PANEL_DIR}/artisan panel:terminal-server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/systemd/system/ubuntu-panel-scheduler.service <<UNIT
+# Managed by the Ubuntu Panel installer
+[Unit]
+Description=Ubuntu Panel scheduler
+
+[Service]
+Type=oneshot
+User=${PANEL_USER}
+WorkingDirectory=${PANEL_DIR}
+ExecStart=/usr/bin/php ${PANEL_DIR}/artisan schedule:run
+UNIT
+
+cat > /etc/systemd/system/ubuntu-panel-scheduler.timer <<UNIT
+# Managed by the Ubuntu Panel installer
+[Unit]
+Description=Run the Ubuntu Panel scheduler every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now ubuntu-panel-queue.service >/dev/null 2>&1
+systemctl enable --now ubuntu-panel-terminal.service >/dev/null 2>&1
+systemctl enable --now ubuntu-panel-scheduler.timer >/dev/null 2>&1
+ok "queue worker, terminal server and scheduler running"
+
+# --------------------------------------------------------------------- web ---
+log "Publishing the panel on port ${PANEL_PORT}"
+
+CERT_DIR=/etc/ssl/ubuntu-panel
+mkdir -p "$CERT_DIR"
+if [[ ! -f "${CERT_DIR}/cert.pem" ]]; then
+    # Self-signed so the login form is never served over plain HTTP. Point a
+    # hostname at this box and run certbot for a trusted certificate.
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -keyout "${CERT_DIR}/key.pem" -out "${CERT_DIR}/cert.pem" \
+        -subj "/CN=${HOST_IP}" >/dev/null 2>&1
+fi
+
+cat > /etc/nginx/sites-available/ubuntu-panel.conf <<NGINX
+# Managed by the Ubuntu Panel installer
+server {
+    listen ${PANEL_PORT} ssl;
+    listen [::]:${PANEL_PORT} ssl;
+    server_name _;
+
+    ssl_certificate ${CERT_DIR}/cert.pem;
+    ssl_certificate_key ${CERT_DIR}/key.pem;
+
+    root ${PANEL_DIR}/public;
+    index index.php;
+
+    client_max_body_size 128M;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php${PHP_VERSION}-fpm.sock;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+NGINX
+
+ln -sf /etc/nginx/sites-available/ubuntu-panel.conf /etc/nginx/sites-enabled/ubuntu-panel.conf
+nginx -t >/dev/null 2>&1 || die "nginx rejected the panel vhost."
+systemctl reload nginx
+
+# PHP-FPM runs the panel as its own user, so it can reach the files it owns.
+POOL="/etc/php/${PHP_VERSION}/fpm/pool.d/ubuntu-panel.conf"
+if [[ ! -f "$POOL" ]]; then
+    sed -e "s/^\[www\]/[ubuntu-panel]/" \
+        -e "s/^user = .*/user = ${PANEL_USER}/" \
+        -e "s/^group = .*/group = ${PANEL_USER}/" \
+        -e "s|^listen = .*|listen = /run/php/php${PHP_VERSION}-fpm.sock|" \
+        "/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf" > "$POOL"
+    sed -i "s/^listen.owner = .*/listen.owner = www-data/" "$POOL" || true
+    rm -f "/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf"
+fi
+systemctl restart "php${PHP_VERSION}-fpm"
+ok "nginx serving the panel over HTTPS"
+
+if ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
+    ok "opened port ${PANEL_PORT} in ufw"
+fi
+
+# ------------------------------------------------------------------- admin ---
+log "Creating the administrator"
+
+INSTALL_ARGS=()
+[[ -n "$ADMIN_EMAIL" ]] && INSTALL_ARGS+=(--email="$ADMIN_EMAIL")
+[[ -n "$ADMIN_PASSWORD" ]] && INSTALL_ARGS+=(--password="$ADMIN_PASSWORD")
+
+sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]:-}"
+
+printf '\n\033[1;32mUbuntu Panel is installed.\033[0m\n\n'
+printf '    URL:      https://%s:%s\n' "$HOST_IP" "$PANEL_PORT"
+printf '    Path:     %s\n' "$PANEL_DIR"
+printf '    Services: ubuntu-panel-queue, ubuntu-panel-terminal, ubuntu-panel-scheduler.timer\n\n'
+printf '  The certificate is self-signed, so your browser will warn once. Point a\n'
+printf '  hostname at this machine and run certbot for a trusted one.\n\n'
