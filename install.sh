@@ -60,23 +60,58 @@ die()  { printf '\n\033[0;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 
+# A third-party repository that publishes nothing for this release (an old
+# MongoDB or PHP list, say) makes apt-get update exit non-zero. That is not a
+# reason to abandon the install, so refreshing is advisory: if a package we
+# actually need is missing, the install step below says so properly.
+apt_update() {
+    if ! apt-get update -qq 2>/tmp/panel-apt-update.log; then
+        printf '    \033[0;33m!\033[0m some apt repositories failed to refresh (ignored):\n'
+        grep -E "^(E|W):" /tmp/panel-apt-update.log | sed 's/^/      /' | head -5 || true
+    fi
+    return 0
+}
+
+have_package() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------- packages ---
 log "Installing what the panel needs"
 
-apt-get update -qq
+apt_update
 apt-get install -y -qq software-properties-common curl git unzip ca-certificates gnupg ufw >/dev/null
+ok "base tools"
 
-# ondrej's PPA carries every supported PHP version; Ubuntu ships only one.
-if ! grep -Rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
-    add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1
-    apt-get update -qq
+# PHP: prefer the requested version. Ubuntu ships exactly one, and ondrej's PPA
+# carries the rest — but it does not publish for every release the day it lands,
+# so this falls back to whatever this Ubuntu does offer rather than failing.
+if ! have_package "php${PHP_VERSION}-fpm"; then
+    add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+    apt_update
+fi
+
+if ! have_package "php${PHP_VERSION}-fpm"; then
+    DISTRO_PHP="$(apt-cache depends php-fpm 2>/dev/null | awk -F'php' '/Depends: php[0-9]/ {print $2; exit}' | cut -d- -f1)"
+
+    if [[ -n "${DISTRO_PHP:-}" ]] && have_package "php${DISTRO_PHP}-fpm"; then
+        printf '    \033[0;33m!\033[0m php%s is not available on %s; using php%s instead\n' \
+            "$PHP_VERSION" "${VERSION_CODENAME:-this release}" "$DISTRO_PHP"
+        PHP_VERSION="$DISTRO_PHP"
+    else
+        die "No PHP-FPM package is available (looked for php${PHP_VERSION}-fpm and the distro default). Pass --php <version>."
+    fi
 fi
 
 apt-get install -y -qq nginx \
     "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mbstring" \
     "php${PHP_VERSION}-xml" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-zip" \
     "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-bcmath" \
-    "php${PHP_VERSION}-intl" "php${PHP_VERSION}-gd" "php${PHP_VERSION}-posix" >/dev/null
+    "php${PHP_VERSION}-intl" "php${PHP_VERSION}-gd" >/dev/null
+
+# Not packaged separately on every release; the terminal needs it for its pty.
+apt-get install -y -qq "php${PHP_VERSION}-posix" >/dev/null 2>&1 || true
+
 ok "nginx and PHP ${PHP_VERSION}"
 
 if ! command -v composer >/dev/null; then
@@ -87,9 +122,16 @@ fi
 ok "composer $(composer --version --no-ansi 2>/dev/null | awk '{print $3}')"
 
 if ! command -v node >/dev/null; then
-    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null 2>&1
-    apt-get install -y -qq nodejs >/dev/null
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null 2>&1 || true
+    apt-get install -y -qq nodejs >/dev/null 2>&1 || true
 fi
+
+if ! command -v node >/dev/null; then
+    # NodeSource has no build for this release yet: the distro's Node is fine
+    # for building the panel's assets.
+    apt-get install -y -qq nodejs npm >/dev/null
+fi
+command -v node >/dev/null || die "Could not install Node.js."
 ok "node $(node --version)"
 
 # ------------------------------------------------------------------- user ----
@@ -249,7 +291,7 @@ systemctl enable --now ubuntu-panel-scheduler.timer >/dev/null 2>&1
 ok "queue worker, terminal server and scheduler running"
 
 # --------------------------------------------------------------------- web ---
-log "Publishing the panel on port ${PANEL_PORT}"
+log "Publishing the panel on port ${PANEL_PORT} (PHP ${PHP_VERSION})"
 
 CERT_DIR=/etc/ssl/ubuntu-panel
 mkdir -p "$CERT_DIR"
@@ -297,17 +339,30 @@ nginx -t >/dev/null 2>&1 || die "nginx rejected the panel vhost."
 systemctl reload nginx
 
 # PHP-FPM runs the panel as its own user, so it can reach the files it owns.
-POOL="/etc/php/${PHP_VERSION}/fpm/pool.d/ubuntu-panel.conf"
-if [[ ! -f "$POOL" ]]; then
+POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
+POOL="${POOL_DIR}/ubuntu-panel.conf"
+
+if [[ ! -f "$POOL" && -f "${POOL_DIR}/www.conf" ]]; then
     sed -e "s/^\[www\]/[ubuntu-panel]/" \
         -e "s/^user = .*/user = ${PANEL_USER}/" \
         -e "s/^group = .*/group = ${PANEL_USER}/" \
         -e "s|^listen = .*|listen = /run/php/php${PHP_VERSION}-fpm.sock|" \
-        "/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf" > "$POOL"
+        "${POOL_DIR}/www.conf" > "$POOL"
     sed -i "s/^listen.owner = .*/listen.owner = www-data/" "$POOL" || true
-    rm -f "/etc/php/${PHP_VERSION}/fpm/pool.d/www.conf"
+    # One pool per socket: the stock one would fight this for the same path.
+    rm -f "${POOL_DIR}/www.conf"
 fi
+
 systemctl restart "php${PHP_VERSION}-fpm"
+
+# The vhost points at this socket; if PHP-FPM is listening somewhere else the
+# panel answers 502 and it is not obvious why.
+for _ in $(seq 1 10); do
+    [[ -S "/run/php/php${PHP_VERSION}-fpm.sock" ]] && break
+    sleep 1
+done
+[[ -S "/run/php/php${PHP_VERSION}-fpm.sock" ]] \
+    || die "PHP-FPM is not listening on /run/php/php${PHP_VERSION}-fpm.sock — check: systemctl status php${PHP_VERSION}-fpm"
 ok "nginx serving the panel over HTTPS"
 
 if ufw status 2>/dev/null | grep -q "Status: active"; then
