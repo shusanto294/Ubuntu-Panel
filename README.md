@@ -23,23 +23,45 @@ That is the whole installation. It takes a few minutes and:
 2. Creates an `ubuntupanel` system user with passwordless sudo, so the panel can manage the
    machine without the web process living in root's home.
 3. Clones the panel into `/opt/ubuntu-panel`, installs dependencies and builds the assets.
-4. Generates `.env`, creates the SQLite database and runs the migrations.
+4. Installs MariaDB, creates the panel's own database and user, writes `.env` and runs
+   the migrations.
 5. Installs three systemd services — queue worker, terminal server, scheduler timer.
 6. Publishes the panel on **port 8443 over HTTPS** with a self-signed certificate, and opens
    the port in ufw if it is active.
 7. Asks for an administrator email and password, then takes inventory of what is already
    installed on the machine.
 
-When it finishes it prints your URL:
+The only thing it asks for is the administrator email and password. When it finishes it
+tells you exactly where to log in:
 
 ```
-    URL:      https://YOUR.SERVER.IP:8443
-    Path:     /opt/ubuntu-panel
-    Services: ubuntu-panel-queue, ubuntu-panel-terminal, ubuntu-panel-scheduler.timer
+  Log in here:  https://YOUR.SERVER.IP:8443
+  Username:     you@example.com
+  Password:     the one you just chose
+
+  Installed at: /opt/ubuntu-panel
+  Database:     MariaDB, ubuntu_panel
+  Services:     ubuntu-panel-queue, ubuntu-panel-terminal,
+                ubuntu-panel-scheduler.timer
 ```
 
-The certificate is self-signed, so your browser warns once. Point a hostname at the machine
-and run certbot for a trusted one.
+## Using your own domain
+
+A fresh install answers on the server's IP with a self-signed certificate, so browsers warn
+every time. Point a hostname at the machine (an `A` record to its IP), then either use
+**Settings → Panel address** in the panel, or run:
+
+```bash
+cd /opt/ubuntu-panel && sudo -u ubuntupanel php artisan panel:domain panel.example.com
+```
+
+It rewrites the vhost, installs certbot, issues a Let's Encrypt certificate, redirects HTTP
+to HTTPS and updates `APP_URL`. Add `--email you@example.com` to get expiry warnings if
+renewal ever breaks. The hostname must already resolve to the server — that is the usual
+reason issuing fails, and the command warns before trying.
+
+Sites you host get their own domains when you create them; this setting is only for the
+panel itself.
 
 ### Options
 
@@ -132,6 +154,8 @@ as queued jobs. Without it, tasks sit at 0% forever.
 
 ## What it does
 
+- **Settings** — put the panel on your own domain with a real certificate, and set the PHP
+  and Node versions new sites inherit.
 - **This server** — CPU, memory and disk updated every second, straight from `/proc`. No
   agent and no sampling daemon: the panel runs on the machine it reports on, so a reading
   costs microseconds.

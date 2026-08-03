@@ -25,6 +25,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('system/credentials', [SystemController::class, 'credentials'])->name('system.credentials');
     Route::patch('system/settings', [SystemController::class, 'updateSettings'])->name('system.settings');
     Route::get('system/updates', [SystemController::class, 'checkForUpdates'])->name('system.updates');
+    Route::get('settings', [SystemController::class, 'settings'])->name('settings');
+    Route::post('system/domain', [SystemController::class, 'updateDomain'])->name('system.domain');
 
     // Software
     Route::get('services', [SystemController::class, 'services'])->name('services.index');

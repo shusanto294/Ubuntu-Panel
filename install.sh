@@ -103,7 +103,7 @@ if ! have_package "php${PHP_VERSION}-fpm"; then
     fi
 fi
 
-apt-get install -y -qq nginx \
+apt-get install -y -qq nginx mariadb-server \
     "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mbstring" \
     "php${PHP_VERSION}-xml" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-zip" \
     "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-bcmath" \
@@ -112,7 +112,7 @@ apt-get install -y -qq nginx \
 # Not packaged separately on every release; the terminal needs it for its pty.
 apt-get install -y -qq "php${PHP_VERSION}-posix" >/dev/null 2>&1 || true
 
-ok "nginx and PHP ${PHP_VERSION}"
+ok "nginx, MariaDB and PHP ${PHP_VERSION}"
 
 if ! command -v composer >/dev/null; then
     curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
@@ -204,20 +204,45 @@ set_env() {
     fi
 }
 
+read_env() {
+    grep -E "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'
+}
+
+systemctl enable --now mariadb >/dev/null 2>&1 || true
+
+DB_NAME="${PANEL_DB_NAME:-ubuntu_panel}"
+DB_USER="${PANEL_DB_USER:-ubuntu_panel}"
+# Reuse the password already in .env on a re-run, so an existing database keeps
+# working instead of being locked out by a fresh one.
+DB_PASS="$(read_env DB_PASSWORD)"
+[[ -n "$DB_PASS" ]] || DB_PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
+
+mysql --protocol=socket -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+ok "database ${DB_NAME} ready"
+
 set_env APP_ENV production
 set_env APP_DEBUG false
 set_env APP_URL "https://${HOST_IP}:${PANEL_PORT}"
-set_env DB_CONNECTION sqlite
+set_env DB_CONNECTION mysql
+set_env DB_HOST 127.0.0.1
+set_env DB_PORT 3306
+set_env DB_DATABASE "$DB_NAME"
+set_env DB_USERNAME "$DB_USER"
+set_env DB_PASSWORD "$DB_PASS"
 set_env QUEUE_CONNECTION database
 set_env SESSION_DRIVER database
 set_env CACHE_STORE database
-
-sudo -u "$PANEL_USER" touch database/database.sqlite
 sudo -u "$PANEL_USER" php artisan key:generate --force --quiet
 sudo -u "$PANEL_USER" php artisan migrate --force --quiet
 sudo -u "$PANEL_USER" php artisan config:cache --quiet
 sudo -u "$PANEL_USER" php artisan route:cache --quiet
-chown -R "${PANEL_USER}:${PANEL_USER}" storage bootstrap/cache database
+chown -R "${PANEL_USER}:${PANEL_USER}" storage bootstrap/cache
 ok "application configured"
 
 # ----------------------------------------------------------------- services --
@@ -379,9 +404,20 @@ INSTALL_ARGS=()
 
 sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]:-}"
 
-printf '\n\033[1;32mUbuntu Panel is installed.\033[0m\n\n'
-printf '    URL:      https://%s:%s\n' "$HOST_IP" "$PANEL_PORT"
-printf '    Path:     %s\n' "$PANEL_DIR"
-printf '    Services: ubuntu-panel-queue, ubuntu-panel-terminal, ubuntu-panel-scheduler.timer\n\n'
-printf '  The certificate is self-signed, so your browser will warn once. Point a\n'
-printf '  hostname at this machine and run certbot for a trusted one.\n\n'
+printf '\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
+printf '\033[1;32m  Ubuntu Panel is installed.\033[0m\n'
+printf '\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n'
+printf '  \033[1mLog in here:\033[0m  https://%s:%s\n' "$HOST_IP" "$PANEL_PORT"
+if [[ -n "$ADMIN_EMAIL" ]]; then
+    printf '  \033[1mUsername:\033[0m     %s\n' "$ADMIN_EMAIL"
+fi
+printf '  \033[1mPassword:\033[0m     the one you just chose\n\n'
+printf '  The certificate is self-signed, so your browser warns once — click\n'
+printf '  through it. To use your own domain with a real certificate, point it\n'
+printf '  at this server and run:\n\n'
+printf '      cd %s && sudo -u %s php artisan panel:domain panel.example.com\n\n' "$PANEL_DIR" "$PANEL_USER"
+printf '  \033[1mInstalled at:\033[0m %s\n' "$PANEL_DIR"
+printf '  \033[1mDatabase:\033[0m     MariaDB, %s\n' "$DB_NAME"
+printf '  \033[1mServices:\033[0m     ubuntu-panel-queue, ubuntu-panel-terminal,\n'
+printf '                ubuntu-panel-scheduler.timer\n'
+printf '  \033[1mUpdate with:\033[0m  cd %s && sudo -u %s php artisan panel:update\n\n' "$PANEL_DIR" "$PANEL_USER"

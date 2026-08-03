@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ConfigurePanelDomain;
 use App\Jobs\InstallServices;
 use App\Models\ActivityLog;
 use App\Models\Database;
 use App\Models\Service;
 use App\Models\Site;
+use App\Services\System\HostInfo;
+use App\Services\System\PanelDomain;
 use App\Services\System\ServiceCatalog;
 use App\Services\System\ServiceInstaller;
 use App\Services\System\SystemMetrics;
@@ -187,6 +190,52 @@ class SystemController extends Controller
         }
 
         return back()->with('success', 'Settings saved.');
+    }
+
+    /** Panel-wide settings: where it answers, and what new sites inherit. */
+    public function settings(Request $request, UpdateChecker $updates, PanelDomain $panel)
+    {
+        return Inertia::render('System/Settings', [
+            'system' => $this->summary(),
+            'update' => $updates->status(),
+            'panel' => [
+                'domain' => $panel->current(),
+                'url' => $panel->url(),
+                'public_ip' => app(HostInfo::class)->publicIp(),
+            ],
+            'defaults' => [
+                'php_version' => $this->settings->phpVersion(),
+                'node_version' => $this->settings->nodeVersion(),
+                'mail_hostname' => $this->settings->get('mail_hostname'),
+            ],
+            'phpVersions' => config('panel.php_versions'),
+            'nodeVersions' => config('panel.node_versions'),
+            'activeTask' => ActivityLog::where('status', 'running')
+                ->where('type', 'provision')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+        ]);
+    }
+
+    /**
+     * Serve the panel on a hostname the operator owns.
+     *
+     * Queued, because issuing the certificate reloads nginx underneath the
+     * request that asked for it.
+     */
+    public function updateDomain(Request $request)
+    {
+        $data = $request->validate([
+            'domain' => ['required', 'string', 'max:253', 'regex:/^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$/'],
+            'email' => ['nullable', 'email'],
+        ]);
+
+        ConfigurePanelDomain::dispatch(strtolower($data['domain']), $data['email'] ?? null);
+
+        return back()->with(
+            'success',
+            'Setting the panel up on '.$data['domain'].'. Watch the console — when it finishes, log in at https://'.$data['domain'].'.'
+        );
     }
 
     /** Re-ask GitHub whether a newer version is published. */

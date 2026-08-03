@@ -17,6 +17,7 @@ const links = [
     { name: 'Software', route: 'services.index', pattern: 'services.*' },
     { name: 'Terminal', route: 'terminal', pattern: 'terminal' },
     { name: 'Cloudflare', route: 'cloudflare.index', pattern: 'cloudflare.*' },
+    { name: 'Settings', route: 'settings', pattern: 'settings' },
 ];
 </script>
 
