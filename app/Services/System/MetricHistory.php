@@ -27,7 +27,6 @@ class MetricHistory
      */
     public const RANGES = [
         '1h' => ['label' => '1 hour', 'window' => 3600, 'bucket' => 60],
-        '6h' => ['label' => '6 hours', 'window' => 21600, 'bucket' => 300],
         '24h' => ['label' => '24 hours', 'window' => 86400, 'bucket' => 900],
         '7d' => ['label' => '7 days', 'window' => 604800, 'bucket' => 3600],
         '30d' => ['label' => '30 days', 'window' => 2592000, 'bucket' => 21600],
