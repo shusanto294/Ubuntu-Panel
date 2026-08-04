@@ -83,7 +83,10 @@ class SiteRecipe
         ]);
 
         if ($site->manage_dns) {
-            $steps[] = Step::call('Publish DNS records', fn () => app(\App\Services\Cloudflare\CloudflareDnsManager::class)->syncForSite($site->fresh()));
+            $steps[] = Step::call(
+                'Publish DNS records',
+                fn () => app(\App\Services\Dns\DnsManager::class)->syncForSite($site->fresh())
+            );
         }
 
         if ($site->ssl) {
