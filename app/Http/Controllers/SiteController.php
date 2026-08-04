@@ -40,7 +40,8 @@ class SiteController extends Controller
     {
         // This form refuses site types whose software is missing, so a row
         // that is wrong refuses a site the machine could host perfectly well.
-        $this->installer->detectIfStale(300);
+        // Only what the form actually gates on gets probed.
+        $this->installer->refresh(Site::REQUIRED_SERVICES);
 
         return Inertia::render('Sites/Create', [
             // What this machine can actually host right now.
@@ -114,6 +115,8 @@ class SiteController extends Controller
         if (Site::where('domain', $domain)->exists()) {
             return back()->withErrors(['domain' => 'A site for this domain already exists.']);
         }
+
+        $this->installer->refresh(Site::REQUIRED_SERVICES);
 
         if ($error = $this->missingRequirement($type)) {
             return back()->withErrors(['type' => $error]);
@@ -250,13 +253,13 @@ class SiteController extends Controller
     {
         return match (true) {
             in_array($type, Site::PROXIED_TYPES, true) && ! Service::installed('node')
-                => 'Node.js is not installed. Install it from the Software page first.',
+                => 'Node.js is not installed. Install it from Settings → Services first.',
             $type === 'wordpress' && ! Service::installed('mysql')
-                => 'WordPress needs MariaDB. Install it from the Software page first.',
+                => 'WordPress needs MariaDB. Install it from Settings → Services first.',
             $type === 'wordpress' && ! Service::installed('wpcli')
-                => 'WP-CLI is not installed. Install it from the Software page first.',
+                => 'WP-CLI is not installed. Install it from Settings → Services first.',
             $type === 'laravel' && ! Service::installed('mysql')
-                => 'Laravel sites need MariaDB for their database. Install it from the Software page first.',
+                => 'Laravel sites need MariaDB for their database. Install it from Settings → Services first.',
             default => null,
         };
     }

@@ -8,6 +8,7 @@ use App\Models\Database;
 use App\Models\Service;
 use App\Models\User;
 use App\Services\Shell\LocalConnection;
+use App\Services\System\ServiceCatalog;
 use Tests\Support\FakeLocalConnection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InstallsServices;
@@ -22,7 +23,39 @@ class DatabaseManagementTest extends TestCase
     protected function withEngines(array $services = ['mysql', 'postgres', 'mongodb']): void
     {
         $this->markInstalled($services);
+        $this->machineWith($services);
     }
+
+    /**
+     * A machine whose probes answer for exactly these services.
+     *
+     * The panel asks the box rather than trusting its own rows now, so a test
+     * that says "MariaDB is installed" has to be able to say it to the probe
+     * as well, not only to the database.
+     *
+     * @param  array<int, string>  $services
+     */
+    protected function machineWith(array $services): FakeLocalConnection
+    {
+        $responses = [];
+
+        foreach (ServiceCatalog::keys() as $key) {
+            $detect = ServiceCatalog::meta($key)['detect'] ?? null;
+
+            if ($detect) {
+                $responses[$detect.' >/dev/null 2>&1'] = in_array($key, $services, true)
+                    ? ['found', 0]
+                    : ['', 1];
+            }
+        }
+
+        $connection = new FakeLocalConnection($responses);
+
+        $this->app->instance(LocalConnection::class, $connection);
+
+        return $connection;
+    }
+
 
     /**
      * A batch that failed halfway leaves rows saying `failed` for software that
@@ -37,8 +70,8 @@ class DatabaseManagementTest extends TestCase
             'last_error' => 'apt exited 100',
         ]);
 
-        // Every probe answers yes: the software is there whatever the row says.
-        $this->app->instance(LocalConnection::class, new FakeLocalConnection([]));
+        // The software is there whatever the row says.
+        $this->machineWith(['mysql']);
 
         $engines = $this->actingAs(User::factory()->create())
             ->get(route('databases.index'))
@@ -48,21 +81,21 @@ class DatabaseManagementTest extends TestCase
         $this->assertSame(Service::INSTALLED, Service::where('key', 'mysql')->first()->status);
     }
 
-    public function test_it_does_not_re_probe_on_every_request(): void
+    /** Three probes, not the whole catalogue — cheap enough to do every time. */
+    public function test_it_only_probes_the_engines(): void
     {
         $this->markInstalled([]);
 
-        $connection = new FakeLocalConnection(['command -v' => ['', 1]]);
-        $this->app->instance(LocalConnection::class, $connection);
+        $connection = $this->machineWith([]);
 
-        $user = User::factory()->create();
+        $this->actingAs(User::factory()->create())->get(route('databases.index'));
 
-        $this->actingAs($user)->get(route('databases.index'));
-        $after = count($connection->ran);
+        $probes = array_values(array_filter(
+            $connection->ran,
+            fn ($c) => str_contains($c, 'command -v')
+        ));
 
-        $this->actingAs($user)->get(route('databases.index'));
-
-        $this->assertSame($after, count($connection->ran), 'the second visit re-probed the machine');
+        $this->assertCount(count(Service::ENGINE_KEYS), $probes);
     }
 
     public function test_a_database_can_be_created_with_generated_credentials(): void

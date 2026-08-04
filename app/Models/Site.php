@@ -17,6 +17,12 @@ class Site extends Model
     /** Types served by nginx reverse proxy to a long-running process. */
     public const PROXIED_TYPES = ['nodejs', 'nextjs'];
 
+    /**
+     * What the create form gates on. Probed against the machine when the form
+     * is opened, so a stale row cannot refuse a site the box can host.
+     */
+    public const REQUIRED_SERVICES = ['node', 'mysql', 'wpcli', 'php'];
+
     /** Types that get an application database created for them. */
     public const DATABASE_TYPES = ['wordpress', 'laravel'];
 

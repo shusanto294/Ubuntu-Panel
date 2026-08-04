@@ -167,6 +167,23 @@ class InstallSoftwareTest extends TestCase
         $this->assertStringContainsString('nginx', $installs[0]);
     }
 
+    /** PM2 is npm's, not apt's, so it needs a step of its own. */
+    public function test_pm2_is_installed_through_npm(): void
+    {
+        $connection = $this->bareMachine();
+
+        $this->artisan('panel:install-services --services=pm2')->assertSuccessful();
+
+        $ran = implode("\n", $connection->ran);
+
+        $this->assertStringContainsString('npm install -g pm2', $ran);
+        // It needs Node, which comes along as a dependency.
+        $this->assertContains(
+            'node',
+            Service::query()->where('status', Service::INSTALLED)->pluck('key')->all()
+        );
+    }
+
     public function test_retry_only_touches_what_is_not_installed(): void
     {
         $this->markInstalled(['base', 'nginx']);

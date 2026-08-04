@@ -23,17 +23,15 @@ class DatabaseController extends Controller
             ->get()
             ->map(fn (Database $database) => $this->summary($database));
 
-        // Only engines that are actually installed can take a database. If the
-        // rows say none are, check the machine before believing them — this
-        // page is exactly where a stale `failed` row from a half-finished
-        // install turns into "you cannot create a database", on a server that
-        // is running MariaDB well enough to be storing this page's session.
-        $engines = Service::availableEngines();
+        // Only engines that are actually installed can take a database, and
+        // this page is exactly where a stale `failed` row from a half-finished
+        // install turns into "you cannot create a database" — on a server that
+        // is running MariaDB well enough to be storing this page's session. So
+        // ask the machine rather than the record: three `command -v` calls,
+        // every time, current by construction.
+        $this->installer->refresh(Service::ENGINE_KEYS);
 
-        if ($engines === []) {
-            $this->installer->detectIfStale();
-            $engines = Service::availableEngines();
-        }
+        $engines = Service::availableEngines();
 
         return Inertia::render('Databases/Index', [
             'databases' => $databases,

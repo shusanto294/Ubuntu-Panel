@@ -43,6 +43,9 @@ class Service extends Model
         return static::query()->where('key', $key)->where('status', self::INSTALLED)->exists();
     }
 
+    /** The services that can hold a database. */
+    public const ENGINE_KEYS = ['mysql', 'postgres', 'mongodb'];
+
     /**
      * Database engines this machine can actually host.
      *
@@ -51,7 +54,7 @@ class Service extends Model
     public static function availableEngines(): array
     {
         return static::query()
-            ->whereIn('key', ['mysql', 'postgres', 'mongodb'])
+            ->whereIn('key', self::ENGINE_KEYS)
             ->where('status', self::INSTALLED)
             ->pluck('key')
             ->all();

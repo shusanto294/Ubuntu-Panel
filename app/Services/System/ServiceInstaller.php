@@ -479,45 +479,48 @@ class ServiceInstaller
     }
 
     /**
-     * Re-read the machine, but not more than once every $seconds.
+     * Re-read just these services, right now.
      *
      * The service rows are a record of what installs *did*, which is not the
      * same thing as what is on the box: a batch that failed halfway leaves rows
-     * saying `failed` for software that is sitting there installed, and nothing
-     * corrects them until someone presses a button. Pages that would otherwise
-     * tell the user "you have not got this" ask here first, and the rate limit
-     * keeps a reload loop from re-probing on every request.
+     * saying `failed` for software that is sitting there installed. A page that
+     * is about to tell the user "you have not got this" asks the machine first,
+     * and asking about three things costs three `command -v` calls — cheap
+     * enough to do on the request rather than on a timer that is usually
+     * checking things nobody is looking at.
+     *
+     * Never throws: a page has to render even if the probe cannot run.
+     *
+     * @param  array<int, string>  $keys
      */
-    public function detectIfStale(int $seconds = 60): void
+    public function refresh(array $keys): void
     {
-        $key = 'panel:services-detected-at';
-
-        if (cache()->get($key)) {
-            return;
-        }
-
-        cache()->put($key, now()->toIso8601String(), now()->addSeconds($seconds));
-
         try {
-            $this->detect();
+            $this->detect(only: $keys);
         } catch (Throwable $e) {
-            // Best effort: a page must still render if the probe cannot run.
+            // Best effort.
         }
     }
 
     /**
      * Ask the machine what is already installed and record versions.
      * Never overwrites a service that is mid-install.
+     *
+     * @param  array<int, string>|null  $only  limit the probe to these services
      */
-    public function detect(?LocalConnection $connection = null): void
+    public function detect(?LocalConnection $connection = null, ?array $only = null): void
     {
         $this->syncRows();
 
         $ssh = $connection ?: app(LocalConnection::class)->timeout(120);
         $owned = $connection === null;
 
+        $services = $only === null
+            ? Service::all()
+            : Service::whereIn('key', $only)->get();
+
         try {
-            foreach (Service::all() as $service) {
+            foreach ($services as $service) {
                 if ($service->isPending()) {
                     continue;
                 }

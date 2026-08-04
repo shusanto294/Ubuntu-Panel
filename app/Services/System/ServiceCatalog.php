@@ -186,6 +186,19 @@ class ServiceCatalog
                 ]),
             ],
 
+            // npm rather than apt, which is how pm2 is distributed. Installed
+            // globally so it is on PATH for every user, and `pm2 startup`
+            // registers the boot unit for whoever the panel runs as.
+            'pm2' => [
+                Step::make('Install PM2', [
+                    'sudo npm install -g pm2',
+                    'pm2 --version',
+                ]),
+                Step::make('Let PM2 survive a reboot', [
+                    'sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $(whoami) --hp $HOME',
+                ], optional: true),
+            ],
+
             'wpcli' => [
                 Step::make('Install WP-CLI', [
                     'curl -fsSL -o /tmp/wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar',

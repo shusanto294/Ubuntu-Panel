@@ -8,7 +8,10 @@ use App\Models\Site;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InstallsServices;
+use App\Services\Shell\LocalConnection;
+use App\Services\System\ServiceCatalog;
 use Illuminate\Support\Facades\Cache;
+use Tests\Support\FakeLocalConnection;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -26,10 +29,42 @@ class SiteManagementTest extends TestCase
     }
 
     /** Put the software a site type needs on the machine. */
-    protected function withServices(array $services = ['mysql', 'wpcli', 'node', 'redis']): void
+    protected function withServices(array $services = ['mysql', 'wpcli', 'node', 'redis', 'php']): void
     {
         $this->markInstalled($services);
+        $this->machineWith($services);
     }
+
+    /**
+     * A machine whose probes answer for exactly these services.
+     *
+     * The panel asks the box rather than trusting its own rows now, so a test
+     * that says "MariaDB is installed" has to be able to say it to the probe
+     * as well, not only to the database.
+     *
+     * @param  array<int, string>  $services
+     */
+    protected function machineWith(array $services): FakeLocalConnection
+    {
+        $responses = [];
+
+        foreach (ServiceCatalog::keys() as $key) {
+            $detect = ServiceCatalog::meta($key)['detect'] ?? null;
+
+            if ($detect) {
+                $responses[$detect.' >/dev/null 2>&1'] = in_array($key, $services, true)
+                    ? ['found', 0]
+                    : ['', 1];
+            }
+        }
+
+        $connection = new FakeLocalConnection($responses);
+
+        $this->app->instance(LocalConnection::class, $connection);
+
+        return $connection;
+    }
+
 
     protected function payload(array $overrides = []): array
     {
@@ -126,6 +161,7 @@ class SiteManagementTest extends TestCase
     public function test_a_node_site_is_rejected_when_node_is_not_installed(): void
     {
         $user = User::factory()->create();
+        $this->withServices([]);
 
         $this->actingAs($user)
             ->post(route('sites.store'), $this->payload(['type' => 'nodejs']))
@@ -137,6 +173,7 @@ class SiteManagementTest extends TestCase
     public function test_wordpress_is_rejected_without_wp_cli(): void
     {
         $user = User::factory()->create();
+        $this->withServices([]);
 
         $this->actingAs($user)
             ->post(route('sites.store'), $this->payload(['type' => 'wordpress']))
@@ -146,6 +183,7 @@ class SiteManagementTest extends TestCase
     public function test_managing_dns_requires_a_cloudflare_account(): void
     {
         $user = User::factory()->create();
+        $this->withServices([]);
 
         $this->actingAs($user)
             ->post(route('sites.store'), $this->payload(['manage_dns' => true]))

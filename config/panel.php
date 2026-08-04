@@ -10,7 +10,7 @@ return [
     | Bump `version` in the same commit as every push to that branch — see
     | "Publishing an update" in the README.
     */
-    'version' => '1.2.4',
+    'version' => '1.3.0',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
@@ -143,6 +143,15 @@ return [
             'requires' => ['base'],
             'detect' => 'command -v node',
             'version' => 'node -v 2>/dev/null',
+        ],
+        'pm2' => [
+            'label' => 'PM2',
+            'group' => 'runtime',
+            'description' => 'Node.js process manager. The panel runs Node and Next.js sites under systemd, so this is for managing processes yourself.',
+            'default' => true,
+            'requires' => ['node'],
+            'detect' => 'command -v pm2',
+            'version' => 'pm2 --version 2>/dev/null | tail -1',
         ],
         'wpcli' => [
             'label' => 'WP-CLI',

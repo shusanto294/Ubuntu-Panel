@@ -188,7 +188,7 @@ as queued jobs. Without it, tasks sit at 0% forever.
   agent and no sampling daemon: the panel runs on the machine it reports on, so a reading
   costs microseconds.
 - **Settings → Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
-  MongoDB, Redis, Node.js, WP-CLI and a full mail server, with live progress. Everything
+  MongoDB, Redis, Node.js, PM2, WP-CLI and a full mail server, with live progress. Everything
   queued goes into a single apt transaction, because dpkg takes an exclusive lock and
   parallel installs would only serialise behind it. A service that fails costs you that
   service and nothing else.
