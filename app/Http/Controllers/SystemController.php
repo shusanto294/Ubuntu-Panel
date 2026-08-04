@@ -9,6 +9,7 @@ use App\Models\Database;
 use App\Models\Service;
 use App\Models\Site;
 use App\Services\System\HostInfo;
+use App\Services\System\MetricHistory;
 use App\Services\System\PanelDomain;
 use App\Services\System\ServiceCatalog;
 use App\Services\System\ServiceInstaller;
@@ -31,7 +32,7 @@ class SystemController extends Controller
         protected Settings $settings,
     ) {}
 
-    public function overview(Request $request, SystemMetrics $metrics, UpdateChecker $updates)
+    public function overview(Request $request, SystemMetrics $metrics, UpdateChecker $updates, MetricHistory $history)
     {
         // Servers set up before a service joined the catalogue get their row here.
         $this->installer->syncRows();
@@ -42,6 +43,10 @@ class SystemController extends Controller
             'update' => $updates->status(),
             // Rendered immediately; the page then polls for live figures.
             'metrics' => $metrics->read(),
+            // The graphs open on the shortest range, so ship that one with the
+            // page and let the browser fetch the others only if it asks.
+            'history' => $history->series(MetricHistory::DEFAULT_RANGE),
+            'historyRanges' => MetricHistory::options(),
             'counts' => [
                 'sites' => Site::count(),
                 'databases' => Database::count(),
@@ -98,6 +103,21 @@ class SystemController extends Controller
     public function metrics(SystemMetrics $metrics)
     {
         return response()->json(['metrics' => $metrics->read()]);
+    }
+
+    /**
+     * Recorded history for the graphs.
+     *
+     * Averaged into buckets by the range, so a month costs the same handful of
+     * points as an hour does.
+     */
+    public function metricHistory(Request $request, MetricHistory $history)
+    {
+        $range = (string) $request->query('range', MetricHistory::DEFAULT_RANGE);
+
+        return response()->json([
+            'history' => $history->series($range),
+        ]);
     }
 
     /** Queue one service (with its dependencies) for installation. */

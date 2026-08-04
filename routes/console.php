@@ -7,9 +7,9 @@ Schedule::command('panel:process-service-queue')
     ->everyMinute()
     ->withoutOverlapping();
 
-// Keeps the server list's CPU/memory/disk figures recent. One queued job per
-// server, so sampling runs in parallel across the workers and a slow or dead
-// server never holds up the others.
+// Builds the history the dashboard graphs draw from — one row a minute, older
+// rows pruned as it goes. Live figures on the page do not come from here; they
+// are read from /proc per request.
 Schedule::command('panel:collect-metrics')
     ->everyMinute()
     ->withoutOverlapping();

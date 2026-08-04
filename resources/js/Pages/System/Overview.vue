@@ -10,6 +10,8 @@ import { Head, Link } from '@inertiajs/vue3';
 const props = defineProps({
     system: Object,
     metrics: Object,
+    history: Object,
+    historyRanges: Array,
     update: Object,
     counts: Object,
     sites: Array,
@@ -27,7 +29,7 @@ const installProgress = computed(() =>
 </script>
 
 <template>
-    <Head title="This server" />
+    <Head title="Dashboard" />
 
     <AuthenticatedLayout>
         <template #header>
@@ -89,7 +91,12 @@ const installProgress = computed(() =>
             </div>
         </div>
 
-        <LiveUsage :initial="metrics" class="mb-6" />
+        <LiveUsage
+            :initial="metrics"
+            :history="history"
+            :ranges="historyRanges"
+            class="mb-6"
+        />
 
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Link

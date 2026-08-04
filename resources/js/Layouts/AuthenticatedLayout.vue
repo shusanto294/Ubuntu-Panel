@@ -10,7 +10,7 @@ import { Link } from '@inertiajs/vue3';
 const showingNavigationDropdown = ref(false);
 
 const links = [
-    { name: 'Server', route: 'dashboard', pattern: 'dashboard' },
+    { name: 'Dashboard', route: 'dashboard', pattern: 'dashboard' },
     { name: 'Sites', route: 'sites.index', pattern: 'sites.*' },
     { name: 'Databases', route: 'databases.index', pattern: 'databases.*' },
     { name: 'Email', route: 'email.index', pattern: 'email.*' },

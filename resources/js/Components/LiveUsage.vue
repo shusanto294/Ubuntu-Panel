@@ -1,27 +1,41 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import UsageCell from '@/Components/UsageCell.vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import UsageGraph from '@/Components/UsageGraph.vue';
 
 /**
- * CPU, memory and disk for this machine, refreshed every second.
+ * CPU, memory and disk for this machine — one graph each.
  *
- * The panel runs on the box it is reporting on, so a reading is a /proc read —
- * microseconds, no SSH, no daemon, no queue. Polling once a second is cheaper
- * than the machinery any other arrangement would need.
+ * Two sources, on purpose. The headline number is read straight from /proc once
+ * a second: the panel runs on the box it reports on, so a reading costs
+ * microseconds and no daemon, queue or SSH is involved. The line behind it comes
+ * from the minute-by-minute samples the scheduler records, which is the only way
+ * to see further back than the page has been open.
  */
 const props = defineProps({
     // Rendered with the page so there is never an empty frame.
     initial: { type: Object, default: null },
+    // The shortest range, shipped with the page.
+    history: { type: Object, default: null },
+    ranges: { type: Array, default: () => [] },
     interval: { type: Number, default: 1000 },
 });
 
 const metrics = ref(props.initial);
 const failed = ref(false);
 
-let timer = null;
+const range = ref(props.history?.range ?? '1h');
+const series = ref(props.history);
+const loadingHistory = ref(false);
+
+let liveTimer = null;
+let historyTimer = null;
 let inFlight = false;
 
-const read = async () => {
+const currentRange = computed(
+    () => props.ranges.find((r) => r.key === range.value) ?? props.ranges[0] ?? null,
+);
+
+const readLive = async () => {
     // Never stack requests if one is slow, and let a hidden tab rest.
     if (inFlight || (typeof document !== 'undefined' && document.hidden)) return;
 
@@ -38,12 +52,56 @@ const read = async () => {
     }
 };
 
-onMounted(() => {
-    read();
-    timer = setInterval(read, props.interval);
+const readHistory = async ({ quiet = false } = {}) => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+
+    if (!quiet) loadingHistory.value = true;
+
+    try {
+        const { data } = await window.axios.get(route('system.metrics.history'), {
+            params: { range: range.value },
+        });
+
+        // The user may have moved on while this was in flight.
+        if (data.history.range === range.value) {
+            series.value = data.history;
+        }
+    } catch (e) {
+        // Leave the last good series on screen rather than blanking the graphs.
+    } finally {
+        loadingHistory.value = false;
+    }
+};
+
+/** Refetch no faster than the range's buckets can actually change. */
+const scheduleHistory = () => {
+    if (historyTimer) clearInterval(historyTimer);
+
+    const every = currentRange.value?.refresh_ms ?? 60000;
+
+    historyTimer = setInterval(() => readHistory({ quiet: true }), every);
+};
+
+watch(range, () => {
+    readHistory();
+    scheduleHistory();
 });
 
-onBeforeUnmount(() => timer && clearInterval(timer));
+onMounted(() => {
+    readLive();
+    liveTimer = setInterval(readLive, props.interval);
+
+    // The page arrived with the default range already in it; only go and get
+    // one if it did not.
+    if (!series.value) readHistory();
+
+    scheduleHistory();
+});
+
+onBeforeUnmount(() => {
+    if (liveTimer) clearInterval(liveTimer);
+    if (historyTimer) clearInterval(historyTimer);
+});
 
 const bytes = (value) => {
     if (!value && value !== 0) return '—';
@@ -67,78 +125,121 @@ const duration = (seconds) => {
     return `${m}m`;
 };
 
+const points = (key) =>
+    (series.value?.points ?? []).map((point) => ({ t: point.t, v: point[key] }));
+
+const bucketSeconds = computed(() => series.value?.bucket_seconds ?? 60);
+
 const load = computed(() => metrics.value?.load ?? null);
 const cores = computed(() => metrics.value?.cpu?.cores ?? null);
 
 const loadTone = computed(() => {
-    if (!load.value || !cores.value) return 'text-slate-500';
+    if (!load.value || !cores.value) return 'text-slate-600';
     const ratio = load.value[0] / cores.value;
     if (ratio >= 1.5) return 'text-rose-600';
     if (ratio >= 1) return 'text-amber-600';
-    return 'text-slate-500';
+    return 'text-slate-600';
 });
 </script>
 
 <template>
-    <div class="rounded-xl border border-slate-200 bg-white p-5">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold text-slate-700">Resource usage</h3>
-            <div class="flex items-center gap-2 text-xs">
-                <span
-                    class="h-1.5 w-1.5 rounded-full"
-                    :class="failed ? 'bg-rose-500' : 'bg-emerald-500'"
-                />
-                <span :class="failed ? 'text-rose-600' : 'text-emerald-600'">
-                    {{ failed ? 'not responding' : 'live' }}
+    <div>
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <h3 class="text-sm font-semibold text-slate-700">Resource usage</h3>
+                <span class="flex items-center gap-1.5 text-xs">
+                    <span
+                        class="h-1.5 w-1.5 rounded-full"
+                        :class="failed ? 'bg-rose-500' : 'bg-emerald-500'"
+                    />
+                    <span :class="failed ? 'text-rose-600' : 'text-emerald-600'">
+                        {{ failed ? 'not responding' : 'live' }}
+                    </span>
                 </span>
+            </div>
+
+            <div
+                class="flex items-center rounded-lg border border-slate-200 bg-white p-0.5"
+                role="group"
+                aria-label="Graph time range"
+            >
+                <button
+                    v-for="option in ranges"
+                    :key="option.key"
+                    type="button"
+                    @click="range = option.key"
+                    :aria-pressed="range === option.key"
+                    class="rounded-md px-2.5 py-1 text-xs font-medium transition"
+                    :class="
+                        range === option.key
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-600 hover:bg-slate-100'
+                    "
+                >
+                    {{ option.label }}
+                </button>
             </div>
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-                <p class="mb-1 text-xs font-medium text-slate-500">CPU</p>
-                <UsageCell
-                    :percent="metrics?.cpu?.usage ?? null"
-                    :detail="cores ? `${cores} core` : ''"
-                    :loading="!metrics"
-                />
-            </div>
-            <div>
-                <p class="mb-1 text-xs font-medium text-slate-500">Memory</p>
-                <UsageCell
-                    :percent="metrics?.memory?.percent ?? null"
-                    :detail="
-                        metrics
-                            ? `${bytes(metrics.memory.used)} / ${bytes(metrics.memory.total)}`
-                            : ''
-                    "
-                    :loading="!metrics"
-                />
-            </div>
-            <div>
-                <p class="mb-1 text-xs font-medium text-slate-500">Disk</p>
-                <UsageCell
-                    :percent="metrics?.disk?.percent ?? null"
-                    :detail="metrics ? `${bytes(metrics.disk.free)} free` : ''"
-                    :loading="!metrics"
-                />
-            </div>
-            <div>
-                <p class="mb-1 text-xs font-medium text-slate-500">Uptime</p>
-                <p class="text-sm font-semibold text-slate-800">
-                    {{ duration(metrics?.uptime_seconds) }}
-                </p>
-                <p v-if="load" class="mt-1 text-xs" :class="loadTone">
-                    load {{ load[0] }} · {{ load[1] }} · {{ load[2] }}
-                </p>
-                <p
-                    v-if="metrics?.swap?.total"
-                    class="text-xs text-slate-400"
-                >
-                    swap {{ bytes(metrics.swap.used) }} of
-                    {{ bytes(metrics.swap.total) }}
-                </p>
-            </div>
+        <div class="grid gap-4 lg:grid-cols-3">
+            <UsageGraph
+                label="CPU"
+                color="#4f46e5"
+                :points="points('cpu')"
+                :current="metrics?.cpu?.usage ?? null"
+                :detail="cores ? `${cores} core${cores === 1 ? '' : 's'}` : ''"
+                :bucket-seconds="bucketSeconds"
+                :loading="loadingHistory"
+            />
+            <UsageGraph
+                label="Memory"
+                color="#0d9488"
+                :points="points('memory')"
+                :current="metrics?.memory?.percent ?? null"
+                :detail="
+                    metrics
+                        ? `${bytes(metrics.memory.used)} of ${bytes(metrics.memory.total)}`
+                        : ''
+                "
+                :bucket-seconds="bucketSeconds"
+                :loading="loadingHistory"
+            />
+            <UsageGraph
+                label="Disk"
+                color="#ea580c"
+                :points="points('disk')"
+                :current="metrics?.disk?.percent ?? null"
+                :detail="
+                    metrics
+                        ? `${bytes(metrics.disk.used)} of ${bytes(metrics.disk.total)} · ${bytes(metrics.disk.free)} free`
+                        : ''
+                "
+                :bucket-seconds="bucketSeconds"
+                :loading="loadingHistory"
+            />
+        </div>
+
+        <div
+            class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs text-slate-500"
+        >
+            <span>
+                Uptime
+                <span class="ml-1 font-medium text-slate-700">{{
+                    duration(metrics?.uptime_seconds)
+                }}</span>
+            </span>
+            <span v-if="load">
+                Load
+                <span class="ml-1 font-medium tabular-nums" :class="loadTone">
+                    {{ load[0] }} · {{ load[1] }} · {{ load[2] }}
+                </span>
+            </span>
+            <span v-if="metrics?.swap?.total">
+                Swap
+                <span class="ml-1 font-medium text-slate-700">
+                    {{ bytes(metrics.swap.used) }} of {{ bytes(metrics.swap.total) }}
+                </span>
+            </span>
         </div>
     </div>
 </template>

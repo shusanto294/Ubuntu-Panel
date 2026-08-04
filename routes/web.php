@@ -21,6 +21,7 @@ Route::middleware(['auth'])->group(function () {
     // This machine
     Route::get('/dashboard', [SystemController::class, 'overview'])->name('dashboard');
     Route::get('system/metrics', [SystemController::class, 'metrics'])->name('system.metrics');
+    Route::get('system/metrics/history', [SystemController::class, 'metricHistory'])->name('system.metrics.history');
     Route::get('system/credentials', [SystemController::class, 'credentials'])->name('system.credentials');
     Route::patch('system/settings', [SystemController::class, 'updateSettings'])->name('system.settings');
     Route::get('system/updates', [SystemController::class, 'checkForUpdates'])->name('system.updates');
