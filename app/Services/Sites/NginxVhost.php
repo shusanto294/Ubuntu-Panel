@@ -88,6 +88,25 @@ class NginxVhost
         return '/etc/nginx/conf.d/000-panel-default.conf';
     }
 
+    /**
+     * Take the default-server slot, and make sure nothing else is holding it.
+     *
+     * nginx allows exactly one `default_server` per address, and Debian and
+     * Ubuntu ship one in `sites-enabled/default`. A second is not a warning —
+     * nginx refuses to load the configuration at all, so every later
+     * `nginx -t` fails and no site can be deployed.
+     *
+     * @return array<int, string>
+     */
+    public static function claimDefaultServerCommands(): array
+    {
+        return [
+            'sudo mkdir -p '.escapeshellarg(self::ACME_WEBROOT),
+            self::defaultCertificateCommand(),
+            'sudo rm -f /etc/nginx/sites-enabled/default',
+        ];
+    }
+
     /** Self-signed, only ever presented to requests for unknown hostnames. */
     public const DEFAULT_CERT = '/etc/nginx/panel-default';
 

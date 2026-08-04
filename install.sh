@@ -396,6 +396,11 @@ server {
 }
 NGINX
 
+# The distribution ships a default site that claims the `default_server` slot
+# the panel's catch-all needs. nginx refuses to load a configuration holding two
+# of those, so leaving it here means no site can ever be deployed.
+rm -f /etc/nginx/sites-enabled/default
+
 ln -sf /etc/nginx/sites-available/ubuntu-panel.conf /etc/nginx/sites-enabled/ubuntu-panel.conf
 nginx -t >/dev/null 2>&1 || die "nginx rejected the panel vhost."
 systemctl reload nginx

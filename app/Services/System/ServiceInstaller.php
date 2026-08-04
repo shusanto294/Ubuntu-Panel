@@ -195,19 +195,39 @@ class ServiceInstaller
 
         if ($skipped !== []) {
             $steps[] = Step::call(
-                'Skip what is already installed',
-                function () use ($skipped, $connection, &$installed) {
-                    foreach ($skipped as $key) {
-                        $this->markInstalled($key, $connection);
-                        $installed[] = $key;
-                    }
-
-                    return 'Already present, left alone: '.implode(', ', array_map(
-                        fn ($key) => ServiceCatalog::label($key),
-                        $skipped
-                    ));
-                }
+                'Skip installing what is already here',
+                fn () => 'Already installed: '.implode(', ', array_map(
+                    fn ($key) => ServiceCatalog::label($key),
+                    $skipped
+                ))
             );
+
+            // Present is not the same as configured, and skipping the download
+            // was never a reason to skip the setup.
+            //
+            // `install.sh` puts nginx, PHP and MariaDB down itself so the panel
+            // has something to run on. The catalogue then found them already
+            // there and skipped them entirely — so nginx was never told to drop
+            // the distribution's default site, which claims the same
+            // `default_server` slot the panel's own catch-all needs. nginx
+            // refuses to load a configuration with two of those, so every site
+            // deployment failed at `nginx -t` on a machine where nothing was
+            // actually wrong.
+            foreach ($skipped as $key) {
+                foreach ($this->catalog->configureSteps($key) as $step) {
+                    $steps[] = $step->for($key);
+                }
+
+                $steps[] = Step::call(
+                    'Verify '.ServiceCatalog::label($key),
+                    function (LocalConnection $ssh) use ($key, &$installed) {
+                        $version = $this->markInstalled($key, $ssh);
+                        $installed[] = $key;
+
+                        return ServiceCatalog::label($key).' ready'.($version ? ' — '.$version : '');
+                    }
+                )->for($key);
+            }
         }
 
         if ($todo === []) {

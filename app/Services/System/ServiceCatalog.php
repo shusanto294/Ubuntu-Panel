@@ -271,8 +271,10 @@ class ServiceCatalog
 
             'nginx' => [
                 Step::call('Refuse unknown hostnames', function (LocalConnection $ssh) {
-                    $ssh->mustRun('sudo mkdir -p '.escapeshellarg(\App\Services\Sites\NginxVhost::ACME_WEBROOT));
-                    $ssh->mustRun(\App\Services\Sites\NginxVhost::defaultCertificateCommand());
+                    foreach (\App\Services\Sites\NginxVhost::claimDefaultServerCommands() as $command) {
+                        $ssh->mustRun($command);
+                    }
+
                     $ssh->putFile(
                         \App\Services\Sites\NginxVhost::defaultServerPath(),
                         \App\Services\Sites\NginxVhost::defaultServerConfig()

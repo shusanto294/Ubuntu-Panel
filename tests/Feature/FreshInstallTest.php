@@ -114,6 +114,38 @@ class FreshInstallTest extends TestCase
         $lock->release();
     }
 
+    /**
+     * `install.sh` installs nginx, PHP and MariaDB itself, so the catalogue
+     * finds them already there. Skipping the download was never a reason to
+     * skip the setup — and when nginx skipped its, the distribution's default
+     * site stayed, holding the `default_server` slot the panel's catch-all
+     * needs. nginx will not load a configuration with two of those, so every
+     * site deployment failed at `nginx -t`.
+     */
+    public function test_software_already_present_is_still_configured(): void
+    {
+        // Every probe answers yes: the machine already has the lot.
+        $connection = new FakeLocalConnection([]);
+        $this->app->instance(LocalConnection::class, $connection);
+
+        $this->artisan('panel:install-services --services=nginx')->assertSuccessful();
+
+        $ran = implode("\n", $connection->ran);
+
+        $this->assertStringContainsString('rm -f /etc/nginx/sites-enabled/default', $ran);
+        $this->assertStringContainsString('000-panel-default.conf', $ran);
+        // And nothing was downloaded, because nothing needed to be.
+        $this->assertStringNotContainsString('apt-get install -y nginx', $ran);
+    }
+
+    /** The same slot is claimed when a site is deployed, for older installs. */
+    public function test_deploying_a_site_claims_the_default_server_slot(): void
+    {
+        $commands = implode("\n", \App\Services\Sites\NginxVhost::claimDefaultServerCommands());
+
+        $this->assertStringContainsString('rm -f /etc/nginx/sites-enabled/default', $commands);
+    }
+
     public function test_a_finished_install_leaves_nothing_queued(): void
     {
         $this->bareMachine();

@@ -56,8 +56,13 @@ class SiteRecipe
             $ssh->mustRun('sudo mkdir -p '.escapeshellarg(NginxVhost::ACME_WEBROOT.'/.well-known/acme-challenge'));
             $ssh->mustRun('sudo chown -R www-data:www-data '.escapeshellarg(NginxVhost::ACME_WEBROOT));
 
-            // Unknown hostnames must hit a dead end, not the first site on the box.
-            $ssh->mustRun(NginxVhost::defaultCertificateCommand());
+            // Unknown hostnames must hit a dead end, not the first site on the
+            // box — and nothing else may be holding the default-server slot, or
+            // nginx will not load the configuration at all.
+            foreach (NginxVhost::claimDefaultServerCommands() as $command) {
+                $ssh->mustRun($command);
+            }
+
             $ssh->putFile(NginxVhost::defaultServerPath(), NginxVhost::defaultServerConfig());
 
             // Plain HTTP for now: nginx will not start with an ssl_certificate
