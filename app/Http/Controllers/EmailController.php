@@ -49,9 +49,8 @@ class EmailController extends Controller
             ],
         ]);
 
-
-        $this->authorize('update');
-
+        // Nothing to authorise against: a mail domain has no owner until this
+        // creates one, and the panel has a single account behind `auth`.
         if (! $this->settings->boolean('mail_configured')) {
             return back()->withErrors(['domain' => 'The mail server is not installed yet — install it from the Software page.']);
         }

@@ -3,7 +3,9 @@
 namespace App\Services\Mail;
 
 use App\Services\Shell\LocalConnection;
+use App\Services\System\HostInfo;
 use App\Services\Tasks\Step;
+use App\Support\Settings;
 use Illuminate\Support\Str;
 
 /**
@@ -18,16 +20,34 @@ class MailServerProvisioner
 
     public const DB_USER = 'mailuser';
 
-    /** The mail hostname, defaulting to mail.<server host>. */
+    public function __construct(
+        protected Settings $settings,
+        protected HostInfo $host,
+    ) {}
+
+    /**
+     * The name this mail server calls itself.
+     *
+     * Set on the settings page if you want a specific one. Otherwise it is
+     * derived: `mail.` in front of the panel's own domain if the panel has one,
+     * and failing that the machine's hostname, which is at least something
+     * Postfix will accept as `myhostname`.
+     */
     public function hostname(): string
     {
-        if (filled($server->mail_hostname)) {
-            return $server->mail_hostname;
+        $configured = $this->settings->get('mail_hostname');
+
+        if (filled($configured)) {
+            return (string) $configured;
         }
 
-        $hostname = 'mail.'.parse_url('http://'.$server->host, PHP_URL_HOST);
+        $domain = $this->settings->get('panel_domain');
 
-        $server->update(['mail_hostname' => $hostname]);
+        $hostname = filled($domain)
+            ? 'mail.'.$domain
+            : $this->host->hostname();
+
+        $this->settings->set('mail_hostname', $hostname);
 
         return $hostname;
     }
@@ -40,8 +60,8 @@ class MailServerProvisioner
      */
     public function configureSteps(): array
     {
-        $password = $this->ensureDbPassword($server);
-        $hostname = $this->hostname($server);
+        $password = $this->ensureDbPassword();
+        $hostname = $this->hostname();
 
         return [
             Step::make('Create the mail database', [
@@ -120,14 +140,19 @@ class MailServerProvisioner
         ];
     }
 
+    /**
+     * The password Postfix and Dovecot use to read the mailbox tables.
+     *
+     * Generated once and kept, because it is written into config files on disk
+     * — a new one on every run would leave those files pointing at a password
+     * the database no longer accepts. Stored encrypted.
+     */
     public function ensureDbPassword(): string
     {
-        if (blank($server->mail_db_password)) {
-            $server->mail_db_password = Str::password(32, symbols: false);
-            $server->save();
-        }
-
-        return (string) $server->mail_db_password;
+        return $this->settings->rememberSecret(
+            'mail_db_password',
+            fn () => Str::password(32, symbols: false),
+        );
     }
 
     protected function schemaSql(): string
