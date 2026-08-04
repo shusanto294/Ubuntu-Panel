@@ -4,6 +4,7 @@ namespace App\Services\Tasks;
 
 use App\Models\ActivityLog;
 use App\Services\Shell\LocalConnection;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
@@ -110,9 +111,35 @@ class TaskRunner
             $this->flush();
 
             if ($code !== 0) {
-                throw new RuntimeException("Command exited {$code}: {$command}");
+                throw new RuntimeException($this->failureMessage($command, $code, $output));
             }
         }
+    }
+
+    /**
+     * What went wrong, in the one line that ends up beside the failed row.
+     *
+     * The full console is kept on the activity log, but the summary is all
+     * most failures are ever read through — and a summary that names only the
+     * command ("Command exited 1: sudo systemctl restart postfix dovecot")
+     * says nothing about the cause. The last few lines of output usually do.
+     */
+    protected function failureMessage(string $command, int $code, string $output): string
+    {
+        $message = "Command exited {$code}: {$command}";
+
+        $lines = array_values(array_filter(
+            array_map('rtrim', preg_split('/\r?\n/', trim($output)) ?: []),
+            fn (string $line) => $line !== '' && $line !== '--- journal ---',
+        ));
+
+        if ($lines === []) {
+            return $message;
+        }
+
+        $tail = array_slice($lines, -5);
+
+        return $message.' — '.Str::limit(implode(' | ', $tail), 500);
     }
 
     protected function runCallback(Step $step): void

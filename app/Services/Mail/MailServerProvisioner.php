@@ -91,6 +91,12 @@ class MailServerProvisioner
                 }
 
                 $ssh->mustRun('sudo chmod 640 /etc/postfix/mysql-*.cf && sudo chgrp postfix /etc/postfix/mysql-*.cf');
+
+                // main.cf reads myorigin out of this file; Postfix refuses to
+                // start if it is not there, and the package only writes it when
+                // debconf was answered before the install.
+                $ssh->putFile('/etc/mailname', $hostname."\n");
+
                 $ssh->putFile('/etc/postfix/main.cf', $this->postfixMainCf($hostname));
                 $ssh->putFile('/etc/postfix/master.cf', $this->postfixMasterCf());
 
@@ -122,11 +128,20 @@ class MailServerProvisioner
                 return 'OpenDKIM listening on localhost:8891.';
             }),
 
+            // Both tools will tell you exactly what they dislike, but only if
+            // asked before they are started — `systemctl restart` reports a
+            // failed job and nothing about why, which is a dead end to debug
+            // from a web page.
+            Step::make('Check the mail configuration', [
+                'sudo postfix check',
+                'sudo doveconf -n > /dev/null',
+            ]),
+
             Step::make('Start mail services', [
                 'sudo systemctl enable --now opendkim',
-                'sudo systemctl restart opendkim',
+                self::restart('opendkim'),
                 'sudo systemctl enable --now postfix dovecot',
-                'sudo systemctl restart postfix dovecot',
+                self::restart('postfix dovecot'),
                 'sudo systemctl is-active postfix dovecot opendkim',
             ]),
 
@@ -138,6 +153,28 @@ class MailServerProvisioner
                 'sudo ufw allow 995/tcp',
             ], optional: true),
         ];
+    }
+
+    /**
+     * Restart units, and say why if they will not come up.
+     *
+     * systemd's own failure message is "Job for x.service failed. See
+     * 'systemctl status x.service'" — advice nobody reading a panel can take.
+     * The reason is in the journal, so fetch it when, and only when, there is
+     * one to fetch.
+     */
+    protected static function restart(string $units): string
+    {
+        $flags = implode(' ', array_map(
+            fn (string $unit) => '-u '.escapeshellarg($unit),
+            preg_split('/\s+/', trim($units)) ?: []
+        ));
+
+        return sprintf(
+            'sudo systemctl restart %s || { echo "--- journal ---"; sudo journalctl %s -n 30 --no-pager; exit 1; }',
+            $units,
+            $flags
+        );
     }
 
     /**
@@ -306,40 +343,49 @@ class MailServerProvisioner
     }
 
     /**
+     * One file, not a scattering of fragments.
+     *
+     * The stock `dovecot.conf` ends with `!include conf.d/*.conf`, and the
+     * distribution owns everything in that directory. Dropping our own
+     * fragments in alongside theirs means competing with files a package
+     * update can replace at any time — and one of them, `15-mailboxes.conf`,
+     * already declares a second `namespace inbox`, which is a duplicate
+     * Dovecot refuses to start on. Not including the directory at all is the
+     * only version of this that stays working.
+     *
      * @return array<string, string>
      */
     protected function dovecotFiles(string $password): array
     {
         return [
             '/etc/dovecot/dovecot.conf' => <<<'CONF'
-            # Managed by Ubuntu Panel
+            # Managed by Ubuntu Panel — everything is here on purpose.
+            # conf.d/ is deliberately not included; see MailServerProvisioner.
             protocols = imap pop3 lmtp
             listen = *, ::
             base_dir = /var/run/dovecot/
-            !include conf.d/*.conf
-            CONF,
+            log_path = syslog
 
-            '/etc/dovecot/conf.d/10-mail.conf' => <<<'CONF'
             mail_location = maildir:/var/mail/vhosts/%d/%n
             mail_privileged_group = mail
-            namespace inbox {
-              inbox = yes
-              mailbox Drafts { special_use = \Drafts; auto = subscribe }
-              mailbox Junk   { special_use = \Junk;   auto = subscribe }
-              mailbox Sent   { special_use = \Sent;   auto = subscribe }
-              mailbox Trash  { special_use = \Trash;  auto = subscribe }
-            }
             first_valid_uid = 5000
             last_valid_uid = 5000
-            CONF,
 
-            '/etc/dovecot/conf.d/10-auth.conf' => <<<'CONF'
+            namespace inbox {
+              inbox = yes
+              mailbox Drafts { special_use = \Drafts
+                auto = subscribe }
+              mailbox Junk   { special_use = \Junk
+                auto = subscribe }
+              mailbox Sent   { special_use = \Sent
+                auto = subscribe }
+              mailbox Trash  { special_use = \Trash
+                auto = subscribe }
+            }
+
             disable_plaintext_auth = yes
             auth_mechanisms = plain login
-            !include auth-sql.conf.ext
-            CONF,
 
-            '/etc/dovecot/conf.d/auth-sql.conf.ext' => <<<'CONF'
             passdb {
               driver = sql
               args = /etc/dovecot/dovecot-sql.conf.ext
@@ -348,25 +394,16 @@ class MailServerProvisioner
               driver = static
               args = uid=vmail gid=vmail home=/var/mail/vhosts/%d/%n
             }
-            CONF,
 
-            '/etc/dovecot/dovecot-sql.conf.ext' => sprintf(
-                "driver = mysql\nconnect = host=127.0.0.1 dbname=%s user=%s password=%s\n".
-                "default_pass_scheme = SHA512-CRYPT\n".
-                "password_query = SELECT email as user, password FROM virtual_users WHERE email='%%u'\n",
-                self::DB_NAME,
-                self::DB_USER,
-                $password
-            ),
-
-            '/etc/dovecot/conf.d/10-master.conf' => <<<'CONF'
             service imap-login {
               inet_listener imap  { port = 143 }
-              inet_listener imaps { port = 993; ssl = yes }
+              inet_listener imaps { port = 993
+                ssl = yes }
             }
             service pop3-login {
               inet_listener pop3  { port = 110 }
-              inet_listener pop3s { port = 995; ssl = yes }
+              inet_listener pop3s { port = 995
+                ssl = yes }
             }
             service lmtp {
               unix_listener /var/spool/postfix/private/dovecot-lmtp {
@@ -390,15 +427,22 @@ class MailServerProvisioner
             service auth-worker {
               user = vmail
             }
-            CONF,
 
-            '/etc/dovecot/conf.d/10-ssl.conf' => <<<'CONF'
             ssl = yes
             ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
             ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
             ssl_min_protocol = TLSv1.2
             ssl_prefer_server_ciphers = yes
             CONF,
+
+            '/etc/dovecot/dovecot-sql.conf.ext' => sprintf(
+                "driver = mysql\nconnect = host=127.0.0.1 dbname=%s user=%s password=%s\n".
+                "default_pass_scheme = SHA512-CRYPT\n".
+                "password_query = SELECT email as user, password FROM virtual_users WHERE email='%%u'\n",
+                self::DB_NAME,
+                self::DB_USER,
+                $password
+            ),
         ];
     }
 
