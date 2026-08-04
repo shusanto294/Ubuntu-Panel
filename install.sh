@@ -21,6 +21,7 @@ BRANCH="${PANEL_BRANCH:-main}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
+PANEL_SERVICES="${PANEL_SERVICES:-all}"
 REPO="${PANEL_REPO:-https://github.com/shusanto294/Ubuntu-Panel.git}"
 
 while [[ $# -gt 0 ]]; do
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
         --branch) BRANCH="$2"; shift 2 ;;
         --email) ADMIN_EMAIL="$2"; shift 2 ;;
         --password) ADMIN_PASSWORD="$2"; shift 2 ;;
+        --services) PANEL_SERVICES="$2"; shift 2 ;;
         -h|--help)
             cat <<'USAGE'
 Ubuntu Panel installer
@@ -45,6 +47,8 @@ Ubuntu Panel installer
   --branch <name>   Branch to clone (default main)
   --email <email>   Administrator email (prompted if omitted)
   --password <pw>   Administrator password (prompted if omitted)
+  --services <what> Software to install: all (default), default, or a
+                    comma-separated list of keys, e.g. nginx,php,mysql
 USAGE
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -461,6 +465,25 @@ else
     sudo -u "$PANEL_USER" php artisan panel:install
 fi
 
+# ----------------------------------------------------------------- software --
+# In the foreground, not through the queue: an installer that hands back before
+# the work is done cannot tell you whether it worked. Every service is attempted
+# even if one fails, and the failures are named at the end — a machine missing
+# MongoDB is still a working panel, and stopping here would leave you with no
+# panel at all.
+SOFTWARE_OK=1
+
+if [[ "$PANEL_SERVICES" != "none" ]]; then
+    log "Installing software (${PANEL_SERVICES})"
+    printf '    This is the long part — apt is fetching everything the panel can host with.\n'
+
+    if sudo -u "$PANEL_USER" php artisan panel:install-services --services="$PANEL_SERVICES"; then
+        ok "software installed"
+    else
+        SOFTWARE_OK=0
+    fi
+fi
+
 printf '\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
 printf '\033[1;32m  Ubuntu Panel is installed.\033[0m\n'
 printf '\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n'
@@ -478,3 +501,10 @@ printf '  \033[1mDatabase:\033[0m     MariaDB, %s\n' "$DB_NAME"
 printf '  \033[1mServices:\033[0m     ubuntu-panel-queue, ubuntu-panel-terminal,\n'
 printf '                ubuntu-panel-scheduler.timer\n'
 printf '  \033[1mUpdate with:\033[0m  cd %s && sudo -u %s php artisan panel:update\n\n' "$PANEL_DIR" "$PANEL_USER"
+
+if [[ "$SOFTWARE_OK" -eq 0 ]]; then
+    printf '\033[0;31m  Some software did not install — the failures are listed above.\033[0m\n'
+    printf '  The panel works; retry them from its Software page, or run:\n\n'
+    printf '      cd %s && sudo -u %s php artisan panel:install-services --retry\n\n' "$PANEL_DIR" "$PANEL_USER"
+    exit 1
+fi

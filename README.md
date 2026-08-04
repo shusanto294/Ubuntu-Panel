@@ -30,6 +30,23 @@ That is the whole installation. It takes a few minutes and:
    the port in ufw if it is active.
 7. Asks for an administrator email and password, then takes inventory of what is already
    installed on the machine.
+8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, WP-CLI,
+   Certbot and the Postfix/Dovecot/OpenDKIM mail stack included — so there is nothing left
+   to click when it finishes.
+
+That last step is the long one. It runs in the foreground rather than through the queue,
+because an installer that hands back before the work is done cannot tell you whether it
+worked. Every service is attempted even if one fails; the failures are named at the end and
+the installer exits non-zero, but the panel itself is up either way and the failed rows can
+be retried from its Software page.
+
+Install less if you want to:
+
+```bash
+sudo bash install.sh --services default      # only what is ticked by default
+sudo bash install.sh --services nginx,php,mysql
+sudo bash install.sh --services none         # panel only
+```
 
 The only thing it asks for is the administrator email and password. When it finishes it
 tells you exactly where to log in:

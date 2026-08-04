@@ -22,6 +22,9 @@ class TaskRunner
     /** Groups whose remaining steps should be abandoned. */
     protected array $skipGroups = [];
 
+    /** @var array<string, string> group => why it failed */
+    protected array $failures = [];
+
     public function __construct(
         protected ActivityLog $log,
         protected LocalConnection $ssh,
@@ -85,12 +88,35 @@ class TaskRunner
                 }
 
                 $this->markStep('failed');
+
+                // A step that belongs to one service takes only that service
+                // down. Installing nine things and abandoning eight of them
+                // because the fifth would not configure is not a batch, it is
+                // a queue that stops at the first pothole — and it is why a
+                // failed mail install used to leave nginx and MariaDB marked
+                // failed beside it.
+                if ($step->group !== null) {
+                    $this->failures[$step->group] = $e->getMessage();
+                    $this->skipGroup($step->group);
+                    $this->flush();
+
+                    continue;
+                }
+
+                // Ungrouped steps are the shared ones — waiting for apt, the
+                // single install transaction. Nothing after them can work.
                 $this->finish('failed', $e->getMessage());
 
                 return false;
             }
 
             $this->flush();
+        }
+
+        if ($this->failures !== []) {
+            $this->finish('failed', $this->failureSummary());
+
+            return false;
         }
 
         $this->finish('success', 'Completed '.count($steps).' steps.');
@@ -149,6 +175,34 @@ class TaskRunner
         if (is_string($output) && $output !== '') {
             $this->write($output."\n");
         }
+    }
+
+    /**
+     * Why each part of the batch failed, keyed by group.
+     *
+     * The caller uses this to blame the right service rather than painting
+     * every unfinished one with the same error.
+     *
+     * @return array<string, string>
+     */
+    public function failures(): array
+    {
+        return $this->failures;
+    }
+
+    protected function failureSummary(): string
+    {
+        return count($this->failures).' of the batch failed: '.implode('; ', array_map(
+            fn (string $group, string $why) => $group.' — '.$why,
+            array_keys($this->failures),
+            $this->failures
+        ));
+    }
+
+    /** Has this part of the batch already been written off? */
+    public function isSkipped(string $group): bool
+    {
+        return in_array($group, $this->skipGroups, true);
     }
 
     /**

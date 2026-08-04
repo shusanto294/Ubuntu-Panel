@@ -141,7 +141,7 @@ class ServiceInstaller
 
             $ok = $runner->run($steps);
 
-            $this->settle($keys, $installed, $ok, $log);
+            $this->settle($keys, $installed, $ok, $log, $runner->failures());
 
             return $ok;
         } catch (Throwable $e) {
@@ -219,9 +219,13 @@ class ServiceInstaller
         $steps[] = $this->catalog->waitForAptStep();
 
         // Repositories and debconf answers first — they change what apt can see.
+        //
+        // Tagged with the service they belong to, so that a third-party
+        // repository which has nothing to offer this release — MongoDB's, most
+        // often — costs you MongoDB and not the entire install.
         foreach ($todo as $key) {
             foreach ($this->catalog->preSteps($key) as $step) {
-                $steps[] = $step;
+                $steps[] = $step->for($key);
             }
         }
 
@@ -239,12 +243,18 @@ class ServiceInstaller
             // be renegotiated against what the distro actually offers).
             $steps[] = Step::call(
                 'Install '.count($packages).' packages in one transaction',
-                fn (LocalConnection $ssh, TaskRunner $runner) => $this->installPackages(
-                    $ssh,
-                    $runner,
-                    $todo,
-                    $this->packagesFor($todo)
-                )
+                function (LocalConnection $ssh, TaskRunner $runner) use ($todo) {
+                    // Anything whose repository step already gave out is left
+                    // out of the transaction. Asking apt for a package it
+                    // cannot see would fail the batch for everyone and send
+                    // the whole thing down the one-at-a-time retry path.
+                    $live = array_values(array_filter(
+                        $todo,
+                        fn (string $key) => ! $runner->isSkipped($key)
+                    ));
+
+                    return $this->installPackages($ssh, $runner, $live, $this->packagesFor($live));
+                }
             );
         }
 
@@ -384,17 +394,25 @@ class ServiceInstaller
      * @param  array<int, string>  $keys
      * @param  array<int, string>  $installed
      */
-    protected function settle(array $keys, array $installed, bool $ok, ActivityLog $log): void
+    protected function settle(array $keys, array $installed, bool $ok, ActivityLog $log, array $failures = []): void
     {
         $stuck = array_values(array_diff($keys, $installed));
 
-        if ($stuck !== []) {
+        if ($stuck === []) {
+            return;
+        }
+
+        // Each service that failed on its own step gets its own reason. The
+        // rest — cut short by a shared step giving out — get the run's.
+        $fallback = $log->fresh()->message;
+
+        foreach ($stuck as $key) {
             Service::query()
-                ->whereIn('key', $stuck)
+                ->where('key', $key)
                 ->where('status', Service::INSTALLING)
                 ->update([
                     'status' => Service::FAILED,
-                    'last_error' => $log->fresh()->message,
+                    'last_error' => $failures[$key] ?? $fallback,
                 ]);
         }
     }
