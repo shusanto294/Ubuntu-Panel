@@ -81,6 +81,38 @@ class DatabaseManagementTest extends TestCase
         $this->assertSame(Service::INSTALLED, Service::where('key', 'mysql')->first()->status);
     }
 
+    /**
+     * The page probes on load, and a probe can fail for reasons that have
+     * nothing to do with the software: no PATH, no shell, a full disk. Writing
+     * that back over correct rows is how a working panel talks itself into
+     * believing MariaDB is gone — so a page load may only ever promote.
+     */
+    public function test_a_failing_probe_cannot_unrecord_installed_software(): void
+    {
+        $this->markInstalled(['mysql', 'postgres']);
+
+        // Nothing answers, the way it looks from a process with no PATH.
+        $this->machineWith([]);
+
+        $engines = $this->actingAs(User::factory()->create())
+            ->get(route('databases.index'))
+            ->viewData('page')['props']['availableEngines'];
+
+        $this->assertContains('mysql', $engines);
+        $this->assertSame(Service::INSTALLED, Service::where('key', 'mysql')->first()->status);
+    }
+
+    /** The reconciling pass is the one the user asks for, and it does demote. */
+    public function test_an_explicit_refresh_does_correct_a_row_that_is_wrong(): void
+    {
+        $this->markInstalled(['mysql']);
+        $this->machineWith([]);
+
+        $this->artisan('panel:detect-services')->assertSuccessful();
+
+        $this->assertSame(Service::NOT_INSTALLED, Service::where('key', 'mysql')->first()->status);
+    }
+
     /** Three probes, not the whole catalogue — cheap enough to do every time. */
     public function test_it_only_probes_the_engines(): void
     {

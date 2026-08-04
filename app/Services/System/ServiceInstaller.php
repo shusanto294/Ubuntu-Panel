@@ -496,7 +496,7 @@ class ServiceInstaller
     public function refresh(array $keys): void
     {
         try {
-            $this->detect(only: $keys);
+            $this->detect(only: $keys, promoteOnly: true);
         } catch (Throwable $e) {
             // Best effort.
         }
@@ -507,8 +507,9 @@ class ServiceInstaller
      * Never overwrites a service that is mid-install.
      *
      * @param  array<int, string>|null  $only  limit the probe to these services
+     * @param  bool  $promoteOnly  record what is found, never unrecord what is not
      */
-    public function detect(?LocalConnection $connection = null, ?array $only = null): void
+    public function detect(?LocalConnection $connection = null, ?array $only = null, bool $promoteOnly = false): void
     {
         $this->syncRows();
 
@@ -533,6 +534,16 @@ class ServiceInstaller
                         'installed_at' => $service->installed_at ?? now(),
                     ]);
 
+                    continue;
+                }
+
+                // A probe that finds nothing is not proof of nothing. It is
+                // also what a broken environment looks like — no PATH, no
+                // shell, a full disk — and rewriting good rows on the strength
+                // of that is how a working panel talks itself into believing
+                // MariaDB is gone. Page loads therefore only ever promote; the
+                // reconciling pass is the one the user asked for.
+                if ($promoteOnly) {
                     continue;
                 }
 
