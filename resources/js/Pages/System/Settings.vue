@@ -77,13 +77,15 @@ let timer = null;
 
 const start = () => {
     if (timer) return;
+    // The console streams its own progress; this is only here to move the
+    // service rows from `installing` to `installed` as each one lands.
     timer = setInterval(
         () =>
             router.reload({
                 only: ['system', 'services', 'activeTask', 'latestTask'],
                 preserveScroll: true,
             }),
-        4000,
+        10000,
     );
 };
 

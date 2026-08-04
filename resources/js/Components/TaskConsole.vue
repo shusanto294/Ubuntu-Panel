@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { router } from '@inertiajs/vue3';
+import { streamState, subscribe } from '@/stream';
 
 const props = defineProps({
     // Initial task payload from the server (may be null).
@@ -137,9 +138,11 @@ const fetchTask = async () => {
     }
 };
 
+// Polling is the fallback now, and slower than it was: while the socket is
+// carrying updates this never runs at all.
 const start = () => {
     if (timer) return;
-    timer = setInterval(fetchTask, 1500);
+    timer = setInterval(fetchTask, 4000);
 };
 
 const stop = () => {
@@ -149,15 +152,71 @@ const stop = () => {
     }
 };
 
-onMounted(() => {
-    scrollToBottom();
-    if (running.value || props.watchLatest) {
-        fetchTask();
+let unsubscribe = null;
+
+/**
+ * Watch this task over the socket.
+ *
+ * The daemon sends the whole payload rather than a tail, so the output is
+ * replaced rather than appended — it is the one thing the polling endpoint does
+ * differently, and getting it wrong doubles every line on screen.
+ */
+const watchOverSocket = (id) => {
+    unsubscribe?.();
+
+    unsubscribe = subscribe(`task:${id}`, (data) => {
+        const wasRunning = running.value;
+
+        output.value = data.output ?? '';
+        offset.value = output.value.length;
+        state.value = { ...data, output: undefined };
+
+        scrollToBottom();
+
+        if (wasRunning && !running.value) {
+            stop();
+            unsubscribe?.();
+            unsubscribe = null;
+
+            if (props.reloadOnFinish) {
+                router.reload({ preserveScroll: true });
+            }
+        }
+    });
+};
+
+// Only poll while the socket is not doing the job.
+watch(streamState, (state) => {
+    if (state === 'live') {
+        stop();
+    } else if (running.value || props.watchLatest) {
         start();
     }
 });
 
-onBeforeUnmount(stop);
+// A task id can arrive after mount (the page found the latest task first).
+watch(
+    () => state.value?.id,
+    (id) => id && watchOverSocket(id),
+);
+
+onMounted(() => {
+    scrollToBottom();
+
+    if (running.value || props.watchLatest) {
+        // One fetch either way: it establishes which task this is, and fills
+        // the console before the first push arrives.
+        fetchTask();
+
+        if (state.value?.id) watchOverSocket(state.value.id);
+        if (streamState.value !== 'live') start();
+    }
+});
+
+onBeforeUnmount(() => {
+    stop();
+    unsubscribe?.();
+});
 
 watch(
     () => props.task?.id,

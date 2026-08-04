@@ -17,12 +17,24 @@ class TerminalTicket
 {
     public const TTL_SECONDS = 60;
 
-    public static function issue(User $user): string
+    /** What a ticket may be traded for. */
+    public const MODES = ['shell', 'stream'];
+
+    /**
+     * A ticket is good for one thing only.
+     *
+     * The dashboard needs a socket to watch numbers on; that is not a reason
+     * for the page showing them to be holding something that opens a root
+     * shell. Both require a signed-in session to obtain, so this is not a
+     * privilege boundary so much as a blast radius one — but it costs a string.
+     */
+    public static function issue(User $user, string $mode = 'shell'): string
     {
         $ticket = Str::random(64);
 
         Cache::put(self::key($ticket), [
             'user_id' => $user->id,
+            'mode' => in_array($mode, self::MODES, true) ? $mode : 'shell',
             'issued_at' => now()->toDateTimeString(),
         ], self::TTL_SECONDS);
 

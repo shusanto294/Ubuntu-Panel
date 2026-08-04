@@ -9,6 +9,7 @@ use App\Services\Terminal\LocalShellSession;
 use App\Services\Terminal\TerminalTicket;
 use Illuminate\Console\Command;
 use Throwable;
+use Illuminate\Support\Facades\DB;
 use Workerman\Connection\TcpConnection;
 use Workerman\Timer;
 use Workerman\Worker;
@@ -31,6 +32,18 @@ class TerminalServer extends Command
     /** @var array<int, array{session: LocalShellSession, user: User, timer: int}> */
     protected array $sessions = [];
 
+    /**
+     * Connections watching things rather than typing at them.
+     *
+     * @var array<int, array{connection: TcpConnection, user: User, topics: array<int, string>}>
+     */
+    protected array $watchers = [];
+
+    protected ?MetricsStream $metrics = null;
+
+    /** The last payload sent per topic, so nothing unchanged is sent twice. */
+    protected array $lastSent = [];
+
     public function handle(): int
     {
         $host = $this->option('host') ?: config('panel.terminal.host');
@@ -47,6 +60,14 @@ class TerminalServer extends Command
         $worker->onMessage = fn (TcpConnection $connection, $payload) => $this->onMessage($connection, $payload);
         $worker->onClose = fn (TcpConnection $connection) => $this->teardown($connection);
         $worker->onError = fn (TcpConnection $connection) => $this->teardown($connection);
+
+        // One timer for the whole process rather than one per viewer: ten
+        // people watching the dashboard costs the same as one.
+        $worker->onWorkerStart = function () {
+            $this->metrics = app(MetricsStream::class);
+
+            Timer::add(MetricsStream::interval(), fn () => $this->broadcast());
+        };
 
         Worker::$pidFile = storage_path('app/terminal-server.pid');
         Worker::$logFile = storage_path('logs/terminal-server.log');
@@ -95,6 +116,36 @@ class TerminalServer extends Command
             return;
         }
 
+        $mode = ($query['mode'] ?? 'shell') === 'stream' ? 'stream' : 'shell';
+
+        // The ticket says what it was issued for, and that is what it gets.
+        if (($claims['mode'] ?? 'shell') !== $mode) {
+            $this->send($connection, [
+                'type' => 'status',
+                'state' => 'denied',
+                'message' => 'This ticket is not valid for that.',
+            ]);
+            $connection->close();
+
+            return;
+        }
+
+        if ($mode === 'stream') {
+            $this->watchers[$connection->id] = [
+                'connection' => $connection,
+                'user' => $user,
+                'topics' => [],
+            ];
+
+            $this->send($connection, [
+                'type' => 'status',
+                'state' => 'connected',
+                'message' => 'Streaming from '.(gethostname() ?: 'this server'),
+            ]);
+
+            return;
+        }
+
         $columns = max(20, min(500, (int) ($query['cols'] ?? 120)));
         $rows = max(5, min(200, (int) ($query['rows'] ?? 30)));
 
@@ -109,9 +160,7 @@ class TerminalServer extends Command
             return;
         }
 
-        if ($mode === 'shell') {
-            $this->log($user, 'terminal.open', 'success', 'Shell opened from the panel.');
-        }
+        $this->log($user, 'terminal.open', 'success', 'Shell opened from the panel.');
 
         $this->sessions[$connection->id] = [
             'session' => $session,
@@ -129,15 +178,21 @@ class TerminalServer extends Command
     /** Relay browser input and resize events to the shell. */
     protected function onMessage(TcpConnection $connection, mixed $payload): void
     {
-        $entry = $this->sessions[$connection->id] ?? null;
-
-        if (! $entry || ($entry['mode'] ?? 'shell') !== 'shell') {
-            return;
-        }
-
         $frame = json_decode((string) $payload, true);
 
         if (! is_array($frame)) {
+            return;
+        }
+
+        if (isset($this->watchers[$connection->id])) {
+            $this->subscribe($connection, $frame);
+
+            return;
+        }
+
+        $entry = $this->sessions[$connection->id] ?? null;
+
+        if (! $entry) {
             return;
         }
 
@@ -149,6 +204,120 @@ class TerminalServer extends Command
             ),
             default => null,
         };
+    }
+
+    /**
+     * What this connection wants to be told about.
+     *
+     * Topics are `metrics` and `task:<id>`. Anything else is ignored rather
+     * than refused: a browser running older assets after an update should lose
+     * a feature, not the connection.
+     */
+    protected function subscribe(TcpConnection $connection, array $frame): void
+    {
+        if (($frame['type'] ?? '') !== 'subscribe') {
+            return;
+        }
+
+        $topics = [];
+
+        foreach ((array) ($frame['topics'] ?? []) as $topic) {
+            $topic = (string) $topic;
+
+            if ($topic === 'metrics' || preg_match('/^task:\d+$/', $topic)) {
+                $topics[] = $topic;
+            }
+        }
+
+        $this->watchers[$connection->id]['topics'] = array_values(array_unique($topics));
+
+        // Answer immediately rather than making the page wait for the next
+        // tick — a console that appears blank for a second reads as broken.
+        $this->broadcast(only: $connection->id);
+    }
+
+    /**
+     * Push one round of updates.
+     *
+     * Sampled once for everybody, and only sent where it has changed: a task
+     * that has not moved since the last tick produces no traffic at all, which
+     * is the difference between this and the polling it replaces.
+     */
+    protected function broadcast(?int $only = null): void
+    {
+        if ($this->watchers === []) {
+            return;
+        }
+
+        $watchers = $only !== null
+            ? array_filter($this->watchers, fn ($id) => $id === $only, ARRAY_FILTER_USE_KEY)
+            : $this->watchers;
+
+        $wanted = [];
+
+        foreach ($watchers as $watcher) {
+            foreach ($watcher['topics'] as $topic) {
+                $wanted[$topic] = true;
+            }
+        }
+
+        $payloads = [];
+
+        if (isset($wanted['metrics'])) {
+            $payloads['metrics'] = $this->metrics?->sample();
+        }
+
+        $taskIds = [];
+
+        foreach (array_keys($wanted) as $topic) {
+            if (str_starts_with($topic, 'task:')) {
+                $taskIds[] = (int) substr($topic, 5);
+            }
+        }
+
+        if ($taskIds !== []) {
+            try {
+                foreach (ActivityLog::whereIn('id', $taskIds)->get() as $task) {
+                    $payloads['task:'.$task->id] = $task->toConsolePayload();
+                }
+            } catch (Throwable $e) {
+                // This process outlives connections MySQL is willing to keep.
+                // Drop it and let the next tick open a fresh one rather than
+                // taking the whole daemon down with the terminals on it.
+                try {
+                    DB::disconnect();
+                } catch (Throwable) {
+                    // Nothing further to do.
+                }
+            }
+        }
+
+        foreach ($watchers as $id => $watcher) {
+            foreach ($watcher['topics'] as $topic) {
+                if (! array_key_exists($topic, $payloads) || $payloads[$topic] === null) {
+                    continue;
+                }
+
+                // Metrics are new every time by definition; a task usually is
+                // not, and re-sending an unchanged one is the cost this whole
+                // change exists to remove.
+                if ($topic !== 'metrics') {
+                    $fingerprint = md5(json_encode($payloads[$topic]));
+
+                    if (($this->lastSent[$id][$topic] ?? null) === $fingerprint) {
+                        continue;
+                    }
+
+                    $this->lastSent[$id][$topic] = $fingerprint;
+                }
+
+                $this->send($watcher['connection'], [
+                    'type' => 'update',
+                    'topic' => $topic,
+                    'data' => $payloads[$topic],
+                ]);
+            }
+        }
     }
 
     /** Move whatever the tty produced out to the browser. */
@@ -197,6 +366,8 @@ class TerminalServer extends Command
 
     protected function teardown(TcpConnection $connection): void
     {
+        unset($this->watchers[$connection->id], $this->lastSent[$connection->id]);
+
         $entry = $this->sessions[$connection->id] ?? null;
 
         if (! $entry) {

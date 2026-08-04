@@ -185,9 +185,11 @@ as queued jobs. Without it, tasks sit at 0% forever.
   your own domain with a real certificate, set the PHP and Node versions new sites inherit),
   **Services**, and **DNS**. These are things you set up once, so they are not in the main
   navigation.
-- **This server** — CPU, memory and disk updated every second, straight from `/proc`. No
-  agent and no sampling daemon: the panel runs on the machine it reports on, so a reading
-  costs microseconds.
+- **This server** — CPU, memory and disk updated every second, straight from `/proc`, pushed
+  over a websocket. The reading costs microseconds; asking for it over HTTP once a second
+  cost a framework boot each time, which was visible as a CPU spike every second on an
+  otherwise idle machine. The daemon samples once for everyone and sends only what changed.
+  If the socket cannot be reached the pages fall back to polling, more slowly.
 - **Settings → Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
   MongoDB, Redis, phpMyAdmin, Node.js, PM2, WP-CLI and a full mail server, with live
   progress. Everything

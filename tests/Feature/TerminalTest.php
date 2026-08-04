@@ -38,7 +38,7 @@ class TerminalTest extends TestCase
     public function test_a_ticket_only_works_once(): void
     {
         $user = User::factory()->create();
-        $ticket = TerminalTicket::issue($user, null);
+        $ticket = TerminalTicket::issue($user);
 
         $this->assertNotNull(TerminalTicket::redeem($ticket));
         $this->assertNull(TerminalTicket::redeem($ticket));
@@ -47,7 +47,7 @@ class TerminalTest extends TestCase
     public function test_an_expired_ticket_is_rejected(): void
     {
         $user = User::factory()->create();
-        $ticket = TerminalTicket::issue($user, null);
+        $ticket = TerminalTicket::issue($user);
 
         $this->travel(TerminalTicket::TTL_SECONDS + 5)->seconds();
 
@@ -66,7 +66,7 @@ class TerminalTest extends TestCase
     public function test_the_raw_ticket_is_not_the_cache_key(): void
     {
         $user = User::factory()->create();
-        $ticket = TerminalTicket::issue($user, null);
+        $ticket = TerminalTicket::issue($user);
 
         // Anyone who can read the cache store should not learn a usable ticket.
         $this->assertNull(Cache::get('terminal-ticket:'.$ticket));

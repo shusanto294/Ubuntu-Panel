@@ -15,9 +15,43 @@ class SystemMetrics
     /** Where the previous CPU counters live between requests. */
     protected const CACHE_KEY = 'system-metrics:cpu';
 
+    /** @var array<string, float>|null memoised for one reading, not for ever */
+    protected ?array $meminfo = null;
+
+    /**
+     * One reading, using the Laravel cache to remember the previous CPU
+     * counters. Right for an HTTP request, which does not outlive the answer.
+     */
     public function read(): array
     {
-        $cpu = $this->cpu();
+        $previous = cache()->get(self::CACHE_KEY);
+
+        $reading = $this->readWith($previous, $counters);
+
+        if ($counters !== null) {
+            cache()->put(self::CACHE_KEY, $counters, now()->addMinutes(5));
+        }
+
+        return $reading;
+    }
+
+    /**
+     * One reading, told where the previous CPU counters came from.
+     *
+     * The streaming daemon keeps them in memory instead: it samples once a
+     * second for days, and writing that to the cache — which is a database
+     * table here — would cost more than the reading does.
+     *
+     * @param  array{total: float, idle: float}|null  $previousCpu
+     * @param  array{total: float, idle: float}|null  $counters  filled with this reading's counters
+     */
+    public function readWith(?array $previousCpu, ?array &$counters = null): array
+    {
+        // Memoised for the length of one reading only. A daemon that kept it
+        // would report the memory it saw the day it started.
+        $this->meminfo = null;
+
+        $cpu = $this->cpuFrom($previousCpu, $counters);
 
         return [
             'cpu' => $cpu,
@@ -33,12 +67,13 @@ class SystemMetrics
     /**
      * Busy time since the previous reading.
      *
-     * The counters are cumulative, so a percentage only means something against
-     * an earlier sample; the last one is kept in the cache, which is shared
-     * across requests and workers.
+     * The counters are cumulative, so a percentage only means something
+     * against an earlier sample; where that comes from is the caller's
+     * business.
      */
-    protected function cpu(): array
+    protected function cpuFrom(?array $previous, ?array &$counters): array
     {
+        $counters = null;
         $cores = $this->cores();
         $line = $this->firstLine('/proc/stat', 'cpu ');
 
@@ -56,8 +91,7 @@ class SystemMetrics
         // idle + iowait
         $idle = (float) ($fields[3] ?? 0) + (float) ($fields[4] ?? 0);
 
-        $previous = cache()->get(self::CACHE_KEY);
-        cache()->put(self::CACHE_KEY, ['total' => $total, 'idle' => $idle], now()->addMinutes(5));
+        $counters = ['total' => $total, 'idle' => $idle];
 
         if (! $previous) {
             return ['usage' => null, 'cores' => $cores];
@@ -163,16 +197,14 @@ class SystemMetrics
      */
     protected function meminfo(): array
     {
-        static $cached = null;
-
-        if ($cached !== null) {
-            return $cached;
+        if ($this->meminfo !== null) {
+            return $this->meminfo;
         }
 
         $contents = $this->contents('/proc/meminfo');
 
         if ($contents === null) {
-            return $cached = [];
+            return $this->meminfo = [];
         }
 
         $values = [];
@@ -184,7 +216,7 @@ class SystemMetrics
             }
         }
 
-        return $cached = $values;
+        return $this->meminfo = $values;
     }
 
     protected function firstLine(string $path, string $prefix): ?string

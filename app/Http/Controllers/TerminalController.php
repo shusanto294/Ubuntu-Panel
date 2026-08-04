@@ -15,7 +15,12 @@ class TerminalController extends Controller
     public function ticket(Request $request): JsonResponse
     {
         return response()->json([
-            'ticket' => TerminalTicket::issue($request->user()),
+            'ticket' => TerminalTicket::issue(
+                $request->user(),
+                in_array($request->input('mode'), TerminalTicket::MODES, true)
+                    ? $request->input('mode')
+                    : 'shell'
+            ),
             'url' => $this->socketUrl(),
             'expires_in' => TerminalTicket::TTL_SECONDS,
         ]);

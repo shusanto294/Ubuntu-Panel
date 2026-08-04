@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import UsageGraph from '@/Components/UsageGraph.vue';
+import { streamState, subscribe } from '@/stream';
 
 /**
  * CPU, memory and disk for this machine — one graph each.
@@ -29,7 +30,13 @@ const loadingHistory = ref(false);
 
 let liveTimer = null;
 let historyTimer = null;
+let unsubscribe = null;
 let inFlight = false;
+
+// The daemon pushes a reading a second. Polling is what happens when it cannot
+// be reached, and it goes slower on purpose: the whole reason for the socket is
+// that a reading over HTTP costs a framework boot.
+const POLL_INTERVAL = 5000;
 
 const currentRange = computed(
     () => props.ranges.find((r) => r.key === range.value) ?? props.ranges[0] ?? null,
@@ -87,9 +94,35 @@ watch(range, () => {
     scheduleHistory();
 });
 
-onMounted(() => {
+const startPolling = () => {
+    if (liveTimer) return;
+
     readLive();
-    liveTimer = setInterval(readLive, props.interval);
+    liveTimer = setInterval(readLive, POLL_INTERVAL);
+};
+
+const stopPolling = () => {
+    if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+    }
+};
+
+// Follow the socket: poll only while it is not carrying anything.
+watch(
+    streamState,
+    (state) => (state === 'live' ? stopPolling() : startPolling()),
+    { immediate: false },
+);
+
+onMounted(() => {
+    unsubscribe = subscribe('metrics', (reading) => {
+        metrics.value = reading;
+        failed.value = false;
+    });
+
+    // Something on screen immediately, whichever way the data ends up arriving.
+    readLive();
 
     // The page arrived with the default range already in it; only go and get
     // one if it did not.
@@ -99,7 +132,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-    if (liveTimer) clearInterval(liveTimer);
+    unsubscribe?.();
+    stopPolling();
     if (historyTimer) clearInterval(historyTimer);
 });
 
@@ -153,7 +187,13 @@ const loadTone = computed(() => {
                         :class="failed ? 'bg-rose-500' : 'bg-emerald-500'"
                     />
                     <span :class="failed ? 'text-rose-600' : 'text-emerald-600'">
-                        {{ failed ? 'not responding' : 'live' }}
+                        {{
+                            failed
+                                ? 'not responding'
+                                : streamState === 'live'
+                                  ? 'live'
+                                  : 'live · polling'
+                        }}
                     </span>
                 </span>
             </div>
