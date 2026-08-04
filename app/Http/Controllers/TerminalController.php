@@ -26,17 +26,34 @@ class TerminalController extends Controller
      *
      * A path (the default) means "same origin as this page" and is resolved in
      * the browser, so it stays correct whether the panel is reached by IP, by
-     * hostname, over TLS or not. Only an explicitly configured absolute URL
-     * bypasses that.
+     * hostname, over TLS or not. An explicitly configured absolute URL bypasses
+     * that — for a daemon genuinely running somewhere else.
+     *
+     * Except a loopback one. `ws://127.0.0.1:6001` is the daemon's bind address
+     * on *this* machine, and to a browser it means the machine the browser is
+     * running on, so it can only ever fail. That used to be the default, and a
+     * config cache written before it changed still hands it out; ignoring it
+     * here means the terminal comes back on its own rather than staying broken
+     * until someone works out which cache to clear.
      */
     protected function socketUrl(): string
     {
         $configured = config('panel.terminal.url');
 
-        if (is_string($configured) && $configured !== '') {
+        if (is_string($configured) && $configured !== '' && ! $this->isLoopback($configured)) {
             return $configured;
         }
 
         return '/'.ltrim((string) config('panel.terminal.path', '/terminal-ws'), '/');
+    }
+
+    protected function isLoopback(string $url): bool
+    {
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+
+        return $host === 'localhost'
+            || $host === '::1'
+            || $host === '[::1]'
+            || str_starts_with($host, '127.');
     }
 }

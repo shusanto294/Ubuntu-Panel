@@ -133,11 +133,12 @@ class UpdatePanel extends Command
      */
     protected function restartServices(LocalConnection $shell): void
     {
-        $services = 'ubuntu-panel-queue.service ubuntu-panel-terminal.service';
+        $script = $this->restartScript();
 
-        [$output, $code] = $shell->run(
-            "sudo systemd-run --on-active=5s --unit=ubuntu-panel-restart --collect systemctl restart {$services}"
-        );
+        [$output, $code] = $shell->run(sprintf(
+            'sudo systemd-run --on-active=5s --unit=ubuntu-panel-restart --collect bash -c %s',
+            escapeshellarg($script)
+        ));
 
         if ($code === 0) {
             $this->components->info('Services restart in five seconds.');
@@ -146,9 +147,32 @@ class UpdatePanel extends Command
         }
 
         // No systemd (a container, a dev box): fall back to a detached restart.
-        $shell->run("(sleep 5; sudo systemctl restart {$services}) >/dev/null 2>&1 &");
+        $shell->run('(sleep 5; '.$script.') >/dev/null 2>&1 &');
 
         $this->components->warn('Scheduled a detached restart ('.trim($output).').');
+    }
+
+    /**
+     * Restart the workers, and PHP-FPM with them.
+     *
+     * FPM is easy to forget because the code it serves is re-read on every
+     * request — but the *caches* are not. `config:cache` writes a compiled
+     * file that a long-lived FPM keeps in opcache, so a setting that changed
+     * in this release goes on being served at its old value until something
+     * restarts the pool. That is how the browser terminal kept being handed
+     * an address that stopped being the default several versions ago.
+     *
+     * The unit is missing on a machine that runs the panel some other way, so
+     * a failure there is not one worth reporting.
+     */
+    protected function restartScript(): string
+    {
+        $fpm = sprintf('php%d.%d-fpm', PHP_MAJOR_VERSION, PHP_MINOR_VERSION);
+
+        return implode(' ', [
+            'systemctl restart ubuntu-panel-queue.service ubuntu-panel-terminal.service;',
+            "systemctl restart {$fpm} 2>/dev/null || true",
+        ]);
     }
 
     /**

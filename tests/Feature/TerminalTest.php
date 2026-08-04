@@ -83,6 +83,28 @@ class TerminalTest extends TestCase
             ->assertJsonPath('url', 'wss://terminal.example.com:6001');
     }
 
+    /**
+     * A loopback address is the daemon's bind address on the server, and to a
+     * browser it means the machine the browser is on. It was the default once,
+     * and a config cache written back then still hands it out.
+     */
+    public function test_a_loopback_url_is_ignored_rather_than_handed_to_the_browser(): void
+    {
+        foreach ([
+            'ws://127.0.0.1:6001',
+            'ws://127.0.0.5:6001',
+            'ws://localhost:6001',
+            'ws://[::1]:6001',
+        ] as $url) {
+            config(['panel.terminal.url' => $url, 'panel.terminal.path' => '/terminal-ws']);
+
+            $this->actingAs(User::factory()->create())
+                ->postJson(route('terminal.ticket'))
+                ->assertOk()
+                ->assertJsonPath('url', '/terminal-ws');
+        }
+    }
+
     public function test_guests_are_rejected(): void
     {
 

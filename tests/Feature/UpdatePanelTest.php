@@ -53,6 +53,26 @@ class UpdatePanelTest extends TestCase
             ));
     }
 
+    /**
+     * Code is re-read per request; the compiled caches are not. Without this,
+     * a setting that changed in a release is served at its old value until
+     * something restarts the pool.
+     */
+    public function test_the_restart_takes_php_fpm_with_it(): void
+    {
+        $method = new ReflectionMethod(UpdatePanel::class, 'restartScript');
+        $script = $method->invoke($this->app->make(UpdatePanel::class));
+
+        $this->assertStringContainsString('ubuntu-panel-queue.service', $script);
+        $this->assertStringContainsString('ubuntu-panel-terminal.service', $script);
+        $this->assertStringContainsString(
+            sprintf('php%d.%d-fpm', PHP_MAJOR_VERSION, PHP_MINOR_VERSION),
+            $script
+        );
+        // Machines that run the panel some other way have no such unit.
+        $this->assertStringContainsString('|| true', $script);
+    }
+
     public function test_the_version_is_re_read_from_disk_after_an_update(): void
     {
         // What the running process is holding: the value it booted with.
