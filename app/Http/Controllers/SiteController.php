@@ -9,6 +9,7 @@ use App\Jobs\DeploySiteUpdate;
 use App\Models\Service;
 use App\Models\Site;
 use App\Services\System\HostInfo;
+use App\Services\System\ServiceInstaller;
 use App\Support\Settings;
 use App\Services\Dns\DnsManager;
 use App\Services\Sites\SiteManager;
@@ -22,6 +23,7 @@ class SiteController extends Controller
     public function __construct(
         protected Settings $settings,
         protected HostInfo $host,
+        protected ServiceInstaller $installer,
     ) {}
 
     public function index(Request $request)
@@ -36,6 +38,10 @@ class SiteController extends Controller
 
     public function create(Request $request)
     {
+        // This form refuses site types whose software is missing, so a row
+        // that is wrong refuses a site the machine could host perfectly well.
+        $this->installer->detectIfStale(300);
+
         return Inertia::render('Sites/Create', [
             // What this machine can actually host right now.
             'installedServices' => Service::installedKeys(),
@@ -78,7 +84,7 @@ class SiteController extends Controller
             'wp_admin_email' => ['nullable', 'email', 'max:255'],
             'wp_admin_password' => ['nullable', 'string', 'min:10', 'max:100'],
 
-            // Cloudflare
+            // DNS
             'manage_dns' => ['boolean'],
             'dns_account_id' => [
                 'nullable', 'integer',

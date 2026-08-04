@@ -5,7 +5,10 @@ namespace Tests\Feature;
 use App\Jobs\CreateDatabase;
 use App\Jobs\DeleteDatabase;
 use App\Models\Database;
+use App\Models\Service;
 use App\Models\User;
+use App\Services\Shell\LocalConnection;
+use Tests\Support\FakeLocalConnection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InstallsServices;
 use Illuminate\Support\Facades\Queue;
@@ -19,6 +22,47 @@ class DatabaseManagementTest extends TestCase
     protected function withEngines(array $services = ['mysql', 'postgres', 'mongodb']): void
     {
         $this->markInstalled($services);
+    }
+
+    /**
+     * A batch that failed halfway leaves rows saying `failed` for software that
+     * installed fine, and the page then refuses to create a database on a
+     * machine that is running MariaDB well enough to be storing the session.
+     */
+    public function test_the_page_checks_the_machine_before_saying_nothing_is_installed(): void
+    {
+        $this->markInstalled([]);
+        Service::query()->where('key', 'mysql')->update([
+            'status' => Service::FAILED,
+            'last_error' => 'apt exited 100',
+        ]);
+
+        // Every probe answers yes: the software is there whatever the row says.
+        $this->app->instance(LocalConnection::class, new FakeLocalConnection([]));
+
+        $engines = $this->actingAs(User::factory()->create())
+            ->get(route('databases.index'))
+            ->viewData('page')['props']['availableEngines'];
+
+        $this->assertContains('mysql', $engines);
+        $this->assertSame(Service::INSTALLED, Service::where('key', 'mysql')->first()->status);
+    }
+
+    public function test_it_does_not_re_probe_on_every_request(): void
+    {
+        $this->markInstalled([]);
+
+        $connection = new FakeLocalConnection(['command -v' => ['', 1]]);
+        $this->app->instance(LocalConnection::class, $connection);
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->get(route('databases.index'));
+        $after = count($connection->ran);
+
+        $this->actingAs($user)->get(route('databases.index'));
+
+        $this->assertSame($after, count($connection->ran), 'the second visit re-probed the machine');
     }
 
     public function test_a_database_can_be_created_with_generated_credentials(): void

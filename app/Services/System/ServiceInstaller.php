@@ -479,6 +479,33 @@ class ServiceInstaller
     }
 
     /**
+     * Re-read the machine, but not more than once every $seconds.
+     *
+     * The service rows are a record of what installs *did*, which is not the
+     * same thing as what is on the box: a batch that failed halfway leaves rows
+     * saying `failed` for software that is sitting there installed, and nothing
+     * corrects them until someone presses a button. Pages that would otherwise
+     * tell the user "you have not got this" ask here first, and the rate limit
+     * keeps a reload loop from re-probing on every request.
+     */
+    public function detectIfStale(int $seconds = 60): void
+    {
+        $key = 'panel:services-detected-at';
+
+        if (cache()->get($key)) {
+            return;
+        }
+
+        cache()->put($key, now()->toIso8601String(), now()->addSeconds($seconds));
+
+        try {
+            $this->detect();
+        } catch (Throwable $e) {
+            // Best effort: a page must still render if the probe cannot run.
+        }
+    }
+
+    /**
      * Ask the machine what is already installed and record versions.
      * Never overwrites a service that is mid-install.
      */

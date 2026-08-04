@@ -6,6 +6,7 @@ use App\Jobs\CreateDatabase;
 use App\Jobs\DeleteDatabase;
 use App\Models\Database;
 use App\Models\Service;
+use App\Services\System\ServiceInstaller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -13,6 +14,8 @@ use Inertia\Inertia;
 
 class DatabaseController extends Controller
 {
+    public function __construct(protected ServiceInstaller $installer) {}
+
     public function index(Request $request)
     {
         $databases = Database::query()
@@ -20,10 +23,21 @@ class DatabaseController extends Controller
             ->get()
             ->map(fn (Database $database) => $this->summary($database));
 
+        // Only engines that are actually installed can take a database. If the
+        // rows say none are, check the machine before believing them — this
+        // page is exactly where a stale `failed` row from a half-finished
+        // install turns into "you cannot create a database", on a server that
+        // is running MariaDB well enough to be storing this page's session.
+        $engines = Service::availableEngines();
+
+        if ($engines === []) {
+            $this->installer->detectIfStale();
+            $engines = Service::availableEngines();
+        }
+
         return Inertia::render('Databases/Index', [
             'databases' => $databases,
-            // Only engines that are actually installed can take a database.
-            'availableEngines' => Service::availableEngines(),
+            'availableEngines' => $engines,
             'engines' => config('panel.database_engines'),
         ]);
     }

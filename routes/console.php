@@ -13,3 +13,11 @@ Schedule::command('panel:process-service-queue')
 Schedule::command('panel:collect-metrics')
     ->everyMinute()
     ->withoutOverlapping();
+
+// The service rows are a record of what installs did; this is what is actually
+// on the machine. They drift — a half-finished batch leaves `failed` rows for
+// software that installed fine — and the panel refuses to do things it can in
+// fact do until they agree. Cheap: a `command -v` per service.
+Schedule::command('panel:detect-services')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping();

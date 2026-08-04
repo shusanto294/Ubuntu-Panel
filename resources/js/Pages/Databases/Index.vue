@@ -84,7 +84,12 @@ const reveal = async (database) => {
                             class="mt-1 text-xs text-amber-700"
                         >
                             No database engine is installed yet — add MariaDB,
-                            PostgreSQL or MongoDB from the Software page.
+                            PostgreSQL or MongoDB from
+                            <Link
+                                :href="route('settings', { tab: 'services' })"
+                                class="underline"
+                                >Settings → Services</Link
+                            >.
                         </p>
                         <InputError class="mt-2" :message="form.errors.engine" />
                     </div>
