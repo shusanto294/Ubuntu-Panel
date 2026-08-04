@@ -159,7 +159,11 @@ class InstallSoftwareTest extends TestCase
 
         $installs = array_values(array_filter(
             $connection->ran,
-            fn ($c) => str_contains($c, 'apt-get install -y') && ! str_contains($c, '--reinstall')
+            // The shared transaction only: not the repair reinstall, and not
+            // the best-effort ones a service runs for its own optional extras.
+            fn ($c) => str_contains($c, 'apt-get install -y')
+                && ! str_contains($c, '--reinstall')
+                && ! str_contains($c, '|| echo')
         ));
 
         $this->assertCount(1, $installs, 'one transaction, no per-service retry pass');

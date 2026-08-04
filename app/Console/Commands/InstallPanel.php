@@ -27,6 +27,7 @@ class InstallPanel extends Command
                             {--email= : Administrator email}
                             {--password= : Administrator password}
                             {--name=Administrator : Administrator name}
+                            {--php-version= : PHP version new sites inherit (defaults to the one the panel runs on)}
                             {--no-detect : Skip reading what is already installed}';
 
     protected $description = 'Create the administrator account and take inventory of this machine';
@@ -39,7 +40,14 @@ class InstallPanel extends Command
         $settings->set('os', $host->os());
 
         if (! $settings->get('php_version')) {
-            $settings->set('php_version', config('panel.php_versions')[0]);
+            // The version the panel itself runs on, unless told otherwise.
+            //
+            // Taking the newest the catalogue knows about would install a
+            // second PHP alongside the one the installer just set up — two
+            // stacks to keep patched, and extensions landing on the wrong one:
+            // the panel would be running 8.3 while its own redis extension
+            // went to 8.5, and then be unable to use the Redis it installed.
+            $settings->set('php_version', $this->phpVersion());
         }
 
         if (! $settings->get('node_version')) {
@@ -68,6 +76,24 @@ class InstallPanel extends Command
         $this->components->info('Done. Open the panel and sign in.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * What new sites should inherit: whatever was asked for, else the version
+     * running this command, else the newest the catalogue offers.
+     */
+    protected function phpVersion(): string
+    {
+        $requested = (string) $this->option('php-version');
+        $known = config('panel.php_versions');
+
+        if ($requested !== '' && in_array($requested, $known, true)) {
+            return $requested;
+        }
+
+        $running = PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;
+
+        return in_array($running, $known, true) ? $running : $known[0];
     }
 
     /**

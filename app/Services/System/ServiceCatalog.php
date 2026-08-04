@@ -162,9 +162,12 @@ class ServiceCatalog
                 'ufw', 'ca-certificates', 'gnupg', 'lsb-release', 'apt-transport-https', 'rsync',
             ],
             'nginx' => ['nginx'],
+            // The extensions a site actually needs to run. Anything that is
+            // nice to have but not always packaged for a given release is
+            // installed separately below, where its absence costs only itself.
             'php' => array_map(
                 fn ($suffix) => "php{$php}-{$suffix}",
-                ['fpm', 'cli', 'common', 'mysql', 'pgsql', 'curl', 'mbstring', 'xml', 'zip', 'gd', 'bcmath', 'intl', 'soap', 'imagick', 'redis']
+                ['fpm', 'cli', 'common', 'mysql', 'pgsql', 'curl', 'mbstring', 'xml', 'zip', 'gd', 'bcmath', 'intl', 'redis']
             ),
             'certbot' => ['certbot', 'python3-certbot-nginx'],
             'mysql' => ['mariadb-server', 'mariadb-client'],
@@ -293,6 +296,18 @@ class ServiceCatalog
             ],
 
             'php' => [
+                // imagick has been missing from a new Ubuntu on release day
+                // more than once, and soap is not always built. Neither is
+                // worth failing PHP over — and PHP is a core service, so
+                // failing it makes a working install look broken.
+                Step::make('Install the optional PHP extensions', [
+                    sprintf(
+                        'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y php%1$s-imagick php%1$s-soap || '.
+                        'echo "one or more optional extensions are not packaged for this release; continuing"',
+                        $this->settings->phpVersion()
+                    ),
+                ], optional: true),
+
                 Step::call('Tune PHP for web apps', function (LocalConnection $ssh) {
                     $version = $this->settings->phpVersion();
 

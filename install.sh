@@ -113,7 +113,7 @@ apt-get install -y -qq nginx mariadb-server \
     "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mbstring" \
     "php${PHP_VERSION}-xml" "php${PHP_VERSION}-curl" "php${PHP_VERSION}-zip" \
     "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-bcmath" \
-    "php${PHP_VERSION}-intl" "php${PHP_VERSION}-gd" >/dev/null
+    "php${PHP_VERSION}-intl" "php${PHP_VERSION}-gd" "php${PHP_VERSION}-redis" >/dev/null
 
 # Not packaged separately on every release; the terminal needs it for its pty.
 apt-get install -y -qq "php${PHP_VERSION}-posix" >/dev/null 2>&1 || true
@@ -458,16 +458,14 @@ if [[ -z "$ADMIN_PASSWORD" ]] && [[ -r /dev/tty ]]; then
     done
 fi
 
-INSTALL_ARGS=()
+# New sites inherit the PHP this installer set up, rather than the newest the
+# catalogue knows about — otherwise the software step installs a second PHP
+# beside it and extensions land on the version the panel is not running.
+INSTALL_ARGS=(--php-version="$PHP_VERSION")
 [[ -n "$ADMIN_EMAIL" ]] && INSTALL_ARGS+=(--email="$ADMIN_EMAIL")
 [[ -n "$ADMIN_PASSWORD" ]] && INSTALL_ARGS+=(--password="$ADMIN_PASSWORD")
 
-# An empty array must expand to nothing at all, not to one empty argument.
-if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
-    sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]}"
-else
-    sudo -u "$PANEL_USER" php artisan panel:install
-fi
+sudo -u "$PANEL_USER" php artisan panel:install "${INSTALL_ARGS[@]}"
 
 # ----------------------------------------------------------------- software --
 # In the foreground, not through the queue: an installer that hands back before

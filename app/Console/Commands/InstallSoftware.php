@@ -6,6 +6,7 @@ use App\Models\Service;
 use App\Services\System\ServiceCatalog;
 use App\Services\System\ServiceInstaller;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 /**
@@ -54,6 +55,18 @@ class InstallSoftware extends Command
         $this->components->info('Installing '.count($queued).' of '.count($keys).': '.implode(', ', $queued));
         $this->newLine();
 
+        // The same lock the queued job takes. Without it the scheduler's
+        // safety-net sweep can dispatch a second install alongside this one,
+        // and two apt runs on one machine end in a dpkg lock, not two
+        // installs — which during `install.sh` is the worst possible moment.
+        $lock = Cache::lock('panel-service-install', 3600);
+
+        if (! $lock->get()) {
+            $this->components->error('An install is already running. Wait for it to finish.');
+
+            return self::FAILURE;
+        }
+
         try {
             $installer->installQueued($force);
         } catch (Throwable $e) {
@@ -61,6 +74,8 @@ class InstallSoftware extends Command
             // rows below still say which ones got through, so report rather
             // than re-throw.
             $this->components->error('The install run stopped early: '.$e->getMessage());
+        } finally {
+            $lock->release();
         }
 
         return $this->report($keys);
