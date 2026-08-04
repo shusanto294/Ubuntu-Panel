@@ -10,7 +10,7 @@ return [
     | Bump `version` in the same commit as every push to that branch — see
     | "Publishing an update" in the README.
     */
-    'version' => '1.3.4',
+    'version' => '1.4.0',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
@@ -125,6 +125,15 @@ return [
             'requires' => ['base'],
             'detect' => 'command -v mongod',
             'version' => 'mongod --version 2>/dev/null | head -1',
+        ],
+        'phpmyadmin' => [
+            'label' => 'phpMyAdmin',
+            'group' => 'database',
+            'description' => 'Web interface for MariaDB. The panel signs you in from the Databases page; there is no login form.',
+            'default' => true,
+            'requires' => ['mysql', 'php', 'nginx'],
+            'detect' => 'test -f /usr/share/ubuntu-panel/phpmyadmin/index.php',
+            'version' => "grep -oP \"VERSION', '\\K[^']+\" /usr/share/ubuntu-panel/phpmyadmin/libraries/classes/Version.php 2>/dev/null | head -1",
         ],
         'redis' => [
             'label' => 'Redis',

@@ -11,6 +11,9 @@ const props = defineProps({
     databases: Array,
     availableEngines: Array,
     engines: Object,
+    // Whether phpMyAdmin is on the machine, so the button only appears when
+    // there is somewhere for it to go.
+    phpMyAdmin: Boolean,
 });
 
 const form = useForm({
@@ -194,6 +197,14 @@ const reveal = async (database) => {
                                     <td
                                         class="px-5 py-3 text-right whitespace-nowrap"
                                     >
+                                        <a
+                                            v-if="phpMyAdmin && database.engine === 'mysql' && database.status === 'ready'"
+                                            :href="route('databases.phpmyadmin', database.id)"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="mr-3 text-orange-600 hover:underline"
+                                            >Manage</a
+                                        >
                                         <button
                                             @click="reveal(database)"
                                             class="text-orange-600 hover:underline"

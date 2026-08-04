@@ -25,7 +25,10 @@ class TerminalProxy
 
     public const INCLUDE_LINE = 'include snippets/ubuntu-panel-terminal.conf;';
 
-    public function __construct(protected LocalConnection $shell) {}
+    public function __construct(
+        protected LocalConnection $shell,
+        protected PhpMyAdmin $phpMyAdmin,
+    ) {}
 
     /**
      * Write the snippet and make sure the panel vhost pulls it in.
@@ -112,9 +115,15 @@ class TerminalProxy
         $port = (int) config('panel.terminal.port', 6001);
         $path = '/'.ltrim((string) config('panel.terminal.path', '/terminal-ws'), '/');
 
+        $phpMyAdmin = $this->phpMyAdmin->nginxLocation();
+
         return <<<NGINX
-        # Managed by Ubuntu Panel — the browser terminal's websocket.
-        # Included by the panel vhost; edit config/panel.php, not this file.
+        # Managed by Ubuntu Panel. Included by the panel vhost; edit the panel's
+        # configuration, not this file.
+
+        {$phpMyAdmin}
+
+        # The browser terminal's websocket.
         location {$path} {
             proxy_pass http://{$host}:{$port};
             proxy_http_version 1.1;

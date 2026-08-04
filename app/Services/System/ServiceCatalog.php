@@ -3,8 +3,8 @@
 namespace App\Services\System;
 
 use App\Services\Mail\MailServerProvisioner;
-use App\Support\Settings;
 use App\Services\Shell\LocalConnection;
+use App\Support\Settings;
 use App\Services\Tasks\Step;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -25,6 +25,15 @@ use InvalidArgumentException;
  */
 class ServiceCatalog
 {
+    /** Whoever owns the panel's files is who the web process runs as. */
+    protected function panelUser(): string
+    {
+        return app(UpdateChecker::class)->panelUser();
+    }
+
+    /** Pinned: an install that silently moves version is not reproducible. */
+    public const PHPMYADMIN_VERSION = '5.2.2';
+
     public function __construct(
         protected MailServerProvisioner $mail,
         protected Settings $settings,
@@ -186,6 +195,31 @@ class ServiceCatalog
                 ]),
             ],
 
+            // Upstream rather than apt: Debian's phpmyadmin package pulls in a
+            // web server and wants to configure it, and this machine already
+            // has one serving the panel.
+            'phpmyadmin' => [
+                Step::call('Install phpMyAdmin', function (LocalConnection $ssh) {
+                    $root = PhpMyAdmin::ROOT;
+                    $temp = PhpMyAdmin::TEMP;
+                    $url = 'https://files.phpmyadmin.net/phpMyAdmin/'.self::PHPMYADMIN_VERSION.
+                        '/phpMyAdmin-'.self::PHPMYADMIN_VERSION.'-all-languages.tar.gz';
+
+                    $ssh->mustRun('sudo rm -rf /tmp/panel-pma && mkdir -p /tmp/panel-pma');
+                    $ssh->mustRun('curl -fsSL '.escapeshellarg($url).' -o /tmp/panel-pma/pma.tar.gz');
+                    $ssh->mustRun('tar -xzf /tmp/panel-pma/pma.tar.gz -C /tmp/panel-pma --strip-components=1');
+
+                    // Replaced wholesale rather than merged: a half-upgraded
+                    // phpMyAdmin is worse than either version of it.
+                    $ssh->mustRun('sudo rm -rf '.escapeshellarg($root));
+                    $ssh->mustRun('sudo mkdir -p '.escapeshellarg(dirname($root)));
+                    $ssh->mustRun('sudo mv /tmp/panel-pma '.escapeshellarg($root));
+                    $ssh->mustRun('sudo mkdir -p '.escapeshellarg($temp));
+
+                    return 'phpMyAdmin '.self::PHPMYADMIN_VERSION.' unpacked into '.$root.'.';
+                }),
+            ],
+
             // npm rather than apt, which is how pm2 is distributed. Installed
             // globally so it is on PATH for every user, and `pm2 startup`
             // registers the boot unit for whoever the panel runs as.
@@ -303,6 +337,28 @@ class ServiceCatalog
                 Step::make('Install package managers', [
                     'sudo npm install -g pnpm yarn --silent',
                 ], optional: true),
+            ],
+
+            'phpmyadmin' => [
+                Step::call('Configure phpMyAdmin', function (LocalConnection $ssh) {
+                    $pma = app(PhpMyAdmin::class);
+
+                    $ssh->putFile(PhpMyAdmin::ROOT.'/config.inc.php', $pma->config());
+
+                    // The web process writes phpMyAdmin's session and its temp
+                    // files, so it has to own both.
+                    $user = escapeshellarg($this->panelUser());
+                    $ssh->mustRun('sudo chown -R '.$user.':'.$user.' '.escapeshellarg(PhpMyAdmin::TEMP));
+                    $ssh->mustRun('sudo chmod 700 '.escapeshellarg(PhpMyAdmin::TEMP));
+                    $ssh->mustRun('sudo chmod 640 '.escapeshellarg(PhpMyAdmin::ROOT.'/config.inc.php'));
+                    $ssh->mustRun('sudo chown root:'.$user.' '.escapeshellarg(PhpMyAdmin::ROOT.'/config.inc.php'));
+
+                    return 'Signon authentication configured; there is no login form.';
+                }),
+
+                Step::call('Serve phpMyAdmin from the panel', function () {
+                    return implode("\n", app(TerminalProxy::class)->sync());
+                }),
             ],
 
             'mail' => $this->mail->configureSteps(),

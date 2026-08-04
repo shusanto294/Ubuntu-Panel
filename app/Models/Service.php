@@ -53,11 +53,19 @@ class Service extends Model
      */
     public static function availableEngines(): array
     {
-        return static::query()
+        $installed = static::query()
             ->whereIn('key', self::ENGINE_KEYS)
             ->where('status', self::INSTALLED)
             ->pluck('key')
             ->all();
+
+        // In the order of ENGINE_KEYS, not whatever the rows came back in:
+        // the first one is what the form selects, and that should be MariaDB
+        // rather than a matter of which row was written first.
+        return array_values(array_filter(
+            self::ENGINE_KEYS,
+            fn (string $key) => in_array($key, $installed, true)
+        ));
     }
 
     /**

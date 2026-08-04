@@ -30,7 +30,8 @@ That is the whole installation. It takes a few minutes and:
    the port in ufw if it is active.
 7. Asks for an administrator email and password, then takes inventory of what is already
    installed on the machine.
-8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, PM2, WP-CLI,
+8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, phpMyAdmin,
+   PM2, WP-CLI,
    Certbot and the Postfix/Dovecot/OpenDKIM mail stack included — so there is nothing left
    to click when it finishes.
 
@@ -188,7 +189,8 @@ as queued jobs. Without it, tasks sit at 0% forever.
   agent and no sampling daemon: the panel runs on the machine it reports on, so a reading
   costs microseconds.
 - **Settings → Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
-  MongoDB, Redis, Node.js, PM2, WP-CLI and a full mail server, with live progress. Everything
+  MongoDB, Redis, phpMyAdmin, Node.js, PM2, WP-CLI and a full mail server, with live
+  progress. Everything
   queued goes into a single apt transaction, because dpkg takes an exclusive lock and
   parallel installs would only serialise behind it. A service that fails costs you that
   service and nothing else.
@@ -201,6 +203,10 @@ as queued jobs. Without it, tasks sit at 0% forever.
   - **Node.js / Next.js** — git clone or starter app, `npm install`, build, a systemd unit
     on an auto-assigned port, and an nginx reverse proxy.
 - **Databases** — create and drop databases and users on MariaDB, PostgreSQL and MongoDB.
+  MariaDB databases get a **Manage** link that opens phpMyAdmin already signed in as that
+  database's own user — the credentials go into a session phpMyAdmin reads, never into the
+  URL, and it is configured with no login form at all, so arriving at /phpmyadmin any other
+  way gets you nothing.
   Credentials are generated, encrypted and revealable in the UI. WordPress and Laravel sites
   get theirs automatically, dropped with the site.
 - **Email** — Postfix + Dovecot + OpenDKIM with virtual mailboxes in MariaDB. Add a domain

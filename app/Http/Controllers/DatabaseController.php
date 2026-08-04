@@ -6,6 +6,7 @@ use App\Jobs\CreateDatabase;
 use App\Jobs\DeleteDatabase;
 use App\Models\Database;
 use App\Models\Service;
+use App\Services\System\PhpMyAdmin;
 use App\Services\System\ServiceInstaller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -37,6 +38,7 @@ class DatabaseController extends Controller
             'databases' => $databases,
             'availableEngines' => $engines,
             'engines' => config('panel.database_engines'),
+            'phpMyAdmin' => app(PhpMyAdmin::class)->isInstalled(),
         ]);
     }
 
@@ -83,6 +85,28 @@ class DatabaseController extends Controller
         DeleteDatabase::dispatch($database);
 
         return back()->with('success', 'Database queued for deletion.');
+    }
+
+    /**
+     * Open phpMyAdmin, already signed in to this database.
+     *
+     * The credentials go into a session phpMyAdmin reads and are never in the
+     * URL, and the redirect is the only way in: without a session it has no
+     * login form to offer, so a stray visit to /phpmyadmin gets nowhere.
+     */
+    public function phpMyAdmin(Request $request, Database $database, PhpMyAdmin $phpMyAdmin)
+    {
+        $this->authorize('view', $database);
+
+        if ($database->engine !== 'mysql') {
+            return back()->with('error', 'phpMyAdmin only manages MariaDB and MySQL databases.');
+        }
+
+        if (! $phpMyAdmin->isInstalled()) {
+            return back()->with('error', 'phpMyAdmin is not installed — add it from Settings → Services.');
+        }
+
+        return redirect()->away($phpMyAdmin->signOn($database));
     }
 
     /** Reveal the stored password for a database the user owns. */
