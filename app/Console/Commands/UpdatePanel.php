@@ -91,7 +91,7 @@ class UpdatePanel extends Command
         ]);
 
         if (! $ok) {
-            $this->components->error('Update failed — see the activity log. The old code is still running.');
+            $this->reportFailure($log);
 
             return self::FAILURE;
         }
@@ -105,6 +105,47 @@ class UpdatePanel extends Command
         $this->components->info('Updated to '.$this->describe($checker->status(fresh: true)['current']));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Say what went wrong, here, now.
+     *
+     * "See the activity log" is true and useless: the log is in a panel that
+     * is very often the thing that has just stopped working, and this command
+     * is being run from a shell that could simply have been told.
+     */
+    protected function reportFailure(ActivityLog $log): void
+    {
+        $log = $log->fresh();
+
+        $this->newLine();
+        $this->components->error('Update failed. The old code is still running.');
+
+        if ($step = $log?->current_step) {
+            $this->line('    Step:   '.$step);
+        }
+
+        if ($message = $log?->message) {
+            $this->line('    Reason: '.$message);
+        }
+
+        // The last few lines of what the command actually printed, which is
+        // where the cause usually is.
+        $tail = collect(preg_split('/\r?\n/', (string) $log?->output))
+            ->filter(fn (string $line) => trim($line) !== '')
+            ->take(-12);
+
+        if ($tail->isNotEmpty()) {
+            $this->newLine();
+            $this->line('    Last output:');
+
+            foreach ($tail as $line) {
+                $this->line('      '.$line);
+            }
+        }
+
+        $this->newLine();
+        $this->components->warn('Nothing was left half-applied; run it again once the cause is dealt with.');
     }
 
     /**

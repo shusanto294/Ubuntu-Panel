@@ -45,6 +45,11 @@ class MetricHistoryTest extends TestCase
 
     public function test_a_wider_range_averages_the_samples_in_each_bucket(): void
     {
+        // Buckets are wall-clock aligned, so "one and two minutes ago" only
+        // share one if the clock is not near a boundary. Pin it to the middle
+        // of a fifteen-minute bucket instead of running the suite and hoping.
+        $this->travelTo(now()->startOfHour()->addMinutes(37)->addSeconds(30));
+
         // Two readings inside the same fifteen-minute bucket.
         $this->sample(1, 10);
         $this->sample(2, 30);

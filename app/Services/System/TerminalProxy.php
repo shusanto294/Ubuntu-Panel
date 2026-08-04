@@ -42,6 +42,15 @@ class TerminalProxy
     {
         $lines = [];
 
+        // Anything else holding the default-server slot makes `nginx -t` fail
+        // for reasons that have nothing to do with what this writes — and
+        // since this runs during `panel:update`, that turns "nginx is
+        // misconfigured" into "the panel cannot be updated", which is the one
+        // state from which it cannot fix itself.
+        foreach (\App\Services\Sites\NginxVhost::claimDefaultServerCommands() as $command) {
+            $this->shell->run($command);
+        }
+
         $this->writeSnippet();
         $lines[] = 'Wrote '.self::SNIPPET.'.';
 
