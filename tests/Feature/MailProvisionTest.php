@@ -76,6 +76,27 @@ class MailProvisionTest extends TestCase
         );
     }
 
+    public function test_a_missing_postfix_files_manifest_is_restored_before_the_check(): void
+    {
+        $ran = $this->provision()->ran;
+
+        $repair = collect($ran)->search(
+            fn (string $c) => str_contains($c, 'test -f /etc/postfix/postfix-files ||')
+        );
+        $check = array_search('sudo postfix check', $ran, true);
+
+        $this->assertNotFalse($repair, 'nothing restores the package manifest');
+        $this->assertNotFalse($check);
+        $this->assertLessThan($check, $repair, 'the repair has to come before the check');
+
+        $command = $ran[$repair];
+
+        // Restore what is missing, keep the main.cf and master.cf just written.
+        $this->assertStringContainsString('--reinstall', $command);
+        $this->assertStringContainsString('--force-confmiss', $command);
+        $this->assertStringContainsString('--force-confold', $command);
+    }
+
     public function test_the_configuration_is_checked_before_anything_is_started(): void
     {
         $ran = $this->provision()->ran;

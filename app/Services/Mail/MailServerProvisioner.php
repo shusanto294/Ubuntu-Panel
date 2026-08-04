@@ -128,6 +128,18 @@ class MailServerProvisioner
                 return 'OpenDKIM listening on localhost:8891.';
             }),
 
+            // `postfix-files` is the package's manifest of its own paths and
+            // permissions; `postfix check` and every start run `post-install`,
+            // which cannot do anything without it. It is a dpkg conffile, so if
+            // it has gone missing the package can put it back — confmiss
+            // restores what is absent, confold leaves the main.cf and master.cf
+            // written above alone rather than prompting about them.
+            Step::make('Repair the Postfix package files', [
+                'test -f /etc/postfix/postfix-files || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall '.
+                    '-o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confmiss" postfix',
+                'test -f /etc/postfix/postfix-files',
+            ]),
+
             // Both tools will tell you exactly what they dislike, but only if
             // asked before they are started — `systemctl restart` reports a
             // failed job and nothing about why, which is a dead end to debug
