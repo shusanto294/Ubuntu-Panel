@@ -43,7 +43,7 @@ class LocalConnection
      */
     public function run(string $command): array
     {
-        $process = Process::fromShellCommandline($this->wrap($command));
+        $process = Process::fromShellCommandline($this->wrap($command), null, $this->environment());
         $process->setTimeout($this->timeout);
         $process->run();
 
@@ -56,7 +56,7 @@ class LocalConnection
      */
     public function stream(string $command, callable $onOutput): int
     {
-        $process = Process::fromShellCommandline($this->wrap($command));
+        $process = Process::fromShellCommandline($this->wrap($command), null, $this->environment());
         $process->setTimeout($this->timeout);
 
         $process->run(function ($type, $chunk) use ($onOutput) {
@@ -195,6 +195,58 @@ class LocalConnection
      * stderr into stdout at the subshell keeps every line of the command intact
      * — appending `2>&1` to the last line of a heredoc would corrupt it.
      */
+    /**
+     * A usable environment, whichever process is doing the running.
+     *
+     * PHP-FPM defaults to `clear_env = yes`, so a command run from a web
+     * request inherits almost nothing — no PATH above all. Every `command -v`
+     * then fails and the panel concludes that MariaDB, PHP and nginx are not
+     * installed on a machine that is plainly running all three. The same
+     * command from the queue worker, which systemd gives a normal environment,
+     * works — so the panel disagreed with itself depending on who asked.
+     *
+     * Rather than depend on how the pool happens to be configured, every
+     * command gets the standard system directories on its PATH. HOME too:
+     * composer, npm and pm2 all write there and fall over without it.
+     *
+     * @return array<string, string>
+     */
+    protected function environment(): array
+    {
+        $standard = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'];
+
+        $inherited = array_filter(explode(':', (string) getenv('PATH')));
+
+        // Wherever this PHP came from, its neighbours are worth having: on a
+        // stock Ubuntu that is /usr/bin and already covered, but it is what
+        // makes the panel work on a box where PHP was not installed there.
+        $own = PHP_BINARY !== '' ? [dirname(PHP_BINARY)] : [];
+
+        return [
+            'PATH' => implode(':', array_unique([...$inherited, ...$standard, ...$own])),
+            'HOME' => $this->home(),
+        ];
+    }
+
+    protected function home(): string
+    {
+        $home = (string) getenv('HOME');
+
+        if ($home !== '') {
+            return $home;
+        }
+
+        if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+            $user = posix_getpwuid(posix_geteuid());
+
+            if (! empty($user['dir'])) {
+                return $user['dir'];
+            }
+        }
+
+        return sys_get_temp_dir();
+    }
+
     protected function wrap(string $command): string
     {
         return 'bash -c '.escapeshellarg("(\n".$command."\n) 2>&1");

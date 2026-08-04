@@ -411,6 +411,10 @@ if [[ ! -f "$POOL" && -f "${POOL_DIR}/www.conf" ]]; then
         -e "s|^listen = .*|listen = /run/php/php${PHP_VERSION}-fpm.sock|" \
         "${POOL_DIR}/www.conf" > "$POOL"
     sed -i "s/^listen.owner = .*/listen.owner = www-data/" "$POOL" || true
+    # Without this the pool scrubs the environment of everything it runs, PATH
+    # included, and the panel cannot find the software it just installed.
+    sed -i "s/^;*clear_env = .*/clear_env = no/" "$POOL"
+    grep -q "^clear_env" "$POOL" || printf '\nclear_env = no\n' >> "$POOL" 
     # One pool per socket: the stock one would fight this for the same path.
     rm -f "${POOL_DIR}/www.conf"
 fi
