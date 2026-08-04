@@ -12,14 +12,14 @@ const props = defineProps({
     domains: Array,
     mailConfigured: Boolean,
     mailHostname: String,
-    cloudflareAccounts: Array,
+    dnsAccounts: Array,
 });
 
 const domainForm = useForm({
     domain: '',
     dkim_selector: 'mail',
-    manage_dns: props.cloudflareAccounts.length > 0,
-    cloudflare_account_id: props.cloudflareAccounts[0]?.id ?? null,
+    manage_dns: props.dnsAccounts.length > 0,
+    dns_account_id: props.dnsAccounts[0]?.id ?? null,
 });
 
 const openDomain = ref(props.domains[0]?.id ?? null);
@@ -108,7 +108,7 @@ const syncDns = (domain) =>
             <div class="rounded-xl border border-slate-200 bg-white p-6">
                 <h3 class="font-semibold text-slate-800">Add a mail domain</h3>
                 <p class="mt-1 text-sm text-slate-500">
-                    Generates a DKIM key and, with Cloudflare connected,
+                    Generates a DKIM key and, with a DNS provider connected,
                     publishes MX, SPF, DKIM and DMARC records.
                 </p>
 
@@ -142,34 +142,34 @@ const syncDns = (domain) =>
                     <label class="flex items-center gap-2">
                         <Checkbox
                             v-model:checked="domainForm.manage_dns"
-                            :disabled="!cloudflareAccounts.length"
+                            :disabled="!dnsAccounts.length"
                         />
                         <span class="text-sm text-slate-700"
-                            >Publish DNS via Cloudflare</span
+                            >Publish the DNS records for me</span
                         >
                     </label>
 
                     <div v-if="domainForm.manage_dns">
                         <InputLabel
-                            for="cloudflare_account_id"
-                            value="Cloudflare account"
+                            for="dns_account_id"
+                            value="DNS provider"
                         />
                         <select
-                            id="cloudflare_account_id"
-                            v-model="domainForm.cloudflare_account_id"
+                            id="dns_account_id"
+                            v-model="domainForm.dns_account_id"
                             class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
                         >
                             <option
-                                v-for="account in cloudflareAccounts"
+                                v-for="account in dnsAccounts"
                                 :key="account.id"
                                 :value="account.id"
                             >
-                                {{ account.label }}
+                                {{ account.label }} — {{ account.provider_label }}
                             </option>
                         </select>
                         <InputError
                             class="mt-2"
-                            :message="domainForm.errors.cloudflare_account_id"
+                            :message="domainForm.errors.dns_account_id"
                         />
                     </div>
 

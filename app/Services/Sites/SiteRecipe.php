@@ -444,7 +444,10 @@ class SiteRecipe
      *
      * When the site's DNS is on Cloudflare we validate over DNS-01, which works
      * even with the orange cloud on; an HTTP-01 challenge would be answered by
-     * Cloudflare rather than by the origin.
+     * Cloudflare rather than by the origin. That is a Cloudflare-shaped problem
+     * and gets a Cloudflare-shaped answer — every other provider serves the
+     * origin directly, so the webroot challenge below is both simpler and
+     * enough.
      */
     protected function requestCertificate(LocalConnection $ssh): string
     {
@@ -459,9 +462,9 @@ class SiteRecipe
             $domains
         );
 
-        $account = $site->cloudflareAccount;
+        $account = $site->dnsAccount;
 
-        if ($site->manage_dns && $account) {
+        if ($site->manage_dns && $account?->provider === 'cloudflare') {
             $ssh->run('sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-dns-cloudflare');
 
             $ssh->mustRun('sudo mkdir -p /etc/letsencrypt/panel && sudo chmod 700 /etc/letsencrypt/panel');

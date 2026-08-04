@@ -2,15 +2,15 @@
 
 namespace Tests\Feature;
 
-use App\Models\CloudflareAccount;
+use App\Models\DnsAccount;
 use App\Models\Site;
 use App\Models\User;
-use App\Services\Cloudflare\CloudflareDnsManager;
+use App\Services\Dns\DnsManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
-class CloudflareIntegrationTest extends TestCase
+class DnsIntegrationTest extends TestCase
 {
     use RefreshDatabase;
 
@@ -25,20 +25,21 @@ class CloudflareIntegrationTest extends TestCase
 
         $user = User::factory()->create();
 
-        $this->actingAs($user)->post(route('cloudflare.store'), [
+        $this->actingAs($user)->post(route('dns.store'), [
+            'provider' => 'cloudflare',
             'label' => 'Personal',
             'api_token' => 'cf-token',
             'email' => 'me@example.com',
         ])->assertRedirect();
 
-        $account = CloudflareAccount::first();
+        $account = DnsAccount::first();
 
         $this->assertSame('Personal', $account->label);
         $this->assertNotNull($account->verified_at);
         $this->assertSame('cf-token', $account->api_token);
         $this->assertNotSame(
             'cf-token',
-            $this->getConnection()->table('cloudflare_accounts')->where('id', $account->id)->first()->api_token
+            $this->getConnection()->table('dns_accounts')->where('id', $account->id)->first()->api_token
         );
     }
 
@@ -53,12 +54,13 @@ class CloudflareIntegrationTest extends TestCase
 
         $user = User::factory()->create();
 
-        $this->actingAs($user)->post(route('cloudflare.store'), [
+        $this->actingAs($user)->post(route('dns.store'), [
+            'provider' => 'cloudflare',
             'label' => 'Personal',
             'api_token' => 'bad-token',
         ])->assertSessionHasErrors('api_token');
 
-        $this->assertSame(0, CloudflareAccount::count());
+        $this->assertSame(0, DnsAccount::count());
     }
 
     public function test_dns_records_are_created_for_each_hostname(): void
@@ -80,11 +82,11 @@ class CloudflareIntegrationTest extends TestCase
         ]);
 
         $user = User::factory()->create();
-        $account = $user->cloudflareAccounts()->create(['label' => 'Personal', 'api_token' => 'cf-token']);
+        $account = $user->dnsAccounts()->create(['provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf-token']);
 
         $site = Site::create([
             'user_id' => $user->id,
-            'cloudflare_account_id' => $account->id,
+            'dns_account_id' => $account->id,
             'domain' => 'app.example.com',
             'aliases' => ['www.app.example.com'],
             'root_path' => '/var/www/app.example.com',
@@ -93,13 +95,13 @@ class CloudflareIntegrationTest extends TestCase
             'dns_content' => '203.0.113.10',
         ]);
 
-        app(CloudflareDnsManager::class)->syncForSite($site);
+        app(DnsManager::class)->syncForSite($site);
 
         $site->refresh();
 
-        $this->assertSame('zone-1', $site->cloudflare_zone_id);
-        $this->assertSame('record-1', $site->cloudflare_record_ids['app.example.com']['record_id']);
-        $this->assertSame('record-1', $site->cloudflare_record_ids['www.app.example.com']['record_id']);
+        $this->assertSame('zone-1', $site->dns_zone_id);
+        $this->assertSame('record-1', $site->dns_record_ids['app.example.com']['record_id']);
+        $this->assertSame('record-1', $site->dns_record_ids['www.app.example.com']['record_id']);
     }
 
     public function test_dns_records_are_deleted_with_the_site(): void
@@ -112,24 +114,24 @@ class CloudflareIntegrationTest extends TestCase
         ]);
 
         $user = User::factory()->create();
-        $account = $user->cloudflareAccounts()->create(['label' => 'Personal', 'api_token' => 'cf-token']);
+        $account = $user->dnsAccounts()->create(['provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf-token']);
 
         $site = Site::create([
             'user_id' => $user->id,
-            'cloudflare_account_id' => $account->id,
+            'dns_account_id' => $account->id,
             'domain' => 'app.example.com',
             'root_path' => '/var/www/app.example.com',
             'manage_dns' => true,
-            'cloudflare_zone_id' => 'zone-1',
-            'cloudflare_record_ids' => [
+            'dns_zone_id' => 'zone-1',
+            'dns_record_ids' => [
                 'app.example.com' => ['zone_id' => 'zone-1', 'record_id' => 'record-1'],
             ],
         ]);
 
-        $message = app(CloudflareDnsManager::class)->deleteForSite($site);
+        $message = app(DnsManager::class)->deleteForSite($site);
 
         $this->assertStringContainsString('DNS deleted: app.example.com', $message);
-        $this->assertSame([], $site->fresh()->cloudflare_record_ids);
+        $this->assertSame([], $site->fresh()->dns_record_ids);
 
         Http::assertSent(fn ($request) => $request->method() === 'DELETE'
             && str_ends_with($request->url(), '/zones/zone-1/dns_records/record-1'));

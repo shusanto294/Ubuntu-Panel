@@ -51,7 +51,8 @@ const post = (name, extra = {}) =>
 
 const destroy = () => {
     const parts = ['its nginx vhost'];
-    if (props.site.manage_dns) parts.push('Cloudflare DNS records');
+    if (props.site.manage_dns)
+        parts.push(`${props.site.dns_provider ?? 'DNS'} records`);
     if (props.site.database) parts.push('the site database');
     if (props.site.is_proxied) parts.push('the systemd service');
 
@@ -241,7 +242,7 @@ const destroy = () => {
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Account</dt>
                         <dd class="text-slate-800">
-                            {{ site.cloudflare_account }}
+                            {{ site.dns_account }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-4">
@@ -303,7 +304,7 @@ const destroy = () => {
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
                     Deleting removes the vhost, the systemd service, the site
-                    database created by the panel, and its Cloudflare records.
+                    database created by the panel, and its DNS records.
                 </p>
                 <label class="mt-4 flex items-center gap-2 text-sm">
                     <input

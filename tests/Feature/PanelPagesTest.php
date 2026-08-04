@@ -51,11 +51,12 @@ class PanelPagesTest extends TestCase
             'php_version' => '8.3',
         ]);
 
-        $user->cloudflareAccounts()->create(['label' => 'Personal', 'api_token' => 'cf-token']);
+        $user->dnsAccounts()->create([
+            'provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf-token',
+        ]);
 
         $pages = [
             ['dashboard', [], 'System/Overview'],
-            ['services.index', [], 'System/Services'],
             ['settings', [], 'System/Settings'],
             ['terminal', [], 'System/Terminal'],
             ['profile.edit', [], 'Profile/Edit'],
@@ -64,7 +65,6 @@ class PanelPagesTest extends TestCase
             ['sites.show', $site, 'Sites/Show'],
             ['databases.index', [], 'Databases/Index'],
             ['email.index', [], 'Email/Index'],
-            ['cloudflare.index', [], 'Cloudflare/Index'],
         ];
 
         foreach ($pages as [$name, $params, $component]) {
@@ -75,12 +75,20 @@ class PanelPagesTest extends TestCase
         }
     }
 
+    /** Software lives under Settings now; the old address still gets you there. */
+    public function test_the_software_route_redirects_into_settings(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->get(route('services.index'))
+            ->assertRedirect(route('settings', ['tab' => 'services']));
+    }
+
     public function test_guests_are_redirected_to_login(): void
     {
         $this->get(route('dashboard'))->assertRedirect(route('login'));
         $this->get(route('sites.index'))->assertRedirect(route('login'));
         $this->get(route('databases.index'))->assertRedirect(route('login'));
         $this->get(route('email.index'))->assertRedirect(route('login'));
-        $this->get(route('cloudflare.index'))->assertRedirect(route('login'));
+        $this->get(route('settings'))->assertRedirect(route('login'));
     }
 }

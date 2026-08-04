@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\CloudflareAccountController;
+use App\Http\Controllers\DnsAccountController;
 use App\Http\Controllers\DatabaseController;
 use App\Http\Controllers\EmailController;
 use App\Http\Controllers\ProfileController;
@@ -64,13 +64,13 @@ Route::middleware(['auth'])->group(function () {
     Route::post('email/domains/{domain}/accounts', [EmailController::class, 'storeAccount'])->name('email.accounts.store');
     Route::delete('email/accounts/{account}', [EmailController::class, 'destroyAccount'])->name('email.accounts.destroy');
 
-    // Cloudflare
-    Route::get('cloudflare', [CloudflareAccountController::class, 'index'])->name('cloudflare.index');
-    Route::post('cloudflare', [CloudflareAccountController::class, 'store'])->name('cloudflare.store');
-    Route::patch('cloudflare/{account}', [CloudflareAccountController::class, 'update'])->name('cloudflare.update');
-    Route::delete('cloudflare/{account}', [CloudflareAccountController::class, 'destroy'])->name('cloudflare.destroy');
-    Route::post('cloudflare/{account}/verify', [CloudflareAccountController::class, 'verify'])->name('cloudflare.verify');
-    Route::get('cloudflare/{account}/zones', [CloudflareAccountController::class, 'zones'])->name('cloudflare.zones');
+    // DNS credentials — Cloudflare, DigitalOcean, Linode and the rest. These
+    // live under Settings now rather than in the main navigation.
+    Route::post('dns-accounts', [DnsAccountController::class, 'store'])->name('dns.store');
+    Route::patch('dns-accounts/{account}', [DnsAccountController::class, 'update'])->name('dns.update');
+    Route::delete('dns-accounts/{account}', [DnsAccountController::class, 'destroy'])->name('dns.destroy');
+    Route::post('dns-accounts/{account}/verify', [DnsAccountController::class, 'verify'])->name('dns.verify');
+    Route::get('dns-accounts/{account}/zones', [DnsAccountController::class, 'zones'])->name('dns.zones');
 
     // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

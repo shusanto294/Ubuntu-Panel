@@ -37,9 +37,9 @@ class User extends Authenticatable
         return $this->hasMany(Site::class);
     }
 
-    public function cloudflareAccounts(): HasMany
+    public function dnsAccounts(): HasMany
     {
-        return $this->hasMany(CloudflareAccount::class);
+        return $this->hasMany(DnsAccount::class);
     }
 
     public function databases(): HasMany

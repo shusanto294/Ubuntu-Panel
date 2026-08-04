@@ -13,7 +13,7 @@ const props = defineProps({
     phpVersion: String,
     nodeVersion: String,
     publicIp: String,
-    cloudflareAccounts: Array,
+    dnsAccounts: Array,
     phpVersions: Array,
     dnsTypes: Array,
     siteTypes: Array,
@@ -35,14 +35,28 @@ const form = useForm({
     wp_admin_user: 'admin',
     wp_admin_email: '',
     wp_admin_password: '',
-    manage_dns: props.cloudflareAccounts.length > 0,
-    cloudflare_account_id: props.cloudflareAccounts[0]?.id ?? null,
+    manage_dns: props.dnsAccounts.length > 0,
+    dns_account_id: props.dnsAccounts[0]?.id ?? null,
     dns_type: 'A',
     dns_content: '',
     dns_proxied: true,
 });
 
 const aliasInput = ref('');
+
+// The orange cloud is Cloudflare's alone; every other provider just serves the
+// record, so offering the toggle would be offering something that does nothing.
+const selectedDnsAccount = computed(() =>
+    props.dnsAccounts.find((a) => a.id === form.dns_account_id),
+);
+
+watch(
+    () => selectedDnsAccount.value?.supports_proxy,
+    (supported) => {
+        if (!supported) form.dns_proxied = false;
+    },
+    { immediate: true },
+);
 
 const typeConfig = computed(() =>
     props.siteTypes.find((t) => t.key === form.type),
@@ -384,14 +398,14 @@ const submit = () => form.post(route('sites.store'));
                 </p>
             </div>
 
-            <!-- Cloudflare DNS -->
+            <!-- DNS -->
             <div class="rounded-xl border border-slate-200 bg-white p-6">
                 <div class="flex items-center justify-between">
-                    <h3 class="font-semibold text-slate-800">Cloudflare DNS</h3>
+                    <h3 class="font-semibold text-slate-800">DNS</h3>
                     <label class="flex items-center gap-2">
                         <Checkbox
                             v-model:checked="form.manage_dns"
-                            :disabled="!cloudflareAccounts.length"
+                            :disabled="!dnsAccounts.length"
                         />
                         <span class="text-sm text-slate-700"
                             >Create DNS records automatically</span
@@ -400,16 +414,17 @@ const submit = () => form.post(route('sites.store'));
                 </div>
 
                 <p
-                    v-if="!cloudflareAccounts.length"
+                    v-if="!dnsAccounts.length"
                     class="mt-3 text-sm text-slate-500"
                 >
-                    No Cloudflare account connected.
+                    No DNS provider connected.
                     <Link
-                        :href="route('cloudflare.index')"
+                        :href="route('settings', { tab: 'dns' })"
                         class="text-orange-600 hover:underline"
                         >Connect one</Link
                     >
-                    to have records created and deleted with the site.
+                    to have records created and deleted with the site — or leave
+                    this off and point an A record at this server yourself.
                 </p>
 
                 <div
@@ -417,26 +432,23 @@ const submit = () => form.post(route('sites.store'));
                     class="mt-4 grid gap-6 sm:grid-cols-2"
                 >
                     <div>
-                        <InputLabel
-                            for="cloudflare_account_id"
-                            value="Cloudflare account"
-                        />
+                        <InputLabel for="dns_account_id" value="DNS provider" />
                         <select
-                            id="cloudflare_account_id"
-                            v-model="form.cloudflare_account_id"
+                            id="dns_account_id"
+                            v-model="form.dns_account_id"
                             class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
                         >
                             <option
-                                v-for="account in cloudflareAccounts"
+                                v-for="account in dnsAccounts"
                                 :key="account.id"
                                 :value="account.id"
                             >
-                                {{ account.label }}
+                                {{ account.label }} — {{ account.provider_label }}
                             </option>
                         </select>
                         <InputError
                             class="mt-2"
-                            :message="form.errors.cloudflare_account_id"
+                            :message="form.errors.dns_account_id"
                         />
                     </div>
 
@@ -466,7 +478,7 @@ const submit = () => form.post(route('sites.store'));
                         </p>
                     </div>
 
-                    <div class="flex items-end">
+                    <div v-if="selectedDnsAccount?.supports_proxy" class="flex items-end">
                         <label class="flex items-center gap-2">
                             <Checkbox v-model:checked="form.dns_proxied" />
                             <span class="text-sm text-slate-700"

@@ -149,7 +149,7 @@ class SiteManagementTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('sites.store'), $this->payload(['manage_dns' => true]))
-            ->assertSessionHasErrors('cloudflare_account_id');
+            ->assertSessionHasErrors('dns_account_id');
     }
 
     public function test_duplicate_domains_on_the_same_server_are_rejected(): void

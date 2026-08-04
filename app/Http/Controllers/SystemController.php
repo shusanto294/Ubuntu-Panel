@@ -6,8 +6,10 @@ use App\Jobs\ConfigurePanelDomain;
 use App\Jobs\InstallServices;
 use App\Models\ActivityLog;
 use App\Models\Database;
+use App\Models\DnsAccount;
 use App\Models\Service;
 use App\Models\Site;
+use App\Services\Dns\DnsProviderRegistry;
 use App\Services\System\HostInfo;
 use App\Services\System\MetricHistory;
 use App\Services\System\PanelDomain;
@@ -74,24 +76,13 @@ class SystemController extends Controller
         ]);
     }
 
-    /** Everything the panel can install, with what is present right now. */
+    /**
+     * Software is a section of Settings now. The route stays so that the links
+     * scattered through the panel — and any bookmark — still land somewhere.
+     */
     public function services(Request $request)
     {
-        $this->installer->syncRows();
-
-        return Inertia::render('System/Services', [
-            'system' => $this->summary(),
-            'services' => Service::orderBy('sort_order')->get()->map->toArray()->values(),
-            'activeTask' => ActivityLog::where('status', 'running')
-                ->where('type', 'provision')
-                ->latest('id')
-                ->first()?->toConsolePayload(),
-            'latestTask' => ActivityLog::where('type', 'provision')
-                ->latest('id')
-                ->first()?->toConsolePayload(),
-            'phpVersions' => config('panel.php_versions'),
-            'nodeVersions' => config('panel.node_versions'),
-        ]);
+        return redirect()->route('settings', ['tab' => 'services']);
     }
 
     /**
@@ -212,9 +203,18 @@ class SystemController extends Controller
         return back()->with('success', 'Settings saved.');
     }
 
-    /** Panel-wide settings: where it answers, and what new sites inherit. */
+    /**
+     * Everything you set up once and then leave alone: where the panel answers,
+     * what software is on the machine, and the DNS credentials it writes with.
+     *
+     * These were three separate destinations in the main navigation. They are
+     * sections of one page now, because none of them is somewhere you go to do
+     * work — you go there to change a setting and leave.
+     */
     public function settings(Request $request, UpdateChecker $updates, PanelDomain $panel)
     {
+        $this->installer->syncRows();
+
         return Inertia::render('System/Settings', [
             'system' => $this->summary(),
             'update' => $updates->status(),
@@ -230,8 +230,27 @@ class SystemController extends Controller
             ],
             'phpVersions' => config('panel.php_versions'),
             'nodeVersions' => config('panel.node_versions'),
+
+            'services' => Service::orderBy('sort_order')->get()->map->toArray()->values(),
+
+            'dnsAccounts' => $request->user()->dnsAccounts()
+                ->withCount('sites')
+                ->latest()
+                ->get()
+                ->map(fn (DnsAccount $account) => $account->toPanelArray()),
+            'dnsProviders' => DnsProviderRegistry::options(),
+
+            // Which section to open on. Links from elsewhere in the panel pass
+            // it, so "install the mail server" can land on the right one.
+            'tab' => in_array($request->query('tab'), ['general', 'services', 'dns'], true)
+                ? $request->query('tab')
+                : 'general',
+
             'activeTask' => ActivityLog::where('status', 'running')
                 ->where('type', 'provision')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+            'latestTask' => ActivityLog::where('type', 'provision')
                 ->latest('id')
                 ->first()?->toConsolePayload(),
         ]);

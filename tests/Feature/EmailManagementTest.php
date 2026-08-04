@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\Mail\MailManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InstallsServices;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -18,6 +19,13 @@ use Tests\TestCase;
 class EmailManagementTest extends TestCase
 {
     use InstallsServices, RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Cache::put('panel:public-ip', '203.0.113.10', now()->addHour());
+    }
 
     /** A machine with (or without) the mail stack installed. */
     protected function withMailServer(bool $configured = true): void
@@ -152,12 +160,12 @@ class EmailManagementTest extends TestCase
         ]);
 
         $user = User::factory()->create();
-        $account = $user->cloudflareAccounts()->create(['label' => 'Personal', 'api_token' => 'cf-token']);
+        $account = $user->dnsAccounts()->create(['provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf-token']);
         $this->withMailServer();
 
         $domain = EmailDomain::create([
             'user_id' => $user->id,
-            'cloudflare_account_id' => $account->id,
+            'dns_account_id' => $account->id,
             'domain' => 'example.com',
             'dkim_selector' => 'mail',
             'dkim_public_key' => 'v=DKIM1; k=rsa; p=MIIBIjANB',

@@ -67,7 +67,7 @@ defineProps({ sites: Array });
                             {{ site.ssl ? 'yes' : 'no' }}
                         </td>
                         <td class="px-5 py-3 text-slate-600">
-                            {{ site.manage_dns ? 'Cloudflare' : 'manual' }}
+                            {{ site.dns_provider ?? (site.manage_dns ? 'managed' : 'manual') }}
                         </td>
                         <td class="px-5 py-3 text-right">
                             <Link

@@ -21,11 +21,11 @@ class Site extends Model
     public const DATABASE_TYPES = ['wordpress', 'laravel'];
 
     protected $fillable = [
-        'user_id', 'cloudflare_account_id', 'database_id', 'domain', 'type', 'aliases',
+        'user_id', 'dns_account_id', 'database_id', 'domain', 'type', 'aliases',
         'root_path', 'web_directory', 'php_version', 'node_version', 'status', 'ssl', 'last_error',
         'app_port', 'start_command', 'build_command', 'repository', 'branch',
         'wp_admin_user', 'wp_admin_password', 'wp_admin_email', 'wp_title',
-        'manage_dns', 'cloudflare_zone_id', 'cloudflare_record_ids',
+        'manage_dns', 'dns_zone_id', 'dns_record_ids',
         'dns_type', 'dns_content', 'dns_proxied',
     ];
 
@@ -35,7 +35,7 @@ class Site extends Model
     {
         return [
             'aliases' => 'array',
-            'cloudflare_record_ids' => 'array',
+            'dns_record_ids' => 'array',
             'wp_admin_password' => 'encrypted',
             'ssl' => 'boolean',
             'manage_dns' => 'boolean',
@@ -49,9 +49,9 @@ class Site extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function cloudflareAccount(): BelongsTo
+    public function dnsAccount(): BelongsTo
     {
-        return $this->belongsTo(CloudflareAccount::class);
+        return $this->belongsTo(DnsAccount::class);
     }
 
     public function database(): BelongsTo

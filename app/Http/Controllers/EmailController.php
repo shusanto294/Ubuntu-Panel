@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DnsAccount;
 use App\Jobs\CreateEmailAccount;
 use App\Jobs\CreateEmailDomain;
 use App\Jobs\DeleteEmailAccount;
@@ -32,7 +33,7 @@ class EmailController extends Controller
             // Mail only works once Postfix/Dovecot are installed here.
             'mailConfigured' => $this->settings->boolean('mail_configured'),
             'mailHostname' => $this->settings->get('mail_hostname'),
-            'cloudflareAccounts' => $request->user()->cloudflareAccounts()->get(['id', 'label']),
+            'dnsAccounts' => $request->user()->dnsAccounts()->get()->map(fn (DnsAccount $account) => $account->toPanelArray()),
         ]);
     }
 
@@ -42,9 +43,9 @@ class EmailController extends Controller
             'domain' => ['required', 'string', 'max:255', 'regex:/^[a-z0-9.-]+\.[a-z]{2,}$/i'],
             'dkim_selector' => ['nullable', 'string', 'max:32', 'regex:/^[a-z0-9]+$/i'],
             'manage_dns' => ['boolean'],
-            'cloudflare_account_id' => [
+            'dns_account_id' => [
                 'nullable', 'integer',
-                Rule::exists('cloudflare_accounts', 'id')->where('user_id', $request->user()->id),
+                Rule::exists('dns_accounts', 'id')->where('user_id', $request->user()->id),
                 Rule::requiredIf(fn () => $request->boolean('manage_dns')),
             ],
         ]);
@@ -63,7 +64,7 @@ class EmailController extends Controller
 
         $record = EmailDomain::create([
             'user_id' => $request->user()->id,
-            'cloudflare_account_id' => ($data['manage_dns'] ?? false) ? ($data['cloudflare_account_id'] ?? null) : null,
+            'dns_account_id' => ($data['manage_dns'] ?? false) ? ($data['dns_account_id'] ?? null) : null,
             'domain' => $domain,
             'dkim_selector' => $data['dkim_selector'] ?: 'mail',
             'manage_dns' => $data['manage_dns'] ?? false,

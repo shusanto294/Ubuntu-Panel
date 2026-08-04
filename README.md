@@ -5,7 +5,7 @@ A self-hosted control panel that runs **on** the Ubuntu server it manages.
 Install it on a fresh VPS with one command. It sets up nginx, PHP, Node and everything else
 it needs, then gives you a web UI to host WordPress, Laravel, plain PHP, Node.js, Next.js
 and static sites, manage databases, run real mailboxes, and get a root shell in the browser
-— with Cloudflare DNS records created and deleted alongside your sites.
+— with DNS records created and deleted alongside your sites.
 
 Built with Laravel 13, Inertia and Vue 3.
 
@@ -180,15 +180,18 @@ as queued jobs. Without it, tasks sit at 0% forever.
 
 ## What it does
 
-- **Settings** — put the panel on your own domain with a real certificate, and set the PHP
-  and Node versions new sites inherit.
+- **Settings** — the gear beside your name. Three sections: **General** (put the panel on
+  your own domain with a real certificate, set the PHP and Node versions new sites inherit),
+  **Services**, and **DNS**. These are things you set up once, so they are not in the main
+  navigation.
 - **This server** — CPU, memory and disk updated every second, straight from `/proc`. No
   agent and no sampling daemon: the panel runs on the machine it reports on, so a reading
   costs microseconds.
-- **Software** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL, MongoDB,
-  Redis, Node.js, WP-CLI and a full mail server from the UI, with live progress. Everything
+- **Settings → Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
+  MongoDB, Redis, Node.js, WP-CLI and a full mail server, with live progress. Everything
   queued goes into a single apt transaction, because dpkg takes an exclusive lock and
-  parallel installs would only serialise behind it.
+  parallel installs would only serialise behind it. A service that fails costs you that
+  service and nothing else.
 - **Sites** — six types, each with its own deployment recipe:
   - **WordPress** — downloads core, creates the database and user, writes `wp-config.php`,
     runs `wp core install`, sets permalinks and hardens the vhost.
@@ -202,12 +205,18 @@ as queued jobs. Without it, tasks sit at 0% forever.
   get theirs automatically, dropped with the site.
 - **Email** — Postfix + Dovecot + OpenDKIM with virtual mailboxes in MariaDB. Add a domain
   and the panel generates its DKIM key; add addresses with quotas and they work over
-  IMAP/SMTP immediately. With Cloudflare connected it publishes MX, SPF, DKIM and DMARC.
+  IMAP/SMTP immediately. With a DNS provider connected it publishes MX, SPF, DKIM and DMARC;
+  without one it shows you the records to add.
 - **Terminal** — a real root login shell in the browser, backed by a pty. Tab completion,
   shell history, colours, Ctrl+C, `vim`, `top` and `htop` all behave normally.
-- **Cloudflare** — connect API tokens (verified before saving); DNS records for a site and
-  its aliases are created, updated and deleted with it. Certificates use DNS-01 when a
-  Cloudflare account is attached, so the orange cloud can stay on.
+- **Settings → DNS** — connect **Cloudflare, DigitalOcean, Linode, Vultr, Hetzner DNS** or
+  **Porkbun**. Credentials are tried before they are saved and stored encrypted; records for
+  a site and its aliases are then created, updated and deleted with it. Anywhere else works
+  too — leave DNS management off and point an A record at the server yourself.
+
+  Cloudflare gets one thing the others do not: certificates are issued over DNS-01 when a
+  Cloudflare credential is attached, so the orange cloud can stay on. Everywhere else the
+  origin answers directly and the webroot challenge is simpler.
 - **Activity log** — every install, deployment, database, mail and DNS action, with full
   command output.
 

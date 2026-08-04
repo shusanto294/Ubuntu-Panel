@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DnsAccount;
 use App\Jobs\CreateSite;
 use App\Jobs\DeleteSite;
 use App\Jobs\DeploySiteUpdate;
@@ -9,7 +10,7 @@ use App\Models\Service;
 use App\Models\Site;
 use App\Services\System\HostInfo;
 use App\Support\Settings;
-use App\Services\Cloudflare\CloudflareDnsManager;
+use App\Services\Dns\DnsManager;
 use App\Services\Sites\SiteManager;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -42,7 +43,7 @@ class SiteController extends Controller
             'phpVersion' => $this->settings->phpVersion(),
             'nodeVersion' => $this->settings->nodeVersion(),
             'publicIp' => $this->host->publicIp(),
-            'cloudflareAccounts' => $request->user()->cloudflareAccounts()->get(['id', 'label']),
+            'dnsAccounts' => $request->user()->dnsAccounts()->get()->map(fn (DnsAccount $account) => $account->toPanelArray()),
             'phpVersions' => config('panel.php_versions'),
             'dnsTypes' => config('panel.dns_types'),
             'sitesRoot' => config('panel.sites_root'),
@@ -79,9 +80,9 @@ class SiteController extends Controller
 
             // Cloudflare
             'manage_dns' => ['boolean'],
-            'cloudflare_account_id' => [
+            'dns_account_id' => [
                 'nullable', 'integer',
-                Rule::exists('cloudflare_accounts', 'id')->where('user_id', $request->user()->id),
+                Rule::exists('dns_accounts', 'id')->where('user_id', $request->user()->id),
                 Rule::requiredIf(fn () => $request->boolean('manage_dns')),
             ],
             'dns_type' => ['required', Rule::in(config('panel.dns_types'))],
@@ -96,7 +97,7 @@ class SiteController extends Controller
             'start_command' => null, 'build_command' => null,
             'wp_title' => null, 'wp_admin_user' => null,
             'wp_admin_email' => null, 'wp_admin_password' => null,
-            'manage_dns' => false, 'cloudflare_account_id' => null,
+            'manage_dns' => false, 'dns_account_id' => null,
             'dns_content' => null, 'dns_proxied' => true,
         ];
 
@@ -116,7 +117,7 @@ class SiteController extends Controller
 
         $site = Site::create([
             'user_id' => $request->user()->id,
-            'cloudflare_account_id' => $data['manage_dns'] ? $data['cloudflare_account_id'] : null,
+            'dns_account_id' => $data['manage_dns'] ? $data['dns_account_id'] : null,
             'domain' => $domain,
             'type' => $type,
             'aliases' => array_values(array_filter(array_map('strtolower', $data['aliases'] ?? []))),
@@ -155,7 +156,7 @@ class SiteController extends Controller
     {
         $this->authorize('view', $site);
 
-        $site->load('cloudflareAccount', 'database');
+        $site->load('dnsAccount', 'database');
 
         return Inertia::render('Sites/Show', [
             'site' => $this->summary($site, detailed: true),
@@ -184,7 +185,7 @@ class SiteController extends Controller
     }
 
     /** Re-run the Cloudflare DNS sync for a site. */
-    public function syncDns(Request $request, Site $site, CloudflareDnsManager $dns)
+    public function syncDns(Request $request, Site $site, DnsManager $dns)
     {
         $this->authorize('update', $site);
 
@@ -311,8 +312,9 @@ class SiteController extends Controller
             'dns_type' => $site->dns_type,
             'dns_content' => $site->dns_content,
             'dns_proxied' => $site->dns_proxied,
-            'cloudflare_zone_id' => $site->cloudflare_zone_id,
-            'cloudflare_account' => $site->cloudflareAccount?->label,
+            'dns_zone_id' => $site->dns_zone_id,
+            'dns_account' => $site->dnsAccount?->label,
+            'dns_provider' => $site->dnsAccount?->providerLabel(),
             'start_command' => $site->start_command,
             'build_command' => $site->build_command,
             'service_name' => $site->isProxied() ? $site->serviceName() : null,

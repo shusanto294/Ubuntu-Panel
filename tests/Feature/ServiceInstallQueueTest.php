@@ -371,9 +371,10 @@ class ServiceInstallQueueTest extends TestCase
             'last_error' => 'apt exited 100',
         ]);
 
+        // The Software page is the Services section of Settings now.
         $services = collect(
             $this->actingAs($user)
-                ->get(route('services.index'))
+                ->get(route('settings', ['tab' => 'services']))
                 ->viewData('page')['props']['services']
         )->keyBy('key');
 

@@ -19,8 +19,8 @@ const features = [
         body: 'Sites get a directory, an nginx vhost and an optional Let’s Encrypt certificate. Deleting cleans all of it up.',
     },
     {
-        title: 'Cloudflare DNS on autopilot',
-        body: 'Connect a Cloudflare API token and DNS records are created with each site and removed when the site is deleted.',
+        title: 'DNS on autopilot',
+        body: 'Connect Cloudflare, DigitalOcean, Linode, Vultr, Hetzner or Porkbun and DNS records are created with each site and removed when the site is deleted.',
     },
 ];
 </script>
@@ -63,7 +63,7 @@ const features = [
                 <p class="mt-6 max-w-2xl text-lg text-slate-400">
                     Ubuntu Panel connects to your servers over SSH, provisions a
                     LEMP stack, and creates or removes sites together with their
-                    Cloudflare DNS records.
+                    their DNS records.
                 </p>
                 <div v-if="canLogin" class="mt-10 flex gap-3">
                     <Link

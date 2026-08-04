@@ -4,7 +4,7 @@ namespace App\Services\Sites;
 
 use App\Models\ActivityLog;
 use App\Models\Site;
-use App\Services\Cloudflare\CloudflareDnsManager;
+use App\Services\Dns\DnsManager;
 use App\Services\Databases\DatabaseManager;
 use App\Services\Shell\LocalConnection;
 use App\Services\Tasks\Step;
@@ -14,7 +14,7 @@ use Throwable;
 class SiteManager
 {
     public function __construct(
-        protected CloudflareDnsManager $dns,
+        protected DnsManager $dns,
         protected DatabaseManager $databases,
     ) {}
 

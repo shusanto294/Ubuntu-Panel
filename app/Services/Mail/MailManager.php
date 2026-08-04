@@ -5,7 +5,7 @@ namespace App\Services\Mail;
 use App\Models\ActivityLog;
 use App\Models\EmailAccount;
 use App\Models\EmailDomain;
-use App\Services\Cloudflare\CloudflareDnsManager;
+use App\Services\Dns\DnsManager;
 use App\Services\System\HostInfo;
 use App\Support\Settings;
 use App\Services\Shell\LocalConnection;
@@ -20,7 +20,7 @@ use Throwable;
 class MailManager
 {
     public function __construct(
-        protected CloudflareDnsManager $dns,
+        protected DnsManager $dns,
         protected Settings $settings,
         protected HostInfo $host,
     ) {}
@@ -145,9 +145,9 @@ class MailManager
         try {
             $steps = [];
 
-            if ($domain->manage_dns && $domain->cloudflareAccount && $domain->dns_record_ids) {
+            if ($domain->manage_dns && $domain->dnsAccount && $domain->dns_record_ids) {
                 $steps[] = Step::call('Remove mail DNS records', fn () => $this->dns->deleteRecords(
-                    $domain->cloudflareAccount,
+                    $domain->dnsAccount,
                     $domain->dns_record_ids
                 ));
             }
@@ -291,16 +291,26 @@ class MailManager
     /** MX, SPF, DKIM, DMARC and the mail host A record. */
     public function publishDns(EmailDomain $domain): string
     {
-        $account = $domain->cloudflareAccount;
+        $account = $domain->dnsAccount;
 
         if (! $account) {
-            throw new RuntimeException('No Cloudflare account attached to this mail domain.');
+            throw new RuntimeException('No DNS provider attached to this mail domain.');
         }
+
         $mailHost = $this->settings->get('mail_hostname') ?: 'mail.'.$domain->domain;
         $selector = $domain->dkim_selector ?: 'mail';
+        $ip = $this->host->publicIp();
+
+        if (! $ip) {
+            // Without an address the A record would be published empty, which
+            // is worse than not publishing it: mail would resolve nowhere.
+            throw new RuntimeException(
+                'Could not work out this machine\'s public address, so the mail records cannot be written.'
+            );
+        }
 
         $records = [
-            ['type' => 'A', 'name' => $mailHost, 'content' => $this->host->publicIp(), 'proxied' => false],
+            ['type' => 'A', 'name' => $mailHost, 'content' => $ip, 'proxied' => false],
             ['type' => 'MX', 'name' => $domain->domain, 'content' => $mailHost, 'priority' => 10],
             ['type' => 'TXT', 'name' => $domain->domain, 'content' => 'v=spf1 mx a:'.$mailHost.' ~all'],
             [

@@ -12,7 +12,7 @@ class EmailDomain extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'cloudflare_account_id', 'domain', 'status',
+        'user_id', 'dns_account_id', 'domain', 'status',
         'dkim_selector', 'dkim_public_key', 'manage_dns', 'dns_record_ids', 'last_error',
     ];
 
@@ -30,9 +30,9 @@ class EmailDomain extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function cloudflareAccount(): BelongsTo
+    public function dnsAccount(): BelongsTo
     {
-        return $this->belongsTo(CloudflareAccount::class);
+        return $this->belongsTo(DnsAccount::class);
     }
 
     public function accounts(): HasMany

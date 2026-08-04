@@ -1,13 +1,16 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import DnsAccounts from '@/Components/DnsAccounts.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import ServiceList from '@/Components/ServiceList.vue';
+import TabNav from '@/Components/TabNav.vue';
 import TextInput from '@/Components/TextInput.vue';
 import TaskConsole from '@/Components/TaskConsole.vue';
 import VersionCard from '@/Components/VersionCard.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
@@ -16,7 +19,39 @@ const props = defineProps({
     defaults: Object,
     phpVersions: Array,
     nodeVersions: Array,
+    services: { type: Array, default: () => [] },
+    dnsAccounts: { type: Array, default: () => [] },
+    dnsProviders: { type: Array, default: () => [] },
+    tab: { type: String, default: 'general' },
     activeTask: Object,
+    latestTask: Object,
+});
+
+const tab = ref(props.tab);
+
+const tabs = computed(() => [
+    { key: 'general', label: 'General' },
+    {
+        key: 'services',
+        label: 'Services',
+        badge: props.system.services_failed_count
+            ? props.system.services_failed_count
+            : `${props.system.services_installed_count}/${props.services.length}`,
+        badgeTone: props.system.services_failed_count
+            ? 'alert'
+            : props.system.preparing
+              ? 'busy'
+              : 'quiet',
+    },
+    { key: 'dns', label: 'DNS', badge: props.dnsAccounts.length || null },
+]);
+
+// Deep links land on the right section, and switching sections is worth a URL
+// so the browser's back button does what it looks like it should.
+watch(tab, (value) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', value);
+    window.history.replaceState({}, '', url);
 });
 
 const domainForm = useForm({
@@ -34,6 +69,34 @@ const onCustomDomain = computed(() => Boolean(props.panel.domain));
 
 const submitDomain = () => domainForm.post(route('system.domain'), { preserveScroll: true });
 const submitDefaults = () => defaultsForm.patch(route('system.settings'), { preserveScroll: true });
+
+// While the install queue is draining, keep the service rows in step.
+const preparing = computed(() => props.system.preparing);
+
+let timer = null;
+
+const start = () => {
+    if (timer) return;
+    timer = setInterval(
+        () =>
+            router.reload({
+                only: ['system', 'services', 'activeTask', 'latestTask'],
+                preserveScroll: true,
+            }),
+        4000,
+    );
+};
+
+const stop = () => {
+    if (timer) {
+        clearInterval(timer);
+        timer = null;
+    }
+};
+
+onMounted(() => preparing.value && start());
+onBeforeUnmount(stop);
+watch(preparing, (value) => (value ? start() : stop()));
 </script>
 
 <template>
@@ -41,15 +104,26 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
 
     <AuthenticatedLayout>
         <template #header>
-            <h2 class="text-xl font-semibold text-slate-800">Settings</h2>
+            <div>
+                <h2 class="text-xl font-semibold text-slate-800">Settings</h2>
+                <p class="text-sm text-slate-500">
+                    {{ system.hostname }} — {{ system.services_installed_count }} of
+                    {{ services.length }} installed
+                    <span v-if="system.services_failed_count" class="text-rose-600"
+                        >· {{ system.services_failed_count }} failed</span
+                    >
+                </p>
+            </div>
         </template>
+
+        <TabNav v-model="tab" :tabs="tabs" class="mb-6" />
 
         <div v-if="activeTask" class="mb-6">
             <TaskConsole :task="activeTask" title="Working" />
         </div>
 
-        <div class="grid gap-6 lg:grid-cols-2">
-            <!-- Where the panel answers -->
+        <!-- General -->
+        <div v-show="tab === 'general'" class="grid gap-6 lg:grid-cols-2">
             <div class="rounded-xl border border-slate-200 bg-white p-6">
                 <h3 class="font-semibold text-slate-800">Panel address</h3>
                 <p class="mt-1 text-sm text-slate-500">
@@ -115,10 +189,8 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                 </form>
             </div>
 
-            <!-- Version -->
             <VersionCard :update="update" />
 
-            <!-- Defaults for new sites -->
             <div class="rounded-xl border border-slate-200 bg-white p-6">
                 <h3 class="font-semibold text-slate-800">Defaults for new sites</h3>
                 <p class="mt-1 text-sm text-slate-500">
@@ -170,6 +242,20 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     <PrimaryButton :disabled="defaultsForm.processing">Save</PrimaryButton>
                 </form>
             </div>
+        </div>
+
+        <!-- Services -->
+        <div v-show="tab === 'services'">
+            <div v-if="!activeTask && latestTask" class="mb-6">
+                <TaskConsole :task="latestTask" title="Install output" />
+            </div>
+
+            <ServiceList :services="services" />
+        </div>
+
+        <!-- DNS -->
+        <div v-show="tab === 'dns'">
+            <DnsAccounts :accounts="dnsAccounts" :providers="dnsProviders" />
         </div>
     </AuthenticatedLayout>
 </template>
