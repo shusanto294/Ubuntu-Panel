@@ -9,12 +9,12 @@ import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     databases: Array,
-    engineOptions: Array,
+    availableEngines: Array,
     engines: Object,
 });
 
 const form = useForm({
-    engine: props.engineOptions?.[0] ?? 'mysql',
+    engine: props.availableEngines?.[0] ?? 'mysql',
     name: '',
     username: '',
     password: '',
@@ -22,7 +22,7 @@ const form = useForm({
 
 const revealed = ref({});
 
-const engineOptions = computed(() => props.engineOptions ?? []);
+const engineOptions = computed(() => props.availableEngines ?? []);
 
 const submit = () =>
     form.post(route('databases.store'), {
