@@ -3,7 +3,6 @@ import { Head, Link } from '@inertiajs/vue3';
 
 defineProps({
     canLogin: Boolean,
-    canRegister: Boolean,
 });
 
 const features = [
@@ -46,19 +45,12 @@ const features = [
                 >
                     Dashboard
                 </Link>
-                <template v-else>
-                    <Link
-                        :href="route('login')"
-                        class="px-3 py-2 text-slate-300 hover:text-white"
-                        >Log in</Link
-                    >
-                    <Link
-                        v-if="canRegister"
-                        :href="route('register')"
-                        class="rounded-md bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
-                        >Sign up</Link
-                    >
-                </template>
+                <Link
+                    v-else
+                    :href="route('login')"
+                    class="rounded-md bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
+                    >Log in</Link
+                >
             </nav>
         </header>
 
@@ -73,16 +65,11 @@ const features = [
                     LEMP stack, and creates or removes sites together with their
                     Cloudflare DNS records.
                 </p>
-                <div v-if="canRegister" class="mt-10 flex gap-3">
-                    <Link
-                        :href="route('register')"
-                        class="rounded-md bg-orange-500 px-6 py-3 font-medium text-white hover:bg-orange-600"
-                        >Create an account</Link
-                    >
+                <div v-if="canLogin" class="mt-10 flex gap-3">
                     <Link
                         :href="route('login')"
-                        class="rounded-md border border-slate-700 px-6 py-3 font-medium text-slate-200 hover:bg-slate-900"
-                        >Log in</Link
+                        class="rounded-md bg-orange-500 px-6 py-3 font-medium text-white hover:bg-orange-600"
+                        >Log in to your panel</Link
                     >
                 </div>
             </section>
