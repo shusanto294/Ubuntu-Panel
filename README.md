@@ -179,6 +179,26 @@ sudo journalctl -u ubuntu-panel-queue -f        # follow what the queue is doing
 The queue worker is not optional: provisioning, deployments, database and mail work all run
 as queued jobs. Without it, tasks sit at 0% forever.
 
+### Where the cache, sessions and queue live
+
+The installer starts them on the database, because that is the one store guaranteed to exist
+while the panel is being installed. It is also the most expensive: every page view becomes
+session reads and writes against MariaDB, and the queue worker runs a locking `SELECT`
+against it once a second for ever, on a machine where nothing is happening.
+
+Once Redis is installed the installer moves all three onto it, and `panel:update` does the
+same for a panel that predates this. It can also be done by hand:
+
+```bash
+php artisan panel:use-redis            # move them
+php artisan panel:use-redis --revert   # put them back
+```
+
+It declines rather than guesses — no phpredis extension, no recorded Redis password, a Redis
+that will not answer, or jobs still queued (they live in whichever store they were dispatched
+to) and it changes nothing and says why. `php artisan panel:doctor` reports which stores are
+in use.
+
 ## What it does
 
 - **Settings** — the gear beside your name. Three sections: **General** (put the panel on

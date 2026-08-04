@@ -486,6 +486,10 @@ if [[ "$PANEL_SERVICES" != "none" ]]; then
     else
         SOFTWARE_OK=0
     fi
+
+    # Redis exists by now, so the cache, sessions and queue can come off the
+    # database they had to start on. Declines by itself if Redis is not there.
+    sudo -u "$PANEL_USER" php artisan panel:use-redis || true
 fi
 
 printf '\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'

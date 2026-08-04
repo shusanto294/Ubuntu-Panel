@@ -39,6 +39,18 @@ class Doctor extends Command
         $this->line('    Passwordless sudo '.($sudoCode === 0 ? 'yes' : 'NO — '.$this->orNone($sudo)));
 
         $this->newLine();
+        $this->components->info('Stores');
+        $this->line('    Cache         '.config('cache.default'));
+        $this->line('    Sessions      '.config('session.driver'));
+        $this->line('    Queue         '.config('queue.default'));
+
+        if (config('queue.default') === 'database') {
+            $this->line('    '.
+                'On the database the worker polls it once a second. '.
+                'Run `php artisan panel:use-redis` to move them.');
+        }
+
+        $this->newLine();
         $this->components->info('Services — what the row says, and what the machine says');
 
         $rows = Service::orderBy('sort_order')->get()->keyBy('key');

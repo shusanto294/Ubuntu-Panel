@@ -82,6 +82,12 @@ class UpdatePanel extends Command
             Step::make('Update the nginx configuration', [
                 sprintf('cd %s && php artisan panel:sync-nginx', escapeshellarg($root)),
             ]),
+
+            // No-ops unless Redis is installed, reachable and idle, so this is
+            // safe on a panel that has never had it.
+            Step::make('Move the cache and queue to Redis if it is ready', [
+                sprintf('cd %s && php artisan panel:use-redis', escapeshellarg($root)),
+            ]),
         ]);
 
         if (! $ok) {
