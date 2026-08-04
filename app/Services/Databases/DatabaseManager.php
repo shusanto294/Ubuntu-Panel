@@ -210,7 +210,20 @@ class DatabaseManager
     protected function verifyCommands(Database $database): array
     {
         return match ($database->engine) {
-            'mysql' => ['sudo mysql -e "SHOW DATABASES LIKE '.escapeshellarg("'{$database->name}'").';"'],
+            // Quoted once, like every other command here. Wrapping the whole
+            // thing in double quotes *and* escaping the inner argument nests
+            // the quoting and hands mysql a backslash it cannot parse.
+            //
+            // `SHOW DATABASES LIKE` also exits 0 when it matches nothing, so
+            // it confirmed the creation of databases that were never created;
+            // this asks a question whose empty answer is a failure.
+            'mysql' => [sprintf(
+                'sudo mysql -N -e %s | grep -q .',
+                escapeshellarg(sprintf(
+                    "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s';",
+                    $database->name
+                ))
+            )],
             'postgres' => ['sudo -u postgres psql -lqt | cut -d \| -f1 | grep -qw '.escapeshellarg($database->name).' && echo "database present"'],
             'mongodb' => [sprintf(
                 'mongosh %s --quiet --eval %s',
