@@ -63,6 +63,37 @@ class MailProvisionTest extends TestCase
         $this->assertStringContainsString('ssl = yes', $config);
     }
 
+    /**
+     * The parser is stricter than it looks and only says so at start-up, on
+     * the server, at the end of an install — so check the shape here instead.
+     */
+    public function test_every_dovecot_block_opens_the_way_the_parser_wants(): void
+    {
+        $config = $this->provision()->files['/etc/dovecot/dovecot.conf'] ?? '';
+
+        foreach (preg_split('/\r?\n/', $config) as $index => $line) {
+            if (! str_contains($line, '{')) {
+                continue;
+            }
+
+            $this->assertTrue(
+                str_ends_with(rtrim($line), '{'),
+                sprintf(
+                    'dovecot.conf line %d puts a setting after the brace, which is a '.
+                    "fatal \"Garbage after '{'\": %s",
+                    $index + 1,
+                    trim($line)
+                )
+            );
+        }
+
+        $this->assertSame(
+            substr_count($config, '{'),
+            substr_count($config, '}'),
+            'unbalanced braces in dovecot.conf'
+        );
+    }
+
     public function test_the_mailname_postfix_reads_myorigin_from_is_written(): void
     {
         app(Settings::class)->set('mail_hostname', 'mail.example.com');

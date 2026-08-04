@@ -365,6 +365,11 @@ class MailServerProvisioner
      * Dovecot refuses to start on. Not including the directory at all is the
      * only version of this that stays working.
      *
+     * Note the shape of every block below: Dovecot's parser wants `{` to be
+     * the last thing on its line and each setting on its own. The compact
+     * `mailbox Drafts { special_use = \Drafts }` that reads so naturally is a
+     * fatal "Garbage after '{'".
+     *
      * @return array<string, string>
      */
     protected function dovecotFiles(string $password): array
@@ -385,14 +390,26 @@ class MailServerProvisioner
 
             namespace inbox {
               inbox = yes
-              mailbox Drafts { special_use = \Drafts
-                auto = subscribe }
-              mailbox Junk   { special_use = \Junk
-                auto = subscribe }
-              mailbox Sent   { special_use = \Sent
-                auto = subscribe }
-              mailbox Trash  { special_use = \Trash
-                auto = subscribe }
+
+              mailbox Drafts {
+                special_use = \Drafts
+                auto = subscribe
+              }
+
+              mailbox Junk {
+                special_use = \Junk
+                auto = subscribe
+              }
+
+              mailbox Sent {
+                special_use = \Sent
+                auto = subscribe
+              }
+
+              mailbox Trash {
+                special_use = \Trash
+                auto = subscribe
+              }
             }
 
             disable_plaintext_auth = yes
@@ -408,15 +425,27 @@ class MailServerProvisioner
             }
 
             service imap-login {
-              inet_listener imap  { port = 143 }
-              inet_listener imaps { port = 993
-                ssl = yes }
+              inet_listener imap {
+                port = 143
+              }
+
+              inet_listener imaps {
+                port = 993
+                ssl = yes
+              }
             }
+
             service pop3-login {
-              inet_listener pop3  { port = 110 }
-              inet_listener pop3s { port = 995
-                ssl = yes }
+              inet_listener pop3 {
+                port = 110
+              }
+
+              inet_listener pop3s {
+                port = 995
+                ssl = yes
+              }
             }
+
             service lmtp {
               unix_listener /var/spool/postfix/private/dovecot-lmtp {
                 mode = 0600
