@@ -175,13 +175,21 @@ return [
 
     /*
     | Websocket terminal daemon (php artisan panel:terminal-server).
-    | `url` is what the browser dials, so behind a proxy set it to the public
-    | wss:// address rather than the bind address.
+    |
+    | The daemon binds to loopback only and nginx proxies `path` through to it,
+    | so the browser dials the panel's own origin. That matters: the daemon's
+    | bind address is 127.0.0.1 *on the server*, which is a different machine
+    | from the one the browser is on, and the panel is served over TLS, which
+    | forbids a plain ws:// socket anyway.
+    |
+    | `url` overrides the whole thing with an absolute address, for the case
+    | where the daemon lives somewhere else entirely.
     */
     'terminal' => [
         'host' => env('PANEL_TERMINAL_HOST', '127.0.0.1'),
         'port' => env('PANEL_TERMINAL_PORT', 6001),
-        'url' => env('PANEL_TERMINAL_URL', 'ws://127.0.0.1:'.env('PANEL_TERMINAL_PORT', 6001)),
+        'path' => env('PANEL_TERMINAL_PATH', '/terminal-ws'),
+        'url' => env('PANEL_TERMINAL_URL'),
     ],
 
     /*

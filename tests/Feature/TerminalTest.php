@@ -14,14 +14,16 @@ class TerminalTest extends TestCase
 
     public function test_the_owner_gets_a_ticket_and_the_socket_url(): void
     {
-        config(['panel.terminal.url' => 'ws://127.0.0.1:6001']);
+        config(['panel.terminal.url' => null, 'panel.terminal.path' => '/terminal-ws']);
 
         $user = User::factory()->create();
 
         $response = $this->actingAs($user)
             ->postJson(route('terminal.ticket'))
             ->assertOk()
-            ->assertJsonPath('url', 'ws://127.0.0.1:6001')
+            // A path, not an address: the browser resolves it against the page
+            // it is on, so the socket follows the panel's own host and scheme.
+            ->assertJsonPath('url', '/terminal-ws')
             ->assertJsonPath('expires_in', TerminalTicket::TTL_SECONDS);
 
         $ticket = $response->json('ticket');
@@ -71,14 +73,14 @@ class TerminalTest extends TestCase
         $this->assertNotNull(Cache::get('terminal-ticket:'.hash('sha256', $ticket)));
     }
 
-    public function test_another_user_cannot_get_a_ticket_for_your_server(): void
+    public function test_an_absolute_url_overrides_the_path(): void
     {
-        $owner = User::factory()->create();
-        $intruder = User::factory()->create();
+        config(['panel.terminal.url' => 'wss://terminal.example.com:6001']);
 
-        $this->actingAs($intruder)
+        $this->actingAs(User::factory()->create())
             ->postJson(route('terminal.ticket'))
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonPath('url', 'wss://terminal.example.com:6001');
     }
 
     public function test_guests_are_rejected(): void

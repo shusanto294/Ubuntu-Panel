@@ -76,6 +76,12 @@ class UpdatePanel extends Command
                 sprintf('cd %s && sudo -u %s php artisan config:cache', escapeshellarg($root), escapeshellarg($user)),
                 sprintf('cd %s && sudo -u %s php artisan route:cache', escapeshellarg($root), escapeshellarg($user)),
             ]),
+
+            // Server configuration does not arrive with the code, so a panel
+            // installed before a vhost change has to be brought up to it here.
+            Step::make('Update the nginx configuration', [
+                sprintf('cd %s && php artisan panel:sync-nginx', escapeshellarg($root)),
+            ]),
         ]);
 
         if (! $ok) {

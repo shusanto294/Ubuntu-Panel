@@ -16,8 +16,27 @@ class TerminalController extends Controller
     {
         return response()->json([
             'ticket' => TerminalTicket::issue($request->user()),
-            'url' => config('panel.terminal.url'),
+            'url' => $this->socketUrl(),
             'expires_in' => TerminalTicket::TTL_SECONDS,
         ]);
+    }
+
+    /**
+     * Where the browser should dial.
+     *
+     * A path (the default) means "same origin as this page" and is resolved in
+     * the browser, so it stays correct whether the panel is reached by IP, by
+     * hostname, over TLS or not. Only an explicitly configured absolute URL
+     * bypasses that.
+     */
+    protected function socketUrl(): string
+    {
+        $configured = config('panel.terminal.url');
+
+        if (is_string($configured) && $configured !== '') {
+            return $configured;
+        }
+
+        return '/'.ltrim((string) config('panel.terminal.path', '/terminal-ws'), '/');
     }
 }

@@ -335,12 +335,38 @@ if [[ ! -f "${CERT_DIR}/cert.pem" ]]; then
         -subj "/CN=${HOST_IP}" >/dev/null 2>&1
 fi
 
+# The browser terminal's websocket. The daemon listens on loopback only, so
+# nginx is how the browser reaches it: same origin, same certificate, no extra
+# port to open. Kept in a snippet because the vhost is also rewritten by the
+# panel's domain setup and by certbot, and both leave snippets alone.
+mkdir -p /etc/nginx/snippets
+cat > /etc/nginx/snippets/ubuntu-panel-terminal.conf <<'NGINX'
+# Managed by Ubuntu Panel — the browser terminal's websocket.
+location /terminal-ws {
+    proxy_pass http://127.0.0.1:6001;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # A shell can sit idle for hours; the default minute would drop it.
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+    proxy_buffering off;
+}
+NGINX
+
 cat > /etc/nginx/sites-available/ubuntu-panel.conf <<NGINX
 # Managed by the Ubuntu Panel installer
 server {
     listen ${PANEL_PORT} ssl;
     listen [::]:${PANEL_PORT} ssl;
     server_name _;
+
+    include snippets/ubuntu-panel-terminal.conf;
 
     ssl_certificate ${CERT_DIR}/cert.pem;
     ssl_certificate_key ${CERT_DIR}/key.pem;

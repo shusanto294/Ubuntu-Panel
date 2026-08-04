@@ -25,6 +25,7 @@ class PanelDomain
         protected LocalConnection $shell,
         protected Settings $settings,
         protected HostInfo $host,
+        protected TerminalProxy $terminal,
     ) {}
 
     public function current(): ?string
@@ -76,6 +77,9 @@ class PanelDomain
             $lines[] = "Warning: {$domain} does not resolve to ".($this->host->publicIp() ?? 'this machine').
                 ' yet. Issuing a certificate will fail until DNS points here.';
         }
+
+        // The vhost includes this; nginx will not start if it is missing.
+        $this->terminal->writeSnippet();
 
         // Serve the name over plain HTTP first: certbot needs to answer a
         // challenge on port 80 before there is any certificate to serve.
@@ -137,6 +141,8 @@ class PanelDomain
             listen 80;
             listen [::]:80;
             server_name {$domain};
+
+            include snippets/ubuntu-panel-terminal.conf;
 
             root {$root};
             index index.php;

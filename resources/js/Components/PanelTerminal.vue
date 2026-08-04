@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -14,6 +14,13 @@ const props = defineProps({
 const screen = ref(null);
 const state = ref('idle'); // idle | connecting | connected | closed | failed
 const message = ref('');
+
+// The daemon names the box it opened the shell on; until then say what we know.
+const title = computed(() =>
+    state.value === 'connected' && message.value
+        ? message.value
+        : props.host || 'terminal',
+);
 
 let term = null;
 let fit = null;
@@ -45,6 +52,24 @@ const theme = {
 };
 
 const write = (text) => term?.write(text);
+
+/**
+ * The panel hands back a path, not an address.
+ *
+ * The terminal daemon listens on loopback *on the server*; nginx proxies the
+ * panel's own origin through to it. Resolving here keeps the socket on the same
+ * host and the same scheme as the page — a ws:// socket on an https:// page is
+ * blocked as mixed content, and a hard-coded 127.0.0.1 would point the browser
+ * at the machine the browser is running on.
+ */
+const socketUrl = (target) => {
+    if (/^wss?:\/\//i.test(target)) return target;
+
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const path = target.startsWith('/') ? target : `/${target}`;
+
+    return `${scheme}://${window.location.host}${path}`;
+};
 
 const notice = (text, colour = '33') => write(`\r\n\x1b[${colour}m${text}\x1b[0m\r\n`);
 
@@ -82,7 +107,7 @@ const connect = async () => {
             route('terminal.ticket'),
         );
         ticket = response.data.ticket;
-        url = response.data.url;
+        url = socketUrl(response.data.url);
     } catch (e) {
         state.value = 'failed';
         message.value = 'Could not get a session ticket.';
@@ -139,7 +164,8 @@ const connect = async () => {
         message.value = `Could not reach the terminal server at ${url}.`;
         notice(
             `Could not reach the terminal server at ${url}.\r\n` +
-                'Start it with:  php artisan panel:terminal-server',
+                'On the server, check:  systemctl status ubuntu-panel-terminal\r\n' +
+                'and that nginx proxies the terminal:  php artisan panel:sync-nginx',
             '31',
         );
     };
@@ -230,7 +256,7 @@ watch(
                 <span class="h-3 w-3 rounded-full bg-amber-500/70" />
                 <span class="h-3 w-3 rounded-full bg-emerald-500/70" />
                 <span class="ml-2 font-mono text-xs text-slate-400">
-                    {{ user }}@{{ host }}
+                    {{ title }}
                 </span>
             </div>
 
