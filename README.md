@@ -136,9 +136,18 @@ exact command to paste — or run it straight from the panel's own **Terminal**.
 
 ### Publishing an update (maintainers)
 
+**Bump `version` in `config/panel.php` in the same commit as every push to `main`. No
+exceptions.**
+
+Patch for a fix, minor for a feature, major for anything that changes how the panel is run.
+The version is what an operator reads to know whether the thing in front of them is the
+thing you shipped; a push that leaves it alone makes two different panels claim to be the
+same one, and there is then no way to tell them apart from the outside.
+
 Push to `main`. Every install compares its commit against the tip of that branch, so a push
 is all it takes for panels to report an update. Cut a GitHub release and the version number
-is used instead of the commit.
+is compared instead of the commit — at which point the tag and `config/panel.php` have to
+agree, or panels either miss updates or report one forever.
 
 ### Service management
 

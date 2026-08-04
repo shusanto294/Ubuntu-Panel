@@ -6,8 +6,11 @@ return [
     | Where this panel came from and what version it is. The update check
     | compares the installed commit against the tip of `update_branch`, so
     | pushing to that branch is how an update ships.
+    |
+    | Bump `version` in the same commit as every push to that branch — see
+    | "Publishing an update" in the README.
     */
-    'version' => '1.0.0',
+    'version' => '1.0.1',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
