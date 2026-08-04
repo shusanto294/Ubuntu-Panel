@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\ActivityLog;
+use App\Services\Shell\LocalConnection;
 use App\Models\User;
 use App\Services\Tasks\Step;
 use App\Services\Tasks\TaskRunner;
@@ -14,10 +15,9 @@ class TaskRunnerTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function makeLog(Server $server): ActivityLog
+    protected function makeLog(): ActivityLog
     {
         return ActivityLog::create([
-            'user_id' => $server->user_id,
             'type' => 'provision',
             'action' => 'test.run',
             'status' => 'running',

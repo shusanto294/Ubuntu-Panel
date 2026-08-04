@@ -46,21 +46,25 @@ class EmailManagementTest extends TestCase
         Queue::assertPushed(CreateEmailDomain::class);
     }
 
-    public function test_a_domain_cannot_be_added_to_a_server_without_the_mail_stack(): void
+    public function test_a_domain_cannot_be_added_before_the_mail_stack_is_installed(): void
     {
         $user = User::factory()->create();
-        $this->withMailServer();
+        $this->withMailServer(configured: false);
 
         $this->actingAs($user)->post(route('email.domains.store'), [
             'domain' => 'example.com',
-        ])->assertSessionHasErrors('server_id');
+        ])->assertSessionHasErrors('domain');
+
+        $this->assertSame(0, EmailDomain::count());
     }
 
     public function test_a_mailbox_can_be_created(): void
     {
         Queue::fake();
         $user = User::factory()->create();
-        $domain = $this->withMailServer()->emailDomains()->create([
+        $this->withMailServer();
+
+        $domain = EmailDomain::create([
             'user_id' => $user->id, 'domain' => 'example.com', 'status' => 'active',
         ]);
 
@@ -81,7 +85,9 @@ class EmailManagementTest extends TestCase
     public function test_mailbox_passwords_are_encrypted_at_rest(): void
     {
         $user = User::factory()->create();
-        $domain = $this->withMailServer()->emailDomains()->create([
+        $this->withMailServer();
+
+        $domain = EmailDomain::create([
             'user_id' => $user->id, 'domain' => 'example.com',
         ]);
 
@@ -99,7 +105,9 @@ class EmailManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
-        $domain = $this->withMailServer()->emailDomains()->create([
+        $this->withMailServer();
+
+        $domain = EmailDomain::create([
             'user_id' => $user->id, 'domain' => 'example.com',
         ]);
 
@@ -113,7 +121,9 @@ class EmailManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
-        $domain = $this->withMailServer()->emailDomains()->create([
+        $this->withMailServer();
+
+        $domain = EmailDomain::create([
             'user_id' => $user->id, 'domain' => 'example.com',
         ]);
         $account = $domain->accounts()->create([
@@ -169,7 +179,9 @@ class EmailManagementTest extends TestCase
     {
         $owner = User::factory()->create();
         $intruder = User::factory()->create();
-        $domain = $this->withMailServer()->emailDomains()->create([
+        $this->withMailServer();
+
+        $domain = EmailDomain::create([
             'user_id' => $owner->id, 'domain' => 'example.com',
         ]);
 

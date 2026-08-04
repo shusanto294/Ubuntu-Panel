@@ -25,6 +25,7 @@ class DatabaseManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
+        $this->withEngines();
 
         $this->actingAs($user)->post(route('databases.store'), [
             'engine' => 'mysql',
@@ -84,8 +85,9 @@ class DatabaseManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
+        $this->withEngines();
 
-        $payload = ['server_id' => null, 'engine' => 'mysql', 'name' => 'my_app'];
+        $payload = ['engine' => 'mysql', 'name' => 'my_app'];
 
         $this->actingAs($user)->post(route('databases.store'), $payload)->assertRedirect();
         $this->actingAs($user)->post(route('databases.store'), $payload)->assertSessionHasErrors('name');

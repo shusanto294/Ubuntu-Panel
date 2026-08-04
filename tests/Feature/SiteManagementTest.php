@@ -8,12 +8,22 @@ use App\Models\Site;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InstallsServices;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class SiteManagementTest extends TestCase
 {
     use InstallsServices, RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // HostInfo caches the machine's public address; seeding the cache keeps
+        // it off the suite's own network and makes the expected value fixed.
+        Cache::put('panel:public-ip', '203.0.113.10', now()->addHour());
+    }
 
     /** Put the software a site type needs on the machine. */
     protected function withServices(array $services = ['mysql', 'wpcli', 'node', 'redis']): void
@@ -58,6 +68,7 @@ class SiteManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
+        $this->withServices();
 
         $this->actingAs($user)->post(route('sites.store'), $this->payload([
             'type' => 'wordpress',
@@ -80,6 +91,7 @@ class SiteManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
+        $this->withServices();
 
         $this->actingAs($user)->post(route('sites.store'), $this->payload([
             'type' => 'nextjs',
@@ -99,6 +111,7 @@ class SiteManagementTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
+        $this->withServices();
 
         $this->actingAs($user)->post(route('sites.store'), $this->payload([
             'type' => 'nodejs', 'domain' => 'one.example.com',
@@ -169,13 +182,11 @@ class SiteManagementTest extends TestCase
         Queue::assertPushed(DeleteSite::class);
     }
 
-    public function test_a_user_cannot_create_a_site_on_someone_elses_server(): void
+    public function test_guests_cannot_create_a_site(): void
     {
-        $owner = User::factory()->create();
-        $intruder = User::factory()->create();
+        $this->post(route('sites.store'), $this->payload())
+            ->assertRedirect(route('login'));
 
-        $this->actingAs($intruder)
-            ->post(route('sites.store'), $this->payload())
-            ->assertSessionHasErrors('server_id');
+        $this->assertSame(0, Site::count());
     }
 }

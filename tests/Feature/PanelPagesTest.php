@@ -54,11 +54,11 @@ class PanelPagesTest extends TestCase
         $user->cloudflareAccounts()->create(['label' => 'Personal', 'api_token' => 'cf-token']);
 
         $pages = [
-            ['dashboard', [], 'Dashboard'],
-            ['servers.index', [], 'Servers/Index'],
-            ['servers.create', [], 'Servers/Create'],
-            ['servers.show', $server, 'Servers/Show'],
-            ['servers.edit', $server, 'Servers/Edit'],
+            ['dashboard', [], 'System/Overview'],
+            ['services.index', [], 'System/Services'],
+            ['settings', [], 'System/Settings'],
+            ['terminal', [], 'System/Terminal'],
+            ['profile.edit', [], 'Profile/Edit'],
             ['sites.index', [], 'Sites/Index'],
             ['sites.create', [], 'Sites/Create'],
             ['sites.show', $site, 'Sites/Show'],
