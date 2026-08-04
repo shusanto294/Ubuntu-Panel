@@ -94,9 +94,35 @@ class UpdatePanel extends Command
             $this->restartServices($shell);
         }
 
+        $this->reloadConfig();
+
         $this->components->info('Updated to '.$this->describe($checker->status(fresh: true)['current']));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Pick up the config the update just wrote.
+     *
+     * This process read its configuration at boot, before the new code
+     * existed — `config:cache` ran in a subprocess and cannot reach back into
+     * this one. Without this the closing line reports the version the command
+     * started with, so an update that changed the version number appears to
+     * have changed nothing.
+     */
+    protected function reloadConfig(): void
+    {
+        $path = base_path('config/panel.php');
+
+        if (! is_readable($path)) {
+            return;
+        }
+
+        $fresh = require $path;
+
+        if (is_array($fresh)) {
+            config(['panel' => $fresh]);
+        }
     }
 
     /**
