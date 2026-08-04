@@ -76,8 +76,54 @@ class UpdateChecker
             'current' => $current,
             'latest' => $latest,
             'available' => $this->isBehind($current, $latest),
+            'command' => $this->updateCommand(),
             'checked_at' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * The exact line to paste, from wherever the shell happens to be.
+     *
+     * Built here rather than written into the page because the panel knows
+     * where it lives and who owns it, and a copy button that hands you a
+     * command needing you to already be in the right directory is a copy
+     * button that hands you `Could not open input file: artisan`.
+     */
+    public function updateCommand(): string
+    {
+        $path = base_path();
+
+        // Quoted only when it has to be. `cd '/opt/ubuntu-panel'` is correct
+        // and looks like a mistake; an unquoted path with a space in it looks
+        // fine and is not.
+        if (preg_match('/[^A-Za-z0-9_\/.:@%+=-]/', $path)) {
+            $path = escapeshellarg($path);
+        }
+
+        return sprintf(
+            'cd %s && sudo -u %s php artisan panel:update',
+            $path,
+            $this->panelUser()
+        );
+    }
+
+    /**
+     * The system user the panel runs as — whoever owns the files, so a
+     * non-standard `--user` at install time is still right here.
+     */
+    public function panelUser(): string
+    {
+        $owner = @fileowner(base_path('artisan'));
+
+        if ($owner !== false && function_exists('posix_getpwuid')) {
+            $user = posix_getpwuid($owner);
+
+            if (! empty($user['name'])) {
+                return $user['name'];
+            }
+        }
+
+        return (string) config('panel.system_user', 'ubuntupanel');
     }
 
     /**

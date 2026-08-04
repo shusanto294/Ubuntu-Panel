@@ -51,7 +51,7 @@ class UpdatePanel extends Command
         ]);
 
         $root = base_path();
-        $user = $this->panelUser();
+        $user = $checker->panelUser();
 
         $ok = TaskRunner::for($log, $shell->timeout(1800))->run([
             Step::make('Fetch the latest code', [
@@ -149,21 +149,6 @@ class UpdatePanel extends Command
         $shell->run("(sleep 5; sudo systemctl restart {$services}) >/dev/null 2>&1 &");
 
         $this->components->warn('Scheduled a detached restart ('.trim($output).').');
-    }
-
-    protected function panelUser(): string
-    {
-        $owner = @fileowner(base_path('artisan'));
-
-        if ($owner !== false && function_exists('posix_getpwuid')) {
-            $user = posix_getpwuid($owner);
-
-            if (! empty($user['name'])) {
-                return $user['name'];
-            }
-        }
-
-        return (string) config('panel.system_user', 'ubuntupanel');
     }
 
     /**

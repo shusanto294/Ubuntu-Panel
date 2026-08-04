@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Console\Commands\UpdatePanel;
+use App\Models\User;
+use App\Services\System\UpdateChecker;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -10,6 +12,46 @@ use Tests\TestCase;
 class UpdatePanelTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * The copy button on the version card hands you a whole command. Without
+     * the `cd` it lands you in whatever directory you happen to be in, where
+     * artisan is not, and answers "Could not open input file: artisan".
+     */
+    public function test_the_update_command_takes_you_to_the_panel_first(): void
+    {
+        $command = app(UpdateChecker::class)->updateCommand();
+
+        $this->assertStringStartsWith('cd ', $command);
+        $this->assertStringContainsString(base_path(), $command);
+        $this->assertStringContainsString('php artisan panel:update', $command);
+    }
+
+    public function test_a_path_that_needs_quoting_gets_it(): void
+    {
+        $checker = app(UpdateChecker::class);
+
+        // A --dir install can land somewhere with a space in it, and an
+        // unquoted `cd` would stop at the space.
+        $quoted = str_contains(base_path(), ' ');
+
+        $this->assertSame(
+            $quoted,
+            str_contains($checker->updateCommand(), "'".base_path()."'"),
+            'the path is quoted when, and only when, it needs to be'
+        );
+    }
+
+    public function test_the_version_card_is_given_that_command(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->get(route('settings'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where(
+                'update.command',
+                app(UpdateChecker::class)->updateCommand()
+            ));
+    }
 
     public function test_the_version_is_re_read_from_disk_after_an_update(): void
     {

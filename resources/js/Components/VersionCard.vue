@@ -53,12 +53,18 @@ const check = async () => {
     }
 };
 
-const command = 'sudo -u ubuntupanel php artisan panel:update';
+// The panel builds this: it knows where it is installed and which user owns
+// it, and neither is guaranteed to be the default.
+const command = computed(
+    () =>
+        state.value.command ??
+        'cd /opt/ubuntu-panel && sudo -u ubuntupanel php artisan panel:update',
+);
 const copied = ref(false);
 
 const copy = async () => {
     try {
-        await navigator.clipboard.writeText(command);
+        await navigator.clipboard.writeText(command.value);
         copied.value = true;
         setTimeout(() => (copied.value = false), 2000);
     } catch (e) {
