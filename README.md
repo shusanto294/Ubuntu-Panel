@@ -30,7 +30,7 @@ That is the whole installation. It takes a few minutes and:
    the port in ufw if it is active.
 7. Asks for an administrator email and password, then takes inventory of what is already
    installed on the machine.
-8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, WP-CLI,
+8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, PM2, WP-CLI,
    Certbot and the Postfix/Dovecot/OpenDKIM mail stack included — so there is nothing left
    to click when it finishes.
 

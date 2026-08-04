@@ -167,6 +167,52 @@ class InstallSoftwareTest extends TestCase
         $this->assertStringContainsString('nginx', $installs[0]);
     }
 
+    /**
+     * What `install.sh` runs. Every catalogue entry has to come out of a fresh
+     * install, and the ones that are not apt packages are the ones that go
+     * missing quietly — they need a step written for them, and a catalogue
+     * entry without one installs nothing and reports success.
+     */
+    public function test_a_fresh_install_covers_everything_including_the_non_apt_ones(): void
+    {
+        $connection = $this->bareMachine();
+
+        $this->artisan('panel:install-services --services=all')->assertSuccessful();
+
+        $installed = Service::query()->where('status', Service::INSTALLED)->pluck('key')->all();
+
+        foreach (ServiceCatalog::keys() as $key) {
+            $this->assertContains($key, $installed, "{$key} is not installed after a full run");
+        }
+
+        $ran = implode("\n", $connection->ran);
+
+        $this->assertStringContainsString('npm install -g pm2', $ran);
+        $this->assertStringContainsString('getcomposer.org', $ran);
+        $this->assertStringContainsString('wp-cli.phar', $ran);
+    }
+
+    /** PM2 needs Node, so it has to come after it. */
+    public function test_pm2_is_installed_after_node(): void
+    {
+        $connection = $this->bareMachine();
+
+        $this->artisan('panel:install-services --services=all')->assertSuccessful();
+
+        $node = array_search(true, array_map(
+            fn ($c) => str_contains($c, 'node -v'),
+            $connection->ran
+        ), true);
+        $pm2 = array_search(true, array_map(
+            fn ($c) => str_contains($c, 'npm install -g pm2'),
+            $connection->ran
+        ), true);
+
+        $this->assertNotFalse($node);
+        $this->assertNotFalse($pm2);
+        $this->assertGreaterThan($node, $pm2, 'PM2 was installed before Node existed');
+    }
+
     /** PM2 is npm's, not apt's, so it needs a step of its own. */
     public function test_pm2_is_installed_through_npm(): void
     {
