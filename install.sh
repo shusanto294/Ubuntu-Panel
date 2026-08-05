@@ -149,13 +149,30 @@ fi
 
 # The panel manages this machine: installs packages, writes vhosts, restarts
 # services. It needs root, and it must never sit waiting for a password prompt.
-cat > /etc/sudoers.d/ubuntu-panel <<SUDOERS
+#
+# Checked in a temporary file and only then moved into place. sudo refuses to
+# run at all when any file in /etc/sudoers.d fails to parse — so writing first
+# and validating afterwards takes sudo away from the whole machine on exactly
+# the path where the validation was going to fail, which is the worst possible
+# way to report a bad line.
+#
+# No `!requiretty`: sudo 1.9.17 removed the setting outright, and naming it is
+# now a parse error rather than a no-op. Debian and Ubuntu have never shipped
+# requiretty on, so the line was insurance against a default that does not
+# exist here.
+SUDOERS_FILE=$(mktemp)
+cat > "$SUDOERS_FILE" <<SUDOERS
 # Managed by the Ubuntu Panel installer
 ${PANEL_USER} ALL=(ALL) NOPASSWD: ALL
-Defaults:${PANEL_USER} !requiretty
 SUDOERS
-chmod 440 /etc/sudoers.d/ubuntu-panel
-visudo -cf /etc/sudoers.d/ubuntu-panel >/dev/null || die "Wrote an invalid sudoers file."
+
+if ! visudo -cf "$SUDOERS_FILE" >/dev/null; then
+    rm -f "$SUDOERS_FILE"
+    die "Generated an invalid sudoers file; nothing was installed into /etc/sudoers.d."
+fi
+
+install -m 440 -o root -g root "$SUDOERS_FILE" /etc/sudoers.d/ubuntu-panel
+rm -f "$SUDOERS_FILE"
 ok "${PANEL_USER} can run privileged commands without a password"
 
 # ------------------------------------------------------------------ source ---
