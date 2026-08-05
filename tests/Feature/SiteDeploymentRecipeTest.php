@@ -150,6 +150,52 @@ class SiteDeploymentRecipeTest extends TestCase
         $this->assertStringContainsString('$panel_https', NginxVhost::helperConfig());
     }
 
+    /**
+     * The overrides have to be the last word on those two parameters.
+     *
+     * `snippets/fastcgi-php.conf` pulls in `fastcgi.conf`, which sets the whole
+     * standard set — including `HTTPS $https if_not_empty`. A second
+     * `include fastcgi_params;` after our own lines sent every parameter twice
+     * and put the stock `HTTPS` back on top of `$panel_https`, which is the one
+     * that tells WordPress the request was secure when TLS ended at Cloudflare.
+     */
+    public function test_the_fastcgi_overrides_are_not_undone_by_a_later_include(): void
+    {
+        $vhost = NginxVhost::render($this->site(['type' => 'php']));
+
+        $this->assertSame(1, substr_count($vhost, 'include snippets/fastcgi-php.conf;'));
+        $this->assertStringNotContainsString('include fastcgi_params;', $vhost);
+
+        $this->assertGreaterThan(
+            strpos($vhost, 'include snippets/fastcgi-php.conf;'),
+            strpos($vhost, 'fastcgi_param HTTPS $panel_https;'),
+            'the HTTPS override must come after the snippet that sets the stock value'
+        );
+    }
+
+    /**
+     * `http2 on;` is an nginx 1.25.1 directive. Ubuntu 22.04 ships 1.18 and
+     * 24.04 ships 1.24, where an unknown directive is fatal rather than
+     * ignored: `nginx -t` fails, the reload is refused, and every site on the
+     * box stays frozen on the last configuration that loaded.
+     */
+    public function test_http2_is_only_declared_where_nginx_understands_it(): void
+    {
+        $site = $this->site(['type' => 'php', 'ssl' => true]);
+
+        $this->assertStringContainsString('http2 on;', NginxVhost::render($site, tls: true, http2: true));
+        $this->assertStringNotContainsString('http2', NginxVhost::render($site, tls: true, http2: false));
+
+        $this->assertFalse(NginxVhost::supportsHttp2Directive('nginx version: nginx/1.18.0 (Ubuntu)'));
+        $this->assertFalse(NginxVhost::supportsHttp2Directive('nginx version: nginx/1.24.0 (Ubuntu)'));
+        $this->assertTrue(NginxVhost::supportsHttp2Directive('nginx version: nginx/1.25.1'));
+        $this->assertTrue(NginxVhost::supportsHttp2Directive('nginx version: nginx/1.28.0 (Ubuntu)'));
+
+        // Unreadable version: losing HTTP/2 costs a little speed, guessing the
+        // other way costs the whole configuration.
+        $this->assertFalse(NginxVhost::supportsHttp2Directive('command not found'));
+    }
+
     public function test_wordpress_urls_follow_the_final_scheme(): void
     {
         $site = $this->site(['type' => 'wordpress', 'ssl' => true]);

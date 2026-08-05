@@ -12,10 +12,35 @@ class NginxVhost
     /**
      * @param  bool  $tls  render the HTTPS form — only once the certificate exists,
      *                     since nginx refuses to start if ssl_certificate is missing
+     * @param  bool  $http2  emit the `http2 on;` directive; only nginx 1.25.1 and
+     *                       later understand it, and on anything older it is not a
+     *                       warning — the configuration fails to load entirely
      */
-    public static function render(Site $site, bool $tls = false): string
+    public static function render(Site $site, bool $tls = false, bool $http2 = true): string
     {
-        return $tls ? self::tlsVhost($site) : self::plainVhost($site);
+        return $tls ? self::tlsVhost($site, $http2) : self::plainVhost($site);
+    }
+
+    /**
+     * Does this nginx take `http2 on;` as a directive?
+     *
+     * It arrived in 1.25.1, replacing the `listen ... http2` parameter. Ubuntu
+     * 22.04 ships 1.18 and 24.04 ships 1.24, so on both of those the directive
+     * is an unknown one — and an unknown directive is fatal, not ignored. A
+     * vhost carrying it means `nginx -t` fails, the reload is refused, and
+     * every site on the box stays frozen on the last configuration that
+     * loaded. Cheaper to ask than to find out that way.
+     */
+    public static function supportsHttp2Directive(string $versionOutput): bool
+    {
+        if (! preg_match('/nginx\/(\d+)\.(\d+)\.(\d+)/', $versionOutput, $m)) {
+            // Unreadable version: assume the older syntax. Losing HTTP/2 costs
+            // a little speed; guessing wrong the other way costs the whole
+            // configuration.
+            return false;
+        }
+
+        return version_compare("{$m[1]}.{$m[2]}.{$m[3]}", '1.25.1', '>=');
     }
 
     /**
@@ -152,11 +177,12 @@ class NginxVhost
     }
 
     /** Port 80 redirects to 443; the site itself is served over TLS. */
-    protected static function tlsVhost(Site $site): string
+    protected static function tlsVhost(Site $site, bool $http2 = true): string
     {
         $names = implode(' ', $site->hostnames());
         $domain = $site->domain;
         $certs = self::certificatePath($site);
+        $http2Line = $http2 ? "    http2 on;\n" : '';
 
         return <<<NGINX
         # Managed by Ubuntu Panel — {$site->typeLabel()} site (HTTPS, HTTP redirected)
@@ -175,8 +201,7 @@ class NginxVhost
         server {
             listen 443 ssl;
             listen [::]:443 ssl;
-            http2 on;
-            server_name {$names};
+        {$http2Line}    server_name {$names};
 
             ssl_certificate     {$certs}/fullchain.pem;
             ssl_certificate_key {$certs}/privkey.pem;

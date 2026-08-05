@@ -107,8 +107,34 @@ class SiteRecipe
                         'Check that the domain resolves to this server, then redeploy.';
                 }
 
-                $ssh->putFile(NginxVhost::availablePath($site), NginxVhost::render($site->fresh(), tls: true));
-                $ssh->mustRun('sudo nginx -t');
+                [$version] = $ssh->run('nginx -v 2>&1');
+
+                $ssh->putFile(
+                    NginxVhost::availablePath($site),
+                    NginxVhost::render(
+                        $site->fresh(),
+                        tls: true,
+                        http2: NginxVhost::supportsHttp2Directive($version)
+                    )
+                );
+
+                // A file nginx will not load is worse than no HTTPS at all: the
+                // reload is refused, so the running configuration freezes for
+                // *every* site on the box, and the panel goes on saying the
+                // deployment succeeded. Put the working HTTP vhost back and say
+                // what nginx objected to.
+                [$test, $testCode] = $ssh->run('sudo nginx -t 2>&1');
+
+                if ($testCode !== 0) {
+                    $ssh->putFile(NginxVhost::availablePath($site), NginxVhost::render($site, tls: false));
+                    $ssh->run('sudo systemctl reload nginx');
+                    $site->forceFill(['ssl' => false])->save();
+
+                    throw new \RuntimeException(
+                        "nginx rejected the HTTPS vhost, so the site was put back on HTTP:\n".$test
+                    );
+                }
+
                 $ssh->mustRun('sudo systemctl reload nginx');
 
                 $site->forceFill(['ssl' => true])->save();

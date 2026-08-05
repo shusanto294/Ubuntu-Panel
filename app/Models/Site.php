@@ -145,6 +145,20 @@ class Site extends Model
         NGINX;
     }
 
+    /**
+     * The FastCGI overrides go after the snippet, never before it.
+     *
+     * `snippets/fastcgi-php.conf` pulls in `fastcgi.conf`, which sets the whole
+     * standard parameter set — including `SCRIPT_FILENAME` and
+     * `HTTPS $https if_not_empty`. nginx sends parameters in declaration order
+     * and PHP keeps the last of any duplicate, so ours only win by coming
+     * afterwards.
+     *
+     * There used to be a second `include fastcgi_params;` below them, which
+     * sent every standard parameter a second time and put the stock `HTTPS`
+     * back on top of `$panel_https` — the one that tells WordPress the request
+     * was secure when TLS ended at Cloudflare rather than here.
+     */
     protected function phpBody(): string
     {
         $root = $this->documentRoot();
@@ -168,10 +182,11 @@ class Site extends Model
             location ~ \.php\$ {
                 include snippets/fastcgi-php.conf;
                 fastcgi_pass unix:/run/php/php{$php}-fpm.sock;
+                fastcgi_read_timeout 300;
+
+                # Overrides last — see NginxVhost notes.
                 fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
                 fastcgi_param HTTPS \$panel_https;
-                fastcgi_read_timeout 300;
-                include fastcgi_params;
             }
 
             location ~ /\.(?!well-known).* {
