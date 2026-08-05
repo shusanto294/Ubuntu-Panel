@@ -8,6 +8,7 @@ use App\Services\Databases\DatabaseManager;
 use App\Services\Shell\LocalConnection;
 use App\Services\Tasks\Step;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 /**
  * Builds the deployment steps for a site, branching on its type.
@@ -34,6 +35,17 @@ class SiteRecipe
                 'sudo chmod -R 755 '.escapeshellarg($root),
             ]),
         ];
+
+        // Before anything is written: nginx will happily load a vhost pointing
+        // at a socket that does not exist, `nginx -t` passes, the deployment
+        // reports success, and every request to the site is a 502 from an
+        // origin where, as far as the panel is concerned, nothing went wrong.
+        if ($site->isPhp()) {
+            $steps[] = Step::call(
+                'Make sure PHP '.$site->php_version.' is on this machine',
+                fn (LocalConnection $ssh) => $this->ensurePhpRuntime($ssh)
+            );
+        }
 
         if ($site->needsDatabase()) {
             $steps[] = Step::call('Create the application database', function (LocalConnection $ssh) {
@@ -470,6 +482,53 @@ class SiteRecipe
           })
           .listen(port, '127.0.0.1', () => console.log('listening on ' + port));
         JS;
+    }
+
+    /**
+     * The PHP-FPM socket this site's vhost names has to exist and be listening.
+     *
+     * A site can be created against any version the catalogue knows, and the
+     * machine only ever has the ones somebody installed — the distro's default
+     * is not always the one the panel was asked for, and on a release where the
+     * PPA has not caught up it is not even the one the installer wanted. So the
+     * version is installed here if it is missing, rather than discovered later
+     * as a 502 the panel has no opinion about.
+     */
+    protected function ensurePhpRuntime(LocalConnection $ssh): string
+    {
+        $version = $this->site->php_version;
+        $socket = "/run/php/php{$version}-fpm.sock";
+
+        [, $code] = $ssh->run('sudo test -S '.escapeshellarg($socket));
+
+        if ($code === 0) {
+            return "PHP {$version} is listening on {$socket}.";
+        }
+
+        $extensions = implode(' ', array_map(
+            fn ($suffix) => "php{$version}-{$suffix}",
+            ['fpm', 'cli', 'common', 'mysql', 'curl', 'mbstring', 'xml', 'zip', 'gd', 'bcmath', 'intl']
+        ));
+
+        $ssh->run('sudo DEBIAN_FRONTEND=noninteractive apt-get install -y '.$extensions);
+        $ssh->run("sudo systemctl enable --now php{$version}-fpm");
+
+        [, $code] = $ssh->run('sudo test -S '.escapeshellarg($socket));
+
+        if ($code !== 0) {
+            // Naming what *is* there is the whole point: "8.3 is missing" on a
+            // box that only has 8.5 tells you exactly what to change.
+            [$present] = $ssh->run('ls /run/php/*.sock 2>/dev/null | tr "\n" " "');
+
+            throw new RuntimeException(
+                "PHP {$version} could not be installed, so nothing would serve this site — ".
+                "nginx would answer every request with a 502.\n".
+                'PHP-FPM sockets on this machine: '.(trim($present) ?: 'none').".\n".
+                'Pick one of those for the site, or install PHP '.$version.' from the Services page.'
+            );
+        }
+
+        return "PHP {$version} installed and listening on {$socket}.";
     }
 
     /** Ask certbot for this site's certificate; see CertbotIssuer for how. */

@@ -127,7 +127,7 @@ class TaskRunner
     protected function runCommands(Step $step): void
     {
         foreach ($step->commands as $command) {
-            $this->write("$ {$command}\n");
+            $this->write('$ '.self::redact($command)."\n");
             [$output, $code] = $this->ssh->run($command);
 
             if ($output !== '') {
@@ -152,7 +152,7 @@ class TaskRunner
      */
     protected function failureMessage(string $command, int $code, string $output): string
     {
-        $message = "Command exited {$code}: {$command}";
+        $message = 'Command exited '.$code.': '.self::redact($command);
 
         $lines = array_values(array_filter(
             array_map('rtrim', preg_split('/\r?\n/', trim($output)) ?: []),
@@ -166,6 +166,36 @@ class TaskRunner
         $tail = array_slice($lines, -5);
 
         return $message.' — '.Str::limit(implode(' | ', $tail), 500);
+    }
+
+    /**
+     * Keep secrets out of the console and out of the row summary.
+     *
+     * The task console is a feature — you can watch a deployment happen — and
+     * the last failed command ends up on the page beside the thing that
+     * failed. Neither is a place for a password. A mailbox creation once put
+     * the password somebody had just typed into a form on screen, because the
+     * command that used it failed and the failure quoted the command.
+     *
+     * This is a backstop, not a licence: a command that needs a secret should
+     * be taking it somewhere other than the command line, where `ps` cannot
+     * read it either.
+     */
+    public static function redact(string $command): string
+    {
+        return (string) preg_replace(
+            [
+                "/IDENTIFIED BY '[^']*'/i",
+                "/(-p|--password=?)\s*'[^']*'/",
+                "/(PASSWORD|password)=\S+/",
+            ],
+            [
+                "IDENTIFIED BY '***'",
+                '$1 \'***\'',
+                '$1=***',
+            ],
+            $command
+        );
     }
 
     protected function runCallback(Step $step): void

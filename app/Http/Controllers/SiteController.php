@@ -52,6 +52,11 @@ class SiteController extends Controller
             'publicIp' => $this->host->publicIp(),
             'dnsAccounts' => $request->user()->dnsAccounts()->get()->map(fn (DnsAccount $account) => $account->toPanelArray()),
             'phpVersions' => config('panel.php_versions'),
+            // Which of those are actually listening. A site pointed at a
+            // version this machine does not have gets an nginx vhost naming a
+            // PHP-FPM socket that is not there, and every request to it is a
+            // 502 — so the choice is worth making an informed one.
+            'installedPhpVersions' => $this->installedPhpVersions(),
             'dnsTypes' => config('panel.dns_types'),
             'sitesRoot' => config('panel.sites_root'),
             'siteTypes' => collect(config('panel.site_types'))
@@ -289,6 +294,25 @@ class SiteController extends Controller
         }
 
         return $start;
+    }
+
+    /**
+     * PHP versions with a running FPM socket, newest first.
+     *
+     * @return array<int, string>
+     */
+    protected function installedPhpVersions(): array
+    {
+        try {
+            [$output] = app(\App\Services\Shell\LocalConnection::class)
+                ->run('ls /run/php/*-fpm.sock 2>/dev/null');
+        } catch (\Throwable) {
+            return [];
+        }
+
+        preg_match_all('/php(\d+\.\d+)-fpm\.sock/', $output, $matches);
+
+        return array_values(array_intersect(config('panel.php_versions'), array_unique($matches[1])));
     }
 
     protected function summary(Site $site, bool $detailed = false): array

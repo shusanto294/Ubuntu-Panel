@@ -289,4 +289,34 @@ class SiteDeploymentRecipeTest extends TestCase
         $this->assertStringNotContainsString('fastcgi_pass', $vhost);
         $this->assertStringNotContainsString('proxy_pass', $vhost);
     }
+
+    /**
+     * nginx loads a vhost pointing at a PHP-FPM socket that does not exist,
+     * `nginx -t` passes, the deployment reports success — and every request is
+     * a 502 from an origin where, as far as the panel is concerned, nothing
+     * went wrong. A site can be created against any version the catalogue
+     * knows, and the machine only has the ones somebody installed.
+     */
+    public function test_a_php_site_checks_its_runtime_is_actually_on_the_machine(): void
+    {
+        foreach (['wordpress', 'laravel', 'php'] as $type) {
+            $site = $this->site(['type' => $type, 'php_version' => '8.3']);
+
+            $this->assertContains(
+                'Make sure PHP 8.3 is on this machine',
+                $this->stepNames($site),
+                $type.' sites run on PHP-FPM and must check for it'
+            );
+
+            $site->delete();
+        }
+
+        // Static and Node sites never touch PHP-FPM.
+        $static = $this->site(['type' => 'static', 'domain' => 'static.example.com']);
+
+        $this->assertEmpty(array_filter(
+            $this->stepNames($static),
+            fn (string $name) => str_starts_with($name, 'Make sure PHP')
+        ));
+    }
 }

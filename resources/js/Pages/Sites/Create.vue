@@ -15,6 +15,7 @@ const props = defineProps({
     publicIp: String,
     dnsAccounts: Array,
     phpVersions: Array,
+    installedPhpVersions: { type: Array, default: () => [] },
     dnsTypes: Array,
     siteTypes: Array,
     sitesRoot: String,
@@ -24,7 +25,7 @@ const form = useForm({
     type: 'wordpress',
     domain: '',
     aliases: [],
-    php_version: props.phpVersions[0],
+    php_version: props.phpVersion ?? props.phpVersions[0],
     web_directory: '',
     ssl: true,
     repository: '',
@@ -227,9 +228,25 @@ const submit = () => form.post(route('sites.store'));
                             class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option v-for="v in phpVersions" :key="v" :value="v">
-                                PHP {{ v }}
+                                PHP {{ v
+                                }}{{
+                                    installedPhpVersions.includes(v)
+                                        ? ''
+                                        : ' — not installed yet'
+                                }}
                             </option>
                         </select>
+                        <p
+                            v-if="
+                                installedPhpVersions.length &&
+                                !installedPhpVersions.includes(form.php_version)
+                            "
+                            class="mt-1 text-xs text-amber-700"
+                        >
+                            PHP {{ form.php_version }} is not on this machine
+                            yet. The deployment installs it first — that adds a
+                            minute or two.
+                        </p>
                     </div>
 
                     <div v-if="!isProxied">

@@ -12,6 +12,7 @@ use App\Support\Settings;
 use App\Services\Shell\LocalConnection;
 use App\Services\Tasks\Step;
 use App\Services\Tasks\TaskRunner;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
@@ -231,11 +232,7 @@ class MailManager
         try {
             $ok = TaskRunner::for($log, $connection)->run([
                 Step::call('Hash the password', function (LocalConnection $ssh) use ($address, $plainPassword, $domain, $account) {
-                    $hash = trim($ssh->mustRun('doveadm pw -s SHA512-CRYPT -p '.escapeshellarg($plainPassword)));
-
-                    if (! str_starts_with($hash, '{SHA512-CRYPT}')) {
-                        throw new RuntimeException('Unexpected doveadm output: '.$hash);
-                    }
+                    $hash = $this->hashPassword($plainPassword);
 
                     $ssh->mustRun($this->sql(sprintf(
                         "INSERT INTO virtual_users (domain_id, email, password, quota) ".
@@ -462,6 +459,41 @@ class MailManager
         $domain->update(['dns_record_ids' => $result['ids']]);
 
         return $result['log'];
+    }
+
+    /**
+     * The `{SHA512-CRYPT}` hash Dovecot stores, produced here rather than by
+     * `doveadm pw`.
+     *
+     * Two reasons, and the second is the important one.
+     *
+     * `doveadm` reads /etc/dovecot/dovecot.conf before it will do anything at
+     * all, and the mail install ends by taking every other-user permission off
+     * that directory — so the panel user cannot run it, and every mailbox
+     * failed with "Permission denied ... missing +x perm: /etc/dovecot".
+     *
+     * And `doveadm pw -p <password>` puts the mailbox password on a command
+     * line: visible in `ps` to every user on the machine, written into the task
+     * console, and — when the command failed, which it always did — copied into
+     * the error shown on the Email page. The panel was displaying the password
+     * somebody had just typed into a form.
+     *
+     * Dovecot's SHA512-CRYPT is glibc's `$6$` crypt, so PHP produces exactly
+     * the same string without the password ever leaving this process.
+     */
+    protected function hashPassword(string $plain): string
+    {
+        $salt = '$6$rounds=5000$'.Str::random(16).'$';
+        $hash = crypt($plain, $salt);
+
+        // crypt() signals failure by returning something too short to be a
+        // hash — never by throwing. An unchecked return here would store a
+        // password nobody can ever log in with.
+        if (! is_string($hash) || ! str_starts_with($hash, '$6$')) {
+            throw new RuntimeException('This machine cannot produce SHA512-CRYPT hashes.');
+        }
+
+        return '{SHA512-CRYPT}'.$hash;
     }
 
     /** Run SQL against the mail database using socket auth as root. */

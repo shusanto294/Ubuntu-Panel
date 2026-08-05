@@ -197,4 +197,58 @@ class EmailManagementTest extends TestCase
             'local_part' => 'info', 'password' => 'a-long-enough-password', 'quota_mb' => 2048,
         ])->assertForbidden();
     }
+
+    /**
+     * The mailbox password never reaches a command line.
+     *
+     * It used to: `doveadm pw -p <password>` put it in `ps` for every user on
+     * the machine, in the task console, and — because doveadm could not read
+     * /etc/dovecot as the panel user, so the command always failed — in the
+     * error shown on the Email page. The panel was displaying the password
+     * somebody had just typed into a form.
+     */
+    public function test_creating_a_mailbox_never_puts_the_password_in_a_command(): void
+    {
+        $this->withMailServer();
+
+        $user = User::factory()->create();
+        $domain = EmailDomain::create([
+            'user_id' => $user->id,
+            'domain' => 'example.com',
+            'dkim_selector' => 'mail',
+            'status' => 'active',
+        ]);
+
+        $account = $domain->accounts()->create([
+            'user_id' => $user->id,
+            'local_part' => 'info',
+            'password' => 'a-secret-password',
+            'quota_mb' => 2048,
+            'status' => 'pending',
+        ]);
+
+        $connection = new \Tests\Support\FakeLocalConnection;
+        $this->app->instance(\App\Services\Shell\LocalConnection::class, $connection);
+
+        app(MailManager::class)->createAccount($account, 'a-secret-password');
+
+        foreach ($connection->ran as $command) {
+            $this->assertStringNotContainsString('a-secret-password', $command);
+            $this->assertStringNotContainsString('doveadm pw', $command);
+        }
+
+        // What does go to the server is the hash Dovecot stores.
+        $this->assertTrue($connection->ranCommandContaining('{SHA512-CRYPT}$6$'));
+    }
+
+    /** Secrets that do reach a command line stay out of the console and the row. */
+    public function test_the_task_log_redacts_passwords(): void
+    {
+        $redacted = \App\Services\Tasks\TaskRunner::redact(
+            "sudo mysql -e \"CREATE USER 'app'@'localhost' IDENTIFIED BY 'hunter2';\""
+        );
+
+        $this->assertStringNotContainsString('hunter2', $redacted);
+        $this->assertStringContainsString("IDENTIFIED BY '***'", $redacted);
+    }
 }
