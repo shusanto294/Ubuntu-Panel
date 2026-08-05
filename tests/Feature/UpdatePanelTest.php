@@ -86,4 +86,40 @@ class UpdatePanelTest extends TestCase
         $this->assertSame($onDisk, config('panel.version'));
         $this->assertNotSame('0.0.1-stale', config('panel.version'));
     }
+
+    /**
+     * The terminal daemon is the whole of the browser shell, so an update that
+     * leaves it on the old code — or does not bring it back at all — reads as
+     * "the terminal broke in this release".
+     */
+    public function test_the_restart_covers_every_daemon_and_reloads_their_units(): void
+    {
+        $command = new \ReflectionClass(\App\Console\Commands\UpdatePanel::class);
+        $method = $command->getMethod('restartScript');
+        $method->setAccessible(true);
+
+        $script = $method->invoke($command->newInstanceWithoutConstructor());
+
+        foreach ([
+            'ubuntu-panel-queue.service',
+            'ubuntu-panel-terminal.service',
+            'ubuntu-panel-scheduler.timer',
+        ] as $unit) {
+            $this->assertStringContainsString($unit, $script);
+        }
+
+        // Units are written by install.sh, and re-running the installer is a
+        // documented way to update — restarting without reloading starts the
+        // old definition of a unit that has since changed.
+        $this->assertStringContainsString('systemctl daemon-reload', $script);
+
+        // A unit that ended up disabled has to come back, not just restart.
+        $this->assertStringContainsString('enable --now', $script);
+
+        // FPM holds the compiled config in opcache; the code alone is not enough.
+        $this->assertStringContainsString('-fpm', $script);
+
+        // It runs detached, so without this nobody can find out what happened.
+        $this->assertStringContainsString(\App\Console\Commands\UpdatePanel::RESTART_LOG, $script);
+    }
 }

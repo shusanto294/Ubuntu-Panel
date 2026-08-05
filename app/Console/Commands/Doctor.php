@@ -39,6 +39,11 @@ class Doctor extends Command
         $this->line('    Passwordless sudo '.($sudoCode === 0 ? 'yes' : 'NO — '.$this->orNone($sudo)));
 
         $this->newLine();
+        $this->components->info('Daemons — the panel does nothing on its own without these');
+
+        $this->daemons($shell);
+
+        $this->newLine();
         $this->components->info('Stores');
         $this->line('    Cache         '.config('cache.default'));
         $this->line('    Sessions      '.config('session.driver'));
@@ -106,6 +111,67 @@ class Doctor extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The three units the panel needs, and whether they are up.
+     *
+     * The queue is where every install, deployment and mail job runs, and the
+     * terminal daemon is the whole of the browser shell — a panel with either
+     * one stopped looks like a panel where a feature broke, because from the
+     * page that is exactly what it looks like.
+     *
+     * `panel:update` restarts them detached (it has to: it restarts the
+     * process doing the updating), so the log it leaves behind is the only
+     * account of whether that worked.
+     */
+    protected function daemons(LocalConnection $shell): void
+    {
+        [, $hasSystemd] = $shell->run('command -v systemctl >/dev/null 2>&1');
+
+        if ($hasSystemd !== 0) {
+            $this->line('    No systemd on this machine, so the panel is being run some other way.');
+
+            return;
+        }
+
+        $units = [
+            'ubuntu-panel-queue.service' => 'queued installs, deployments, mail and DNS',
+            'ubuntu-panel-terminal.service' => 'the browser terminal and the live task socket',
+            'ubuntu-panel-scheduler.timer' => 'metric sampling and certificate renewal',
+        ];
+
+        foreach ($units as $unit => $what) {
+            [$state] = $shell->run('systemctl is-active '.escapeshellarg($unit).' 2>&1');
+            $state = trim($state) ?: 'unknown';
+
+            $this->line(sprintf(
+                '    %-32s %s',
+                $unit,
+                $state === 'active' ? 'active' : strtoupper($state).' — '.$what
+            ));
+
+            if ($state !== 'active') {
+                $this->line('        sudo systemctl status '.$unit.' -n 30');
+            }
+        }
+
+        $log = \App\Console\Commands\UpdatePanel::RESTART_LOG;
+
+        [, $exists] = $shell->run('sudo test -f '.escapeshellarg($log));
+
+        if ($exists === 0) {
+            [$tail] = $shell->run('sudo tail -n 6 '.escapeshellarg($log));
+
+            $this->newLine();
+            $this->line('    Last restart, from '.$log.':');
+
+            foreach (preg_split('/\r?\n/', trim($tail)) ?: [] as $line) {
+                if ($line !== '') {
+                    $this->line('        '.$line);
+                }
+            }
+        }
     }
 
     protected function orNone(string $value): string

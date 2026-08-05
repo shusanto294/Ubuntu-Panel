@@ -189,6 +189,7 @@ class UpdatePanel extends Command
 
         if ($code === 0) {
             $this->components->info('Services restart in five seconds.');
+            $this->line('    What happened lands in '.self::RESTART_LOG.'; `php artisan panel:doctor` reads it back.');
 
             return;
         }
@@ -198,6 +199,9 @@ class UpdatePanel extends Command
 
         $this->components->warn('Scheduled a detached restart ('.trim($output).').');
     }
+
+    /** Where the detached restart leaves its account of what happened. */
+    public const RESTART_LOG = '/var/log/ubuntu-panel-restart.log';
 
     /**
      * Restart the workers, and PHP-FPM with them.
@@ -209,17 +213,50 @@ class UpdatePanel extends Command
      * restarts the pool. That is how the browser terminal kept being handed
      * an address that stopped being the default several versions ago.
      *
-     * The unit is missing on a machine that runs the panel some other way, so
-     * a failure there is not one worth reporting.
+     * `daemon-reload` first: the unit files are written by `install.sh`, and
+     * re-running the installer is a documented way to update. Restarting
+     * without reloading starts the old definition of a unit that has since
+     * changed — which looks exactly like a restart that did not happen.
+     *
+     * `enable --now` rather than `restart`: a unit that somehow ended up
+     * disabled comes back, and one that is not installed on this machine is a
+     * skip rather than a failure.
+     *
+     * And it says what it did. This runs detached — it has to, because it
+     * restarts the process that scheduled it — so without a log the one thing
+     * nobody can find out is whether the terminal daemon came back up.
      */
     protected function restartScript(): string
     {
         $fpm = sprintf('php%d.%d-fpm', PHP_MAJOR_VERSION, PHP_MINOR_VERSION);
+        $log = self::RESTART_LOG;
 
-        return implode(' ', [
-            'systemctl restart ubuntu-panel-queue.service ubuntu-panel-terminal.service;',
-            "systemctl restart {$fpm} 2>/dev/null || true",
-        ]);
+        $units = [
+            'ubuntu-panel-queue.service',
+            'ubuntu-panel-terminal.service',
+            'ubuntu-panel-scheduler.timer',
+        ];
+
+        $lines = [
+            'exec >> '.escapeshellarg($log).' 2>&1;',
+            'echo "=== $(date -Is) panel restart ===";',
+            'systemctl daemon-reload;',
+        ];
+
+        foreach ($units as $unit) {
+            $lines[] = sprintf(
+                'if systemctl list-unit-files %1$s >/dev/null 2>&1; then '.
+                'systemctl enable --now %1$s; systemctl restart %1$s; '.
+                'echo "%1$s: $(systemctl is-active %1$s)"; '.
+                'else echo "%1$s: not installed"; fi;',
+                $unit
+            );
+        }
+
+        $lines[] = "systemctl restart {$fpm} 2>/dev/null || true;";
+        $lines[] = sprintf('echo "%s: $(systemctl is-active %s)";', $fpm, $fpm);
+
+        return implode(' ', $lines);
     }
 
     /**
