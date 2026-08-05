@@ -489,6 +489,12 @@ class MailServerProvisioner
             ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
             ssl_min_protocol = TLSv1.2
             ssl_prefer_server_ciphers = yes
+
+            # Per-domain certificates, chosen by SNI. Written by
+            # MailCertificates as domains get certificates of their own; the
+            # snakeoil pair above stays as the fallback for a client that
+            # connects without SNI or to a name we have nothing for.
+            !include_try /etc/dovecot/panel-sni.conf
             CONF,
 
             '/etc/dovecot/dovecot-sql.conf.ext' => sprintf(

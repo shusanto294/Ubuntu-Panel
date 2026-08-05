@@ -9,6 +9,7 @@ const props = defineProps({
     mailConfigured: Boolean,
     mailHostname: String,
     dnsAccounts: Array,
+    roundcubeInstalled: Boolean,
 });
 
 const openDomain = ref(props.domains[0]?.id ?? null);
@@ -104,6 +105,15 @@ const syncDns = (domain) =>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <StatusBadge :status="domain.status" />
+                        <a
+                            v-if="roundcubeInstalled"
+                            :href="domain.webmail_url"
+                            target="_blank"
+                            rel="noopener"
+                            class="rounded-xl px-3 py-1.5 text-sm font-medium text-brand-700 ring-1 ring-brand-200 transition hover:bg-brand-50"
+                        >
+                            Webmail
+                        </a>
                         <Link
                             :href="route('email.accounts.create', domain.id)"
                             class="rounded-xl bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-700"
@@ -165,6 +175,14 @@ const syncDns = (domain) =>
                             </div>
                             <div class="flex items-center gap-3">
                                 <StatusBadge :status="account.status" />
+                                <a
+                                    v-if="roundcubeInstalled"
+                                    :href="account.webmail_url"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="text-sm text-brand-600 hover:underline"
+                                    >Open webmail</a
+                                >
                                 <button
                                     @click="deleteAccount(account)"
                                     class="text-sm text-rose-600 hover:underline"
@@ -186,43 +204,112 @@ const syncDns = (domain) =>
                         </li>
                     </ul>
 
-                    <!-- Client settings -->
-                    <div
-                        class="mt-5 rounded-xl bg-slate-50 p-4 text-xs text-slate-600"
-                    >
-                        <p class="font-semibold text-slate-700">
-                            Mail client settings
-                        </p>
-                        <p class="mt-1">
-                            IMAP {{ domain.client_settings.imap.host }}:{{
-                                domain.client_settings.imap.port
-                            }}
-                            ({{ domain.client_settings.imap.security }}) · SMTP
-                            {{ domain.client_settings.smtp.host }}:{{
-                                domain.client_settings.smtp.port
-                            }}
-                            ({{ domain.client_settings.smtp.security }})
-                        </p>
-                        <p class="mt-1">Username is the full email address.</p>
-                        <button
-                            v-if="domain.dkim_public_key"
-                            @click="
-                                showDkim =
-                                    showDkim === domain.id ? null : domain.id
-                            "
-                            class="mt-2 text-brand-600 hover:underline"
+                    <!-- Connection details -->
+                    <div class="mt-5 grid gap-4 sm:grid-cols-2">
+                        <div
+                            class="rounded-xl bg-slate-50 p-4 text-xs text-slate-600"
                         >
-                            {{ showDkim === domain.id ? 'Hide' : 'Show' }}
-                            DKIM record
-                        </button>
-                        <pre
-                            v-if="showDkim === domain.id"
-                            class="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-slate-200"
-                            >{{ domain.dkim_selector }}._domainkey.{{
-                                domain.domain
-                            }}  TXT
+                            <p class="font-semibold text-slate-700">
+                                Sending (SMTP)
+                            </p>
+                            <dl class="mt-2 space-y-1">
+                                <div class="flex justify-between gap-3">
+                                    <dt>Host</dt>
+                                    <dd class="font-mono text-slate-800">
+                                        {{ domain.client_settings.smtp.host }}
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>Port</dt>
+                                    <dd class="font-mono text-slate-800">
+                                        {{ domain.client_settings.smtp.port }} ({{
+                                            domain.client_settings.smtp.security
+                                        }})
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>or</dt>
+                                    <dd class="font-mono text-slate-800">
+                                        {{ domain.client_settings.smtp_ssl.port }} ({{
+                                            domain.client_settings.smtp_ssl.security
+                                        }})
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>Username</dt>
+                                    <dd class="text-slate-800">
+                                        the full email address
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>Password</dt>
+                                    <dd class="text-slate-800">
+                                        the mailbox password
+                                    </dd>
+                                </div>
+                            </dl>
+                            <p class="mt-2">
+                                Paste these into an application's mailer
+                                configuration as they are — the certificate is
+                                issued for this hostname, so verification does
+                                not need turning off.
+                            </p>
+                        </div>
+
+                        <div
+                            class="rounded-xl bg-slate-50 p-4 text-xs text-slate-600"
+                        >
+                            <p class="font-semibold text-slate-700">
+                                Receiving (IMAP)
+                            </p>
+                            <dl class="mt-2 space-y-1">
+                                <div class="flex justify-between gap-3">
+                                    <dt>Host</dt>
+                                    <dd class="font-mono text-slate-800">
+                                        {{ domain.client_settings.imap.host }}
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>Port</dt>
+                                    <dd class="font-mono text-slate-800">
+                                        {{ domain.client_settings.imap.port }} ({{
+                                            domain.client_settings.imap.security
+                                        }})
+                                    </dd>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <dt>Webmail</dt>
+                                    <dd>
+                                        <a
+                                            :href="domain.webmail_url"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="font-mono text-brand-600 hover:underline"
+                                            >{{ domain.webmail_host }}</a
+                                        >
+                                    </dd>
+                                </div>
+                            </dl>
+                            <button
+                                v-if="domain.dkim_public_key"
+                                @click="
+                                    showDkim =
+                                        showDkim === domain.id ? null : domain.id
+                                "
+                                class="mt-2 text-brand-600 hover:underline"
+                            >
+                                {{ showDkim === domain.id ? 'Hide' : 'Show' }}
+                                DKIM record
+                            </button>
+                            <pre
+                                v-if="showDkim === domain.id"
+                                class="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-slate-200"
+                                >{{ domain.dkim_selector }}._domainkey.{{
+                                    domain.domain
+                                }}  TXT
 {{ domain.dkim_public_key }}</pre
-                        >
+                            >
+                        </div>
                     </div>
                 </div>
             </div>

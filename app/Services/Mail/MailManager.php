@@ -6,6 +6,7 @@ use App\Models\ActivityLog;
 use App\Models\EmailAccount;
 use App\Models\EmailDomain;
 use App\Services\Dns\DnsManager;
+use App\Services\Sites\CertbotIssuer;
 use App\Services\System\HostInfo;
 use App\Support\Settings;
 use App\Services\Shell\LocalConnection;
@@ -116,6 +117,11 @@ class MailManager
                 });
             }
 
+            // Webmail before the certificate: the HTTP-01 challenge is answered
+            // out of the vhost that is about to be secured, and the vhost has
+            // to exist and be serving before certbot knocks on it.
+            $steps = array_merge($steps, $this->webmailSteps($domain));
+
             $ok = TaskRunner::for($log, $connection)->run($steps);
 
             $domain->update([
@@ -164,6 +170,23 @@ class MailManager
                 $this->sql(sprintf("DELETE FROM virtual_domains WHERE name='%s';", $this->escape($name))),
                 'sudo rm -rf '.escapeshellarg("/var/mail/vhosts/{$name}"),
             ]);
+
+            $steps[] = Step::call('Remove webmail', function (LocalConnection $ssh) use ($domain) {
+                app(Roundcube::class)->removeVhost($ssh, $domain);
+                $ssh->run('sudo nginx -t && sudo systemctl reload nginx');
+
+                // The certificate goes with it, and both daemons have to stop
+                // naming a file that is no longer there — Postfix and Dovecot
+                // refuse to start on a missing certificate, so leaving the SNI
+                // entry behind takes mail down for every other domain too.
+                $ssh->run('sudo certbot delete --cert-name '.escapeshellarg(Roundcube::hostFor($domain)).' --non-interactive');
+
+                // Rebuilt from what is on disk, so the entry for the
+                // certificate just deleted drops out on its own.
+                app(MailCertificates::class)->sync($ssh);
+
+                return 'Webmail vhost and certificate for '.Roundcube::hostFor($domain).' removed.';
+            }, optional: true);
 
             $steps[] = Step::make('Remove the DKIM key', [
                 'sudo rm -rf '.escapeshellarg("/etc/opendkim/keys/{$name}"),
@@ -295,7 +318,76 @@ class MailManager
         }
     }
 
-    /** MX, SPF, DKIM, DMARC and the mail host A record. */
+    /**
+     * Webmail for one domain: a vhost at `mail.<domain>`, a certificate for it,
+     * and the same certificate handed to Postfix and Dovecot.
+     *
+     * Every step is optional. A domain whose webmail could not be published
+     * still sends and receives mail, and failing the whole creation over a
+     * certificate that will succeed on the next sync helps nobody.
+     *
+     * @return array<int, Step>
+     */
+    protected function webmailSteps(EmailDomain $domain): array
+    {
+        $roundcube = app(Roundcube::class);
+
+        if (! $roundcube->isInstalled()) {
+            return [
+                Step::call(
+                    'Publish webmail',
+                    fn () => 'Roundcube is not installed, so no webmail vhost was written. '.
+                        'Install it from the Services page and the vhost appears on the next domain sync.',
+                    ),
+            ];
+        }
+
+        return [
+            Step::call('Publish webmail', function (LocalConnection $ssh) use ($domain, $roundcube) {
+                $written = $roundcube->writeVhost($ssh, $domain);
+
+                $ssh->mustRun('sudo nginx -t');
+                $ssh->mustRun('sudo systemctl reload nginx');
+
+                return $written;
+            }, optional: true),
+
+            Step::call('Get a certificate for the mail hostname', function (LocalConnection $ssh) use ($domain, $roundcube) {
+                $result = app(CertbotIssuer::class)->issue(
+                    $ssh,
+                    [Roundcube::hostFor($domain)],
+                    $domain->user?->email ?: 'postmaster@'.$domain->domain,
+                    $domain->manage_dns ? $domain->dnsAccount : null,
+                );
+
+                if (! $result['issued']) {
+                    return "No certificate yet, so webmail stays on HTTP.\n".$result['output'];
+                }
+
+                $roundcube->writeVhost($ssh, $domain, tls: true);
+                $ssh->mustRun('sudo nginx -t');
+                $ssh->mustRun('sudo systemctl reload nginx');
+
+                return 'Webmail is on HTTPS at '.Roundcube::urlFor($domain);
+            }, optional: true),
+
+            Step::call(
+                'Use the certificate for SMTP and IMAP',
+                fn (LocalConnection $ssh) => app(MailCertificates::class)->sync($ssh),
+                optional: true
+            ),
+        ];
+    }
+
+    /**
+     * Everything a receiving server checks, published in one go.
+     *
+     * A, MX, SPF, DKIM and DMARC are what SpamAssassin and the deliverability
+     * checkers score; TLS-RPT and the autoconfig records cost nothing and stop
+     * clients guessing. The one thing that cannot be published from here is the
+     * reverse DNS (PTR) for the server's own address — that belongs to whoever
+     * rents you the IP, and a missing one costs a point wherever it is measured.
+     */
     public function publishDns(EmailDomain $domain): string
     {
         $account = $domain->dnsAccount;
@@ -316,16 +408,46 @@ class MailManager
             );
         }
 
+        // Where this domain's own mail and webmail answer. Usually the same as
+        // $mailHost; different when the panel has been given a mail hostname of
+        // its own, and then both need an address.
+        $webmailHost = Roundcube::hostFor($domain);
+
         $records = [
             ['type' => 'A', 'name' => $mailHost, 'content' => $ip, 'proxied' => false],
             ['type' => 'MX', 'name' => $domain->domain, 'content' => $mailHost, 'priority' => 10],
+
+            // `mx a:` covers this server whichever name it sends under. `~all`
+            // rather than `-all`: a soft fail scores the same everywhere it is
+            // measured, and does not silently destroy mail the day something
+            // else — a newsletter tool, a transactional API — sends as this
+            // domain from an address that is not this box.
             ['type' => 'TXT', 'name' => $domain->domain, 'content' => 'v=spf1 mx a:'.$mailHost.' ~all'],
+
             [
                 'type' => 'TXT',
                 'name' => '_dmarc.'.$domain->domain,
-                'content' => 'v=DMARC1; p=quarantine; rua=mailto:postmaster@'.$domain->domain,
+                'content' => 'v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r; pct=100; fo=1; '.
+                    'rua=mailto:postmaster@'.$domain->domain.'; ruf=mailto:postmaster@'.$domain->domain,
             ],
+
+            // Where a receiving server reports TLS failures to. Free, and it is
+            // the difference between finding out about a broken certificate and
+            // not.
+            [
+                'type' => 'TXT',
+                'name' => '_smtp._tls.'.$domain->domain,
+                'content' => 'v=TLSRPTv1; rua=mailto:postmaster@'.$domain->domain,
+            ],
+
+            // Mail clients look these up before asking the user anything.
+            ['type' => 'CNAME', 'name' => 'autodiscover.'.$domain->domain, 'content' => $mailHost, 'proxied' => false],
+            ['type' => 'CNAME', 'name' => 'autoconfig.'.$domain->domain, 'content' => $mailHost, 'proxied' => false],
         ];
+
+        if ($webmailHost !== $mailHost) {
+            $records[] = ['type' => 'A', 'name' => $webmailHost, 'content' => $ip, 'proxied' => false];
+        }
 
         if ($domain->dkim_public_key) {
             $records[] = [

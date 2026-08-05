@@ -31,9 +31,8 @@ That is the whole installation. It takes a few minutes and:
 7. Asks for an administrator email and password, then takes inventory of what is already
    installed on the machine.
 8. Installs everything in the software catalogue — PostgreSQL, MongoDB, Redis, phpMyAdmin,
-   PM2, WP-CLI,
-   Certbot and the Postfix/Dovecot/OpenDKIM mail stack included — so there is nothing left
-   to click when it finishes.
+   PM2, WP-CLI, Certbot, the Postfix/Dovecot/OpenDKIM mail stack and Roundcube webmail
+   included — so there is nothing left to click when it finishes.
 
 That last step is the long one. It runs in the foreground rather than through the queue,
 because an installer that hands back before the work is done cannot tell you whether it
@@ -209,8 +208,8 @@ in use.
   otherwise idle machine. The daemon samples once for everyone and sends only what changed.
   If the socket cannot be reached the pages fall back to polling, more slowly.
 - **Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
-  MongoDB, Redis, phpMyAdmin, Node.js, PM2, WP-CLI and a full mail server, with live
-  progress. Everything
+  MongoDB, Redis, phpMyAdmin, Node.js, PM2, WP-CLI, a full mail server and Roundcube
+  webmail, with live progress. Everything
   queued goes into a single apt transaction, because dpkg takes an exclusive lock and
   parallel installs would only serialise behind it. A service that fails costs you that
   service and nothing else.
@@ -231,8 +230,21 @@ in use.
   get theirs automatically, dropped with the site.
 - **Email** — Postfix + Dovecot + OpenDKIM with virtual mailboxes in MariaDB. Add a domain
   and the panel generates its DKIM key; add addresses with quotas and they work over
-  IMAP/SMTP immediately. With a DNS provider connected it publishes MX, SPF, DKIM and DMARC;
-  without one it shows you the records to add.
+  IMAP/SMTP immediately. With a DNS provider connected it publishes A, MX, SPF, DKIM,
+  DMARC, TLS-RPT and the autoconfig records in one go; without one it shows you the records
+  to add.
+
+  Each domain gets **Roundcube webmail at `mail.<domain>`** — its own vhost, its own A
+  record and its own Let's Encrypt certificate, issued automatically. That certificate is
+  then handed to Postfix and Dovecot over SNI, so `mail.<domain>` is a hostname an
+  application can point its mailer at with certificate verification left on. The page shows
+  the SMTP and IMAP host, port and encryption for each domain, ready to paste into a
+  config.
+
+  The one thing the panel cannot publish is the **reverse DNS (PTR)** for the server's own
+  address — that belongs to whoever rents you the IP, and a missing one costs a point in
+  every deliverability check. Set it to the mail hostname in your provider's control
+  panel.
 - **Terminal** — a real root login shell in the browser, backed by a pty. Tab completion,
   shell history, colours, Ctrl+C, `vim`, `top` and `htop` all behave normally.
 - **DNS** — connect **Cloudflare, DigitalOcean, Linode, Vultr, Hetzner DNS** or

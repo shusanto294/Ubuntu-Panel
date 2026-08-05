@@ -11,6 +11,7 @@ use App\Models\EmailAccount;
 use App\Models\EmailDomain;
 use App\Support\Settings;
 use App\Services\Mail\MailManager;
+use App\Services\Mail\Roundcube;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -34,6 +35,7 @@ class EmailController extends Controller
             'mailConfigured' => $this->settings->boolean('mail_configured'),
             'mailHostname' => $this->settings->get('mail_hostname'),
             'dnsAccounts' => $request->user()->dnsAccounts()->get()->map(fn (DnsAccount $account) => $account->toPanelArray()),
+            'roundcubeInstalled' => app(Roundcube::class)->isInstalled(),
         ]);
     }
 
@@ -166,7 +168,12 @@ class EmailController extends Controller
 
     protected function summary(EmailDomain $domain): array
     {
-        $mailHost = $this->settings->get('mail_hostname') ?: 'mail.'.$domain->domain;
+        // Every domain answers on its own `mail.<domain>`, which is what gets
+        // the A record, the certificate and the webmail vhost. The panel-wide
+        // `mail_hostname` is what the server calls itself in SMTP conversation
+        // — the two are usually the same and do not have to be.
+        $webmailHost = Roundcube::hostFor($domain);
+        $mailHost = $this->settings->get('mail_hostname') ?: $webmailHost;
 
         return [
             'id' => $domain->id,
@@ -177,6 +184,8 @@ class EmailController extends Controller
             'dkim_public_key' => $domain->dkim_public_key,
             'last_error' => $domain->last_error,
             'mail_hostname' => $mailHost,
+            'webmail_host' => $webmailHost,
+            'webmail_url' => Roundcube::urlFor($domain),
             'accounts' => $domain->accounts->map(fn (EmailAccount $account) => [
                 'id' => $account->id,
                 'address' => $account->local_part.'@'.$domain->domain,
@@ -184,11 +193,15 @@ class EmailController extends Controller
                 'quota_mb' => $account->quota_mb,
                 'status' => $account->status,
                 'last_error' => $account->last_error,
+                'webmail_url' => Roundcube::urlFor($domain, $account->local_part.'@'.$domain->domain),
             ])->values(),
-            // What the user needs to plug into a mail client.
+            // What to type into a mail client — or paste into an application's
+            // mailer configuration, which is the same information asked for in
+            // a different shape.
             'client_settings' => [
-                'imap' => ['host' => $mailHost, 'port' => 993, 'security' => 'SSL/TLS'],
-                'smtp' => ['host' => $mailHost, 'port' => 465, 'security' => 'SSL/TLS'],
+                'imap' => ['host' => $webmailHost, 'port' => 993, 'security' => 'SSL/TLS'],
+                'smtp' => ['host' => $webmailHost, 'port' => 587, 'security' => 'STARTTLS'],
+                'smtp_ssl' => ['host' => $webmailHost, 'port' => 465, 'security' => 'SSL/TLS'],
                 'username' => 'the full email address',
             ],
             'created_at' => $domain->created_at->toDateTimeString(),

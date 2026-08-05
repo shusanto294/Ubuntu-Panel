@@ -3,6 +3,7 @@
 namespace App\Services\System;
 
 use App\Services\Mail\MailServerProvisioner;
+use App\Services\Mail\Roundcube;
 use App\Services\Shell\LocalConnection;
 use App\Support\Settings;
 use App\Services\Tasks\Step;
@@ -36,6 +37,7 @@ class ServiceCatalog
 
     public function __construct(
         protected MailServerProvisioner $mail,
+        protected Roundcube $roundcube,
         protected Settings $settings,
     ) {}
 
@@ -229,6 +231,8 @@ class ServiceCatalog
                 }),
             ],
 
+            'roundcube' => $this->roundcube->installSteps(),
+
             // npm rather than apt, which is how pm2 is distributed. Installed
             // globally so it is on PATH for every user, and `pm2 startup`
             // registers the boot unit for whoever the panel runs as.
@@ -385,6 +389,8 @@ class ServiceCatalog
             ],
 
             'mail' => $this->mail->configureSteps(),
+
+            'roundcube' => $this->roundcube->configureSteps(),
 
             default => [],
         };

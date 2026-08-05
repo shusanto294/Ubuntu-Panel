@@ -10,7 +10,7 @@ return [
     | Bump `version` in the same commit as every push to that branch — see
     | "Publishing an update" in the README.
     */
-    'version' => '1.9.0',
+    'version' => '1.10.0',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
@@ -187,6 +187,15 @@ return [
             // for as long as the machine exists.
             'detect' => 'command -v postfix && sudo test -f /etc/dovecot/dovecot-sql.conf.ext',
             'version' => 'postconf -h mail_version 2>/dev/null',
+        ],
+        'roundcube' => [
+            'label' => 'Roundcube webmail',
+            'group' => 'mail',
+            'description' => 'Webmail for every mail domain, served at mail.<domain>.',
+            'default' => true,
+            'requires' => ['mail', 'php', 'nginx', 'mysql'],
+            'detect' => 'test -f /usr/share/ubuntu-panel/roundcube/index.php',
+            'version' => "grep -oP \"RCMAIL_VERSION', '\\K[^']+\" /usr/share/ubuntu-panel/roundcube/program/include/iniset.php 2>/dev/null | head -1",
         ],
     ],
 

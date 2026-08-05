@@ -472,60 +472,21 @@ class SiteRecipe
         JS;
     }
 
-    /**
-     * Obtain a certificate without touching our vhost — certbot's --nginx
-     * installer would rewrite the managed file and the next deploy would undo it.
-     *
-     * When the site's DNS is on Cloudflare we validate over DNS-01, which works
-     * even with the orange cloud on; an HTTP-01 challenge would be answered by
-     * Cloudflare rather than by the origin. That is a Cloudflare-shaped problem
-     * and gets a Cloudflare-shaped answer — every other provider serves the
-     * origin directly, so the webroot challenge below is both simpler and
-     * enough.
-     */
+    /** Ask certbot for this site's certificate; see CertbotIssuer for how. */
     protected function requestCertificate(LocalConnection $ssh): string
     {
         $site = $this->site->fresh();
-        $domains = implode(' ', array_map(fn ($d) => '-d '.escapeshellarg($d), $site->hostnames()));
-        $email = escapeshellarg($site->user?->email ?: 'admin@'.$site->domain);
 
-        $common = sprintf(
-            'certonly --non-interactive --agree-tos -m %s %s --keep-until-expiring '.
-            '--deploy-hook "systemctl reload nginx"',
-            $email,
-            $domains
+        $result = app(CertbotIssuer::class)->issue(
+            $ssh,
+            $site->hostnames(),
+            $site->user?->email ?: 'admin@'.$site->domain,
+            $site->manage_dns ? $site->dnsAccount : null,
         );
 
-        $account = $site->dnsAccount;
-
-        if ($site->manage_dns && $account?->provider === 'cloudflare') {
-            $ssh->run('sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-dns-cloudflare');
-
-            $ssh->mustRun('sudo mkdir -p /etc/letsencrypt/panel && sudo chmod 700 /etc/letsencrypt/panel');
-            $ssh->putFile(
-                '/etc/letsencrypt/panel/cloudflare.ini',
-                'dns_cloudflare_api_token = '.$account->api_token
-            );
-            $ssh->mustRun('sudo chmod 600 /etc/letsencrypt/panel/cloudflare.ini');
-
-            [$output, $code] = $ssh->run(
-                'sudo certbot '.$common.
-                ' --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/panel/cloudflare.ini'.
-                ' --dns-cloudflare-propagation-seconds 30'
-            );
-
-            return $code === 0
-                ? "Certificate issued via Cloudflare DNS validation.\n".$output
-                : "DNS validation failed; the site stays on HTTP.\n".$output;
-        }
-
-        [$output, $code] = $ssh->run(
-            'sudo certbot '.$common.' --webroot -w '.escapeshellarg(NginxVhost::ACME_WEBROOT)
-        );
-
-        return $code === 0
-            ? "Certificate issued.\n".$output
-            : "certbot failed; the site stays on HTTP.\n".$output;
+        return $result['issued']
+            ? $result['output']
+            : "The site stays on HTTP.\n".$result['output'];
     }
 
     protected function placeholder(): string
