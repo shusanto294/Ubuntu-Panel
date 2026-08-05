@@ -11,10 +11,12 @@ use App\Http\Controllers\TerminalController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
+// There is no marketing page: this is a control panel, and the only thing the
+// root URL can usefully do is put you where you were going. Signed in, that is
+// the dashboard; signed out, the login form. Logout redirects here too, which
+// is how it lands back on the login screen.
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-    ]);
+    return redirect()->route(auth()->check() ? 'dashboard' : 'login');
 })->name('home');
 
 Route::middleware(['auth'])->group(function () {

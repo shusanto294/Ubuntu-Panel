@@ -10,7 +10,7 @@ return [
     | Bump `version` in the same commit as every push to that branch — see
     | "Publishing an update" in the README.
     */
-    'version' => '1.6.4',
+    'version' => '1.7.0',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
@@ -175,7 +175,10 @@ return [
             'label' => 'Mail server',
             'group' => 'mail',
             'description' => 'Postfix, Dovecot and OpenDKIM with mailboxes stored in MariaDB.',
-            'default' => false,
+            // On by default: the Email page is part of the panel, and a panel
+            // that offers mailboxes but leaves the mail server for you to
+            // install separately is not finished installing.
+            'default' => true,
             'requires' => ['mysql'],
             'detect' => 'command -v postfix && test -f /etc/dovecot/dovecot-sql.conf.ext',
             'version' => 'postconf -h mail_version 2>/dev/null',

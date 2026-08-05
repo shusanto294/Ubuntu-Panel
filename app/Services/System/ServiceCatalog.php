@@ -175,9 +175,15 @@ class ServiceCatalog
             'mongodb' => ['mongodb-org'],
             'redis' => ['redis-server'],
             'node' => ['nodejs'],
+            // `ssl-cert` is named explicitly rather than left to a Recommends:
+            // the Dovecot configuration points `ssl_cert` at the snakeoil pair
+            // by path, and Dovecot refuses to start when that file is not
+            // there — which turns a missing optional package into a mail
+            // server that installs and then will not run.
             'mail' => [
                 'postfix', 'postfix-mysql', 'dovecot-core', 'dovecot-imapd',
                 'dovecot-pop3d', 'dovecot-lmtpd', 'dovecot-mysql', 'opendkim', 'opendkim-tools',
+                'ssl-cert',
             ],
             default => [],
         };

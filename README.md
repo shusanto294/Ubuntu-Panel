@@ -44,7 +44,7 @@ be retried from its Software page.
 Install less if you want to:
 
 ```bash
-sudo bash install.sh --services default      # only what is ticked by default
+sudo bash install.sh --services default      # everything but PostgreSQL and MongoDB
 sudo bash install.sh --services nginx,php,mysql
 sudo bash install.sh --services none         # panel only
 ```

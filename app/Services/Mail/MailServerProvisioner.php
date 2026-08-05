@@ -103,6 +103,15 @@ class MailServerProvisioner
                 return 'Postfix main.cf, master.cf and MySQL maps written.';
             }),
 
+            // Both Postfix and Dovecot are pointed at the snakeoil pair by
+            // path, and Dovecot will not start if the file is missing. The
+            // package generates it on install, but only on a machine where
+            // `ssl-cert` was not already unpacked without its certificate.
+            Step::make('Make sure a TLS certificate exists', [
+                'test -f /etc/ssl/certs/ssl-cert-snakeoil.pem || sudo make-ssl-cert generate-default-snakeoil --force-overwrite',
+                'test -f /etc/ssl/certs/ssl-cert-snakeoil.pem && test -f /etc/ssl/private/ssl-cert-snakeoil.key',
+            ]),
+
             Step::call('Write Dovecot configuration', function (LocalConnection $ssh) use ($password) {
                 foreach ($this->dovecotFiles($password) as $path => $contents) {
                     $ssh->putFile($path, $contents);

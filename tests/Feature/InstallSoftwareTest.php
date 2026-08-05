@@ -62,8 +62,11 @@ class InstallSoftwareTest extends TestCase
 
         $this->assertContains('nginx', $installed);
         $this->assertContains('mysql', $installed);
+        // Mail is part of what the panel offers, so it is part of the default
+        // set — nothing about the Email page works without it.
+        $this->assertContains('mail', $installed);
         $this->assertNotContains('mongodb', $installed);
-        $this->assertNotContains('mail', $installed);
+        $this->assertNotContains('postgres', $installed);
     }
 
     public function test_an_explicit_list_installs_that_and_its_dependencies(): void
