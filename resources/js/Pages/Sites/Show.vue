@@ -91,27 +91,27 @@ const destroy = () => {
                         :href="`http${site.ssl ? 's' : ''}://${site.domain}`"
                         target="_blank"
                         rel="noopener"
-                        class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                         >Visit</a
                     >
                     <button
                         v-if="site.repository"
                         @click="post('sites.pull')"
-                        class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         Pull latest
                     </button>
                     <button
                         v-if="site.is_proxied"
                         @click="post('sites.restart')"
-                        class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         Restart app
                     </button>
                     <button
                         v-if="site.manage_dns"
                         @click="post('sites.dns-sync')"
-                        class="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         Sync DNS
                     </button>
@@ -127,11 +127,11 @@ const destroy = () => {
 
         <div
             v-if="busy && !activeTask && !latestTask"
-            class="mb-8 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-5 py-4 text-sm text-orange-900"
+            class="mb-8 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-5 py-4 text-sm text-brand-900"
         >
-            <span class="h-2 w-2 animate-pulse rounded-full bg-orange-500" />
+            <span class="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
             Waiting for the queue to pick this up. If nothing happens, check that
-            <code class="rounded bg-orange-100 px-1">php artisan queue:work</code>
+            <code class="rounded bg-brand-100 px-1">php artisan queue:work</code>
             is running.
         </div>
 
@@ -152,7 +152,7 @@ const destroy = () => {
         </div>
 
         <div class="grid gap-6 lg:grid-cols-3">
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Site</h3>
                 <dl class="mt-4 space-y-3 text-sm">
                     <div class="flex justify-between gap-4">
@@ -203,7 +203,7 @@ const destroy = () => {
                 </dl>
             </div>
 
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">
                     {{ site.database ? 'Database & credentials' : 'DNS' }}
                 </h3>
@@ -233,7 +233,7 @@ const destroy = () => {
                     </div>
                     <Link
                         :href="route('databases.index')"
-                        class="inline-block pt-1 text-xs text-orange-600 hover:underline"
+                        class="inline-block pt-1 text-xs text-brand-600 hover:underline"
                         >Manage databases</Link
                     >
                 </div>
@@ -277,7 +277,7 @@ const destroy = () => {
                             :href="site.wordpress.admin_url"
                             target="_blank"
                             rel="noopener"
-                            class="text-orange-600 hover:underline"
+                            class="text-brand-600 hover:underline"
                             >{{ site.wordpress.admin_url }}</a
                         >
                     </p>
@@ -292,7 +292,7 @@ const destroy = () => {
                         <button
                             v-else
                             @click="showSecrets = true"
-                            class="text-orange-600 hover:underline"
+                            class="text-brand-600 hover:underline"
                         >
                             reveal
                         </button>
@@ -300,7 +300,7 @@ const destroy = () => {
                 </div>
             </div>
 
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
                     Deleting removes the vhost, the systemd service, the site
@@ -310,7 +310,7 @@ const destroy = () => {
                     <input
                         type="checkbox"
                         v-model="deleteFiles"
-                        class="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                        class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
                     />
                     Also delete files in {{ site.root_path }}
                 </label>
@@ -323,7 +323,7 @@ const destroy = () => {
             </div>
         </div>
 
-        <div class="mt-8 rounded-xl border border-slate-200 bg-white">
+        <div class="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div class="border-b border-slate-200 px-5 py-4">
                 <h3 class="font-semibold text-slate-800">Activity log</h3>
             </div>
@@ -348,7 +348,7 @@ const destroy = () => {
                     <button
                         v-if="log.output"
                         @click="openLog = openLog === log.id ? null : log.id"
-                        class="mt-2 text-xs text-orange-600 hover:underline"
+                        class="mt-2 text-xs text-brand-600 hover:underline"
                     >
                         {{ openLog === log.id ? 'Hide' : 'Show' }} output
                     </button>

@@ -105,7 +105,7 @@ const syncDns = (domain) =>
 
         <div v-else class="grid gap-6 lg:grid-cols-3">
             <!-- Add domain -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Add a mail domain</h3>
                 <p class="mt-1 text-sm text-slate-500">
                     Generates a DKIM key and, with a DNS provider connected,
@@ -157,7 +157,7 @@ const syncDns = (domain) =>
                         <select
                             id="dns_account_id"
                             v-model="domainForm.dns_account_id"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option
                                 v-for="account in dnsAccounts"
@@ -175,7 +175,7 @@ const syncDns = (domain) =>
 
                     <button
                         :disabled="domainForm.processing"
-                        class="w-full rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                        class="w-full rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                     >
                         Add domain
                     </button>
@@ -194,7 +194,7 @@ const syncDns = (domain) =>
                 <div
                     v-for="domain in domains"
                     :key="domain.id"
-                    class="rounded-xl border border-slate-200 bg-white"
+                    class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
                 >
                     <div
                         class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4"
@@ -213,7 +213,7 @@ const syncDns = (domain) =>
                             <button
                                 v-if="domain.manage_dns"
                                 @click="syncDns(domain)"
-                                class="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                                class="rounded-xl ring-1 ring-slate-900/10 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
                             >
                                 Sync DNS
                             </button>
@@ -224,7 +224,7 @@ const syncDns = (domain) =>
                                             ? null
                                             : domain.id
                                 "
-                                class="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                                class="rounded-xl ring-1 ring-slate-900/10 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
                             >
                                 {{
                                     openDomain === domain.id ? 'Hide' : 'Manage'
@@ -367,7 +367,7 @@ const syncDns = (domain) =>
                                     showDkim =
                                         showDkim === domain.id ? null : domain.id
                                 "
-                                class="mt-2 text-orange-600 hover:underline"
+                                class="mt-2 text-brand-600 hover:underline"
                             >
                                 {{
                                     showDkim === domain.id ? 'Hide' : 'Show'

@@ -58,6 +58,8 @@ class PanelPagesTest extends TestCase
         $pages = [
             ['dashboard', [], 'System/Overview'],
             ['settings', [], 'System/Settings'],
+            ['services.index', [], 'System/Services'],
+            ['dns.index', [], 'System/Dns'],
             ['terminal', [], 'System/Terminal'],
             ['profile.edit', [], 'Profile/Edit'],
             ['sites.index', [], 'Sites/Index'],
@@ -75,14 +77,6 @@ class PanelPagesTest extends TestCase
         }
     }
 
-    /** Software lives under Settings now; the old address still gets you there. */
-    public function test_the_software_route_redirects_into_settings(): void
-    {
-        $this->actingAs(User::factory()->create())
-            ->get(route('services.index'))
-            ->assertRedirect(route('settings', ['tab' => 'services']));
-    }
-
     public function test_guests_are_redirected_to_login(): void
     {
         $this->get(route('dashboard'))->assertRedirect(route('login'));
@@ -90,5 +84,7 @@ class PanelPagesTest extends TestCase
         $this->get(route('databases.index'))->assertRedirect(route('login'));
         $this->get(route('email.index'))->assertRedirect(route('login'));
         $this->get(route('settings'))->assertRedirect(route('login'));
+        $this->get(route('services.index'))->assertRedirect(route('login'));
+        $this->get(route('dns.index'))->assertRedirect(route('login'));
     }
 }

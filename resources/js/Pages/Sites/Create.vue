@@ -125,7 +125,7 @@ const submit = () => form.post(route('sites.store'));
 
         <form @submit.prevent="submit" class="max-w-4xl space-y-6">
             <!-- Type -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">What are you hosting?</h3>
 
                 <div class="mt-4 grid gap-3 sm:grid-cols-3">
@@ -137,7 +137,7 @@ const submit = () => form.post(route('sites.store'));
                         class="rounded-lg border p-4 text-left transition"
                         :class="
                             form.type === type.key
-                                ? 'border-orange-400 bg-orange-50 ring-1 ring-orange-300'
+                                ? 'border-brand-400 bg-brand-50 ring-1 ring-brand-300'
                                 : 'border-slate-200 hover:border-slate-300'
                         "
                     >
@@ -160,7 +160,7 @@ const submit = () => form.post(route('sites.store'));
             </div>
 
             <!-- Domain -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Where it lives</h3>
 
                 <div class="mt-4 grid gap-6 sm:grid-cols-2">
@@ -196,7 +196,7 @@ const submit = () => form.post(route('sites.store'));
                             <button
                                 type="button"
                                 @click="addAlias"
-                                class="shrink-0 rounded-md border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50"
+                                class="shrink-0 rounded-xl ring-1 ring-slate-900/10 px-3 text-sm text-slate-700 hover:bg-slate-50"
                             >
                                 Add
                             </button>
@@ -224,7 +224,7 @@ const submit = () => form.post(route('sites.store'));
                         <select
                             id="php_version"
                             v-model="form.php_version"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option v-for="v in phpVersions" :key="v" :value="v">
                                 PHP {{ v }}
@@ -257,7 +257,7 @@ const submit = () => form.post(route('sites.store'));
             </div>
 
             <!-- Source -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Source code</h3>
                 <p class="mt-1 text-sm text-slate-500">
                     Leave the repository blank to get a working starter:
@@ -399,7 +399,7 @@ const submit = () => form.post(route('sites.store'));
             </div>
 
             <!-- DNS -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <div class="flex items-center justify-between">
                     <h3 class="font-semibold text-slate-800">DNS</h3>
                     <label class="flex items-center gap-2">
@@ -419,8 +419,8 @@ const submit = () => form.post(route('sites.store'));
                 >
                     No DNS provider connected.
                     <Link
-                        :href="route('settings', { tab: 'dns' })"
-                        class="text-orange-600 hover:underline"
+                        :href="route('dns.index')"
+                        class="text-brand-600 hover:underline"
                         >Connect one</Link
                     >
                     to have records created and deleted with the site — or leave
@@ -436,7 +436,7 @@ const submit = () => form.post(route('sites.store'));
                         <select
                             id="dns_account_id"
                             v-model="form.dns_account_id"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option
                                 v-for="account in dnsAccounts"
@@ -457,7 +457,7 @@ const submit = () => form.post(route('sites.store'));
                         <select
                             id="dns_type"
                             v-model="form.dns_type"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option v-for="t in dnsTypes" :key="t" :value="t">
                                 {{ t }}
@@ -500,7 +500,7 @@ const submit = () => form.post(route('sites.store'));
             <div class="flex items-center gap-3">
                 <button
                     :disabled="form.processing || !!requirement"
-                    class="rounded-md bg-orange-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                    class="rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                     Create site
                 </button>

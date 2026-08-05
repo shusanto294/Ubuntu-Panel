@@ -6,16 +6,26 @@ use App\Models\DnsAccount;
 use App\Services\Dns\DnsProviderRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Inertia\Inertia;
 use Throwable;
 
 /**
  * Credentials for the DNS hosts the panel writes records to.
- *
- * There is no index action: these are a section of the Settings page now, and
- * {@see SystemController::settings()} renders them.
  */
 class DnsAccountController extends Controller
 {
+    public function index(Request $request)
+    {
+        return Inertia::render('System/Dns', [
+            'accounts' => $request->user()->dnsAccounts()
+                ->withCount('sites')
+                ->latest()
+                ->get()
+                ->map(fn (DnsAccount $account) => $account->toPanelArray()),
+            'providers' => DnsProviderRegistry::options(),
+        ]);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate($this->rules());

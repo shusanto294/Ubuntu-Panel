@@ -265,7 +265,7 @@ watch(
                     class="flex items-center gap-1.5"
                     :class="{
                         'text-emerald-400': state === 'connected',
-                        'text-orange-400': state === 'connecting',
+                        'text-brand-400': state === 'connecting',
                         'text-slate-400': state === 'idle' || state === 'closed',
                         'text-rose-400': state === 'failed',
                     }"
@@ -274,7 +274,7 @@ watch(
                         class="h-1.5 w-1.5 rounded-full"
                         :class="{
                             'bg-emerald-400': state === 'connected',
-                            'animate-pulse bg-orange-400': state === 'connecting',
+                            'animate-pulse bg-brand-400': state === 'connecting',
                             'bg-slate-500': state === 'idle' || state === 'closed',
                             'bg-rose-400': state === 'failed',
                         }"

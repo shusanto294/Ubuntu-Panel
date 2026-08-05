@@ -77,12 +77,26 @@ class SystemController extends Controller
     }
 
     /**
-     * Software is a section of Settings now. The route stays so that the links
-     * scattered through the panel — and any bookmark — still land somewhere.
+     * Everything the panel can put on this machine, and what state each of it
+     * is in. A page rather than a settings tab: this is where you install,
+     * watch the output, and retry what failed.
      */
-    public function services(Request $request)
+    public function services()
     {
-        return redirect()->route('settings', ['tab' => 'services']);
+        $this->installer->syncRows();
+
+        return Inertia::render('System/Services', [
+            'system' => $this->summary(),
+            'services' => Service::orderBy('sort_order')->get()->map->toArray()->values(),
+
+            'activeTask' => ActivityLog::where('status', 'running')
+                ->where('type', 'provision')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+            'latestTask' => ActivityLog::where('type', 'provision')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+        ]);
     }
 
     /**
@@ -204,14 +218,15 @@ class SystemController extends Controller
     }
 
     /**
-     * Everything you set up once and then leave alone: where the panel answers,
-     * what software is on the machine, and the DNS credentials it writes with.
+     * Where the panel answers, what version it is, and what new sites inherit.
      *
-     * These were three separate destinations in the main navigation. They are
-     * sections of one page now, because none of them is somewhere you go to do
-     * work — you go there to change a setting and leave.
+     * Software and DNS credentials used to be tabs on this page. They are
+     * destinations of their own again: both are lists you come back to and
+     * work in — installing, retrying, adding a provider — which is not what a
+     * settings tab is for, and neither was reachable without first landing
+     * somewhere else.
      */
-    public function settings(Request $request, UpdateChecker $updates, PanelDomain $panel)
+    public function settings(UpdateChecker $updates, PanelDomain $panel)
     {
         $this->installer->syncRows();
 
@@ -230,29 +245,6 @@ class SystemController extends Controller
             ],
             'phpVersions' => config('panel.php_versions'),
             'nodeVersions' => config('panel.node_versions'),
-
-            'services' => Service::orderBy('sort_order')->get()->map->toArray()->values(),
-
-            'dnsAccounts' => $request->user()->dnsAccounts()
-                ->withCount('sites')
-                ->latest()
-                ->get()
-                ->map(fn (DnsAccount $account) => $account->toPanelArray()),
-            'dnsProviders' => DnsProviderRegistry::options(),
-
-            // Which section to open on. Links from elsewhere in the panel pass
-            // it, so "install the mail server" can land on the right one.
-            'tab' => in_array($request->query('tab'), ['general', 'services', 'dns'], true)
-                ? $request->query('tab')
-                : 'general',
-
-            'activeTask' => ActivityLog::where('status', 'running')
-                ->where('type', 'provision')
-                ->latest('id')
-                ->first()?->toConsolePayload(),
-            'latestTask' => ActivityLog::where('type', 'provision')
-                ->latest('id')
-                ->first()?->toConsolePayload(),
         ]);
     }
 

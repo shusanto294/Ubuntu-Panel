@@ -42,7 +42,7 @@ const statusColour = computed(() => {
         case 'failed':
             return 'bg-rose-500';
         default:
-            return 'bg-orange-500';
+            return 'bg-brand-500';
     }
 });
 
@@ -68,7 +68,7 @@ const stepClass = (status) => {
         case 'failed':
             return 'text-rose-400';
         case 'running':
-            return 'text-orange-400 animate-pulse';
+            return 'text-brand-400 animate-pulse';
         case 'skipped':
             return 'text-slate-500';
         default:
@@ -271,7 +271,7 @@ defineExpose({ start, stop, refresh: fetchTask });
                 >
                 <span
                     v-if="running"
-                    class="rounded-full bg-orange-500/15 px-2.5 py-0.5 text-xs font-medium text-orange-400"
+                    class="rounded-full bg-brand-500/15 px-2.5 py-0.5 text-xs font-medium text-brand-400"
                 >
                     running
                 </span>
@@ -350,7 +350,7 @@ defineExpose({ start, stop, refresh: fetchTask });
                     stuck = true;
                     scrollToBottom();
                 "
-                class="text-xs text-orange-400 hover:underline"
+                class="text-xs text-brand-400 hover:underline"
             >
                 Jump to latest output
             </button>

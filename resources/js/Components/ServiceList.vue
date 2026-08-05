@@ -31,7 +31,7 @@ const missing = computed(() =>
 
 const statusStyles = {
     installed: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    installing: 'bg-orange-50 text-orange-700 ring-orange-200',
+    installing: 'bg-brand-50 text-brand-700 ring-brand-200',
     queued: 'bg-amber-50 text-amber-700 ring-amber-200',
     failed: 'bg-rose-50 text-rose-700 ring-rose-200',
     not_installed: 'bg-slate-100 text-slate-600 ring-slate-200',
@@ -122,7 +122,7 @@ const toggle = (key) => {
 </script>
 
 <template>
-    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
         <div
             class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4"
         >
@@ -137,7 +137,7 @@ const toggle = (key) => {
                 <button
                     @click="detect"
                     :disabled="busy || false"
-                    class="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    class="rounded-xl ring-1 ring-slate-900/10 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                     Refresh from server
                 </button>
@@ -153,7 +153,7 @@ const toggle = (key) => {
                     v-if="selected.length"
                     @click="installSelected"
                     :disabled="busy || false"
-                    class="rounded-md bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                    class="rounded-xl bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                     Install selected ({{ selected.length }})
                 </button>
@@ -178,7 +178,7 @@ const toggle = (key) => {
                         type="checkbox"
                         :checked="selected.includes(service.key)"
                         @change="toggle(service.key)"
-                        class="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                        class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
                     />
                     <span v-else class="w-4"></span>
 
@@ -208,7 +208,7 @@ const toggle = (key) => {
                     >
                         <span
                             v-if="service.status === 'installing'"
-                            class="h-1.5 w-1.5 animate-pulse rounded-full bg-orange-500"
+                            class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500"
                         />
                         {{ statusLabels[service.status] }}
                     </span>
@@ -218,7 +218,7 @@ const toggle = (key) => {
                             v-if="service.status === 'not_installed'"
                             @click="install(service)"
                             :disabled="busy || false"
-                            class="text-sm text-orange-600 hover:underline disabled:opacity-50"
+                            class="text-sm text-brand-600 hover:underline disabled:opacity-50"
                         >
                             Install
                         </button>
@@ -242,11 +242,11 @@ const toggle = (key) => {
                             v-else-if="service.status === 'queued'"
                             @click="startNow(service)"
                             :disabled="busy || false"
-                            class="text-sm text-orange-600 hover:underline disabled:opacity-50"
+                            class="text-sm text-brand-600 hover:underline disabled:opacity-50"
                         >
                             Install now
                         </button>
-                        <span v-else class="text-xs text-orange-500">
+                        <span v-else class="text-xs text-brand-500">
                             installing…
                         </span>
                     </div>

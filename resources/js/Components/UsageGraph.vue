@@ -227,7 +227,7 @@ const tone = computed(() => {
 </script>
 
 <template>
-    <div class="rounded-xl border border-slate-200 bg-white p-5">
+    <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <p class="text-sm font-medium text-slate-500">{{ label }}</p>

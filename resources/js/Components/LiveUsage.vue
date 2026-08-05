@@ -260,7 +260,7 @@ const loadTone = computed(() => {
         </div>
 
         <div
-            class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-xl border border-slate-200 bg-white px-5 py-3 text-xs text-slate-500"
+            class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 px-5 py-3 text-xs text-slate-500"
         >
             <span>
                 Uptime

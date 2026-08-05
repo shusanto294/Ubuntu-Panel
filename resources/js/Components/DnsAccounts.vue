@@ -62,7 +62,7 @@ const remove = (account) => {
 
 <template>
     <div class="space-y-6">
-        <div class="rounded-xl border border-slate-200 bg-white">
+        <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div class="border-b border-slate-200 px-5 py-4">
                 <h3 class="font-semibold text-slate-800">DNS credentials</h3>
                 <p class="mt-1 text-sm text-slate-500">
@@ -124,7 +124,7 @@ const remove = (account) => {
             </ul>
         </div>
 
-        <div class="rounded-xl border border-slate-200 bg-white p-6">
+        <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
             <h3 class="font-semibold text-slate-800">Connect a provider</h3>
 
             <form @submit.prevent="submit" class="mt-4 space-y-4">
@@ -133,7 +133,7 @@ const remove = (account) => {
                     <select
                         id="provider"
                         v-model="form.provider"
-                        class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                        class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                     >
                         <option
                             v-for="provider in providers"
@@ -151,7 +151,7 @@ const remove = (account) => {
                             :href="selected.url"
                             target="_blank"
                             rel="noopener"
-                            class="text-orange-600 hover:underline"
+                            class="text-brand-600 hover:underline"
                             >Get one</a
                         >.
                     </p>

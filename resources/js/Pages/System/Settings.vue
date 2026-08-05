@@ -1,16 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import DnsAccounts from '@/Components/DnsAccounts.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
-import ServiceList from '@/Components/ServiceList.vue';
-import TabNav from '@/Components/TabNav.vue';
 import TextInput from '@/Components/TextInput.vue';
-import TaskConsole from '@/Components/TaskConsole.vue';
 import VersionCard from '@/Components/VersionCard.vue';
-import { Head, router, useForm } from '@inertiajs/vue3';
+import { Head, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
@@ -19,39 +15,6 @@ const props = defineProps({
     defaults: Object,
     phpVersions: Array,
     nodeVersions: Array,
-    services: { type: Array, default: () => [] },
-    dnsAccounts: { type: Array, default: () => [] },
-    dnsProviders: { type: Array, default: () => [] },
-    tab: { type: String, default: 'general' },
-    activeTask: Object,
-    latestTask: Object,
-});
-
-const tab = ref(props.tab);
-
-const tabs = computed(() => [
-    { key: 'general', label: 'General' },
-    {
-        key: 'services',
-        label: 'Services',
-        badge: props.system.services_failed_count
-            ? props.system.services_failed_count
-            : `${props.system.services_installed_count}/${props.services.length}`,
-        badgeTone: props.system.services_failed_count
-            ? 'alert'
-            : props.system.preparing
-              ? 'busy'
-              : 'quiet',
-    },
-    { key: 'dns', label: 'DNS', badge: props.dnsAccounts.length || null },
-]);
-
-// Deep links land on the right section, and switching sections is worth a URL
-// so the browser's back button does what it looks like it should.
-watch(tab, (value) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', value);
-    window.history.replaceState({}, '', url);
 });
 
 const domainForm = useForm({
@@ -69,36 +32,6 @@ const onCustomDomain = computed(() => Boolean(props.panel.domain));
 
 const submitDomain = () => domainForm.post(route('system.domain'), { preserveScroll: true });
 const submitDefaults = () => defaultsForm.patch(route('system.settings'), { preserveScroll: true });
-
-// While the install queue is draining, keep the service rows in step.
-const preparing = computed(() => props.system.preparing);
-
-let timer = null;
-
-const start = () => {
-    if (timer) return;
-    // The console streams its own progress; this is only here to move the
-    // service rows from `installing` to `installed` as each one lands.
-    timer = setInterval(
-        () =>
-            router.reload({
-                only: ['system', 'services', 'activeTask', 'latestTask'],
-                preserveScroll: true,
-            }),
-        10000,
-    );
-};
-
-const stop = () => {
-    if (timer) {
-        clearInterval(timer);
-        timer = null;
-    }
-};
-
-onMounted(() => preparing.value && start());
-onBeforeUnmount(stop);
-watch(preparing, (value) => (value ? start() : stop()));
 </script>
 
 <template>
@@ -107,39 +40,26 @@ watch(preparing, (value) => (value ? start() : stop()));
     <AuthenticatedLayout>
         <template #header>
             <div>
-                <h2 class="text-xl font-semibold text-slate-800">Settings</h2>
-                <p class="text-sm text-slate-500">
-                    {{ system.hostname }} — {{ system.services_installed_count }} of
-                    {{ services.length }} installed
-                    <span v-if="system.services_failed_count" class="text-rose-600"
-                        >· {{ system.services_failed_count }} failed</span
-                    >
-                </p>
+                <h2 class="text-xl font-semibold text-slate-900">Settings</h2>
+                <p class="text-sm text-slate-500">{{ system.hostname }}</p>
             </div>
         </template>
 
-        <TabNav v-model="tab" :tabs="tabs" class="mb-6" />
-
-        <div v-if="activeTask" class="mb-6">
-            <TaskConsole :task="activeTask" title="Working" />
-        </div>
-
-        <!-- General -->
-        <div v-show="tab === 'general'" class="grid gap-6 lg:grid-cols-2">
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
-                <h3 class="font-semibold text-slate-800">Panel address</h3>
+        <div class="grid gap-6 lg:grid-cols-2">
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-900">Panel address</h3>
                 <p class="mt-1 text-sm text-slate-500">
                     The panel currently answers on
                     <a
                         :href="panel.url"
-                        class="font-mono text-orange-600 hover:underline"
+                        class="font-mono text-brand-600 hover:underline"
                         >{{ panel.url }}</a
                     >.
                 </p>
 
                 <div
                     v-if="!onCustomDomain"
-                    class="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-800"
+                    class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
                 >
                     You are on the IP address with a self-signed certificate, so
                     browsers warn every time. Point a hostname at
@@ -193,8 +113,8 @@ watch(preparing, (value) => (value ? start() : stop()));
 
             <VersionCard :update="update" />
 
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
-                <h3 class="font-semibold text-slate-800">Defaults for new sites</h3>
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-900">Defaults for new sites</h3>
                 <p class="mt-1 text-sm text-slate-500">
                     Applied when you create a site; each site can still override
                     them.
@@ -206,7 +126,7 @@ watch(preparing, (value) => (value ? start() : stop()));
                         <select
                             id="php_version"
                             v-model="defaultsForm.php_version"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option v-for="v in phpVersions" :key="v" :value="v">
                                 PHP {{ v }}
@@ -220,7 +140,7 @@ watch(preparing, (value) => (value ? start() : stop()));
                         <select
                             id="node_version"
                             v-model="defaultsForm.node_version"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option v-for="v in nodeVersions" :key="v" :value="v">
                                 Node {{ v }}
@@ -244,20 +164,6 @@ watch(preparing, (value) => (value ? start() : stop()));
                     <PrimaryButton :disabled="defaultsForm.processing">Save</PrimaryButton>
                 </form>
             </div>
-        </div>
-
-        <!-- Services -->
-        <div v-show="tab === 'services'">
-            <div v-if="!activeTask && latestTask" class="mb-6">
-                <TaskConsole :task="latestTask" title="Install output" />
-            </div>
-
-            <ServiceList :services="services" />
-        </div>
-
-        <!-- DNS -->
-        <div v-show="tab === 'dns'">
-            <DnsAccounts :accounts="dnsAccounts" :providers="dnsProviders" />
         </div>
     </AuthenticatedLayout>
 </template>

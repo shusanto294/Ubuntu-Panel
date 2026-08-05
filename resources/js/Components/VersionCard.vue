@@ -76,7 +76,7 @@ const copy = async () => {
 <template>
     <div
         class="rounded-xl border bg-white p-5"
-        :class="available ? 'border-orange-300' : 'border-slate-200'"
+        :class="available ? 'border-brand-300' : 'border-slate-200'"
     >
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -84,7 +84,7 @@ const copy = async () => {
                     <p class="text-sm font-semibold text-slate-700">Panel version</p>
                     <span
                         v-if="available"
-                        class="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-800"
+                        class="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-medium text-brand-800"
                     >
                         update available
                     </span>
@@ -107,7 +107,7 @@ const copy = async () => {
             <button
                 @click="check"
                 :disabled="checking"
-                class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
             >
                 {{ checking ? 'Checking…' : 'Check for updates' }}
             </button>
@@ -129,7 +129,7 @@ const copy = async () => {
                     :href="latest.url"
                     target="_blank"
                     rel="noopener"
-                    class="ml-1 text-orange-600 hover:underline"
+                    class="ml-1 text-brand-600 hover:underline"
                     >view</a
                 >
             </p>

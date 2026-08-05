@@ -63,7 +63,7 @@ const reveal = async (database) => {
 
         <div class="grid gap-6 lg:grid-cols-3">
             <!-- Create form -->
-            <div class="rounded-xl border border-slate-200 bg-white p-6">
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Create a database</h3>
 
                 <form @submit.prevent="submit" class="mt-4 space-y-4">
@@ -72,7 +72,7 @@ const reveal = async (database) => {
                         <select
                             id="engine"
                             v-model="form.engine"
-                            class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option
                                 v-for="engine in engineOptions"
@@ -89,7 +89,7 @@ const reveal = async (database) => {
                             No database engine is installed yet — add MariaDB,
                             PostgreSQL or MongoDB from
                             <Link
-                                :href="route('settings', { tab: 'services' })"
+                                :href="route('services.index')"
                                 class="underline"
                                 >Settings → Services</Link
                             >.
@@ -146,7 +146,7 @@ const reveal = async (database) => {
 
                     <button
                         :disabled="form.processing || !engineOptions.length"
-                        class="w-full rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                        class="w-full rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                     >
                         Create database
                     </button>
@@ -156,7 +156,7 @@ const reveal = async (database) => {
             <!-- List -->
             <div class="lg:col-span-2">
                 <div
-                    class="overflow-hidden rounded-xl border border-slate-200 bg-white"
+                    class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
                 >
                     <table class="min-w-full divide-y divide-slate-200">
                         <thead class="bg-slate-50">
@@ -183,7 +183,7 @@ const reveal = async (database) => {
                                             user: {{ database.username }}
                                             <span
                                                 v-if="database.managed_by_site"
-                                                class="ml-1 text-orange-600"
+                                                class="ml-1 text-brand-600"
                                                 >· created for a site</span
                                             >
                                         </p>
@@ -202,12 +202,12 @@ const reveal = async (database) => {
                                             :href="route('databases.phpmyadmin', database.id)"
                                             target="_blank"
                                             rel="noopener"
-                                            class="mr-3 text-orange-600 hover:underline"
+                                            class="mr-3 text-brand-600 hover:underline"
                                             >Manage</a
                                         >
                                         <button
                                             @click="reveal(database)"
-                                            class="text-orange-600 hover:underline"
+                                            class="text-brand-600 hover:underline"
                                         >
                                             Credentials
                                         </button>

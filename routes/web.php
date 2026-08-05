@@ -67,8 +67,8 @@ Route::middleware(['auth'])->group(function () {
     Route::post('email/domains/{domain}/accounts', [EmailController::class, 'storeAccount'])->name('email.accounts.store');
     Route::delete('email/accounts/{account}', [EmailController::class, 'destroyAccount'])->name('email.accounts.destroy');
 
-    // DNS credentials — Cloudflare, DigitalOcean, Linode and the rest. These
-    // live under Settings now rather than in the main navigation.
+    // DNS credentials — Cloudflare, DigitalOcean, Linode and the rest.
+    Route::get('dns', [DnsAccountController::class, 'index'])->name('dns.index');
     Route::post('dns-accounts', [DnsAccountController::class, 'store'])->name('dns.store');
     Route::patch('dns-accounts/{account}', [DnsAccountController::class, 'update'])->name('dns.update');
     Route::delete('dns-accounts/{account}', [DnsAccountController::class, 'destroy'])->name('dns.destroy');

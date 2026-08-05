@@ -67,7 +67,7 @@ tells you exactly where to log in:
 
 A fresh install answers on the server's IP with a self-signed certificate, so browsers warn
 every time. Point a hostname at the machine (an `A` record to its IP), then either use
-**Settings → Panel address** in the panel, or run:
+**Settings** in the panel, or run:
 
 ```bash
 cd /opt/ubuntu-panel && sudo -u ubuntupanel php artisan panel:domain panel.example.com
@@ -201,16 +201,14 @@ in use.
 
 ## What it does
 
-- **Settings** — the gear beside your name. Three sections: **General** (put the panel on
-  your own domain with a real certificate, set the PHP and Node versions new sites inherit),
-  **Services**, and **DNS**. These are things you set up once, so they are not in the main
-  navigation.
+- **Settings** — put the panel on your own domain with a real certificate, and set the PHP
+  and Node versions new sites inherit.
 - **This server** — CPU, memory and disk updated every second, straight from `/proc`, pushed
   over a websocket. The reading costs microseconds; asking for it over HTTP once a second
   cost a framework boot each time, which was visible as a CPU spike every second on an
   otherwise idle machine. The daemon samples once for everyone and sends only what changed.
   If the socket cannot be reached the pages fall back to polling, more slowly.
-- **Settings → Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
+- **Services** — install nginx, PHP-FPM, Composer, certbot, MariaDB, PostgreSQL,
   MongoDB, Redis, phpMyAdmin, Node.js, PM2, WP-CLI and a full mail server, with live
   progress. Everything
   queued goes into a single apt transaction, because dpkg takes an exclusive lock and
@@ -237,7 +235,7 @@ in use.
   without one it shows you the records to add.
 - **Terminal** — a real root login shell in the browser, backed by a pty. Tab completion,
   shell history, colours, Ctrl+C, `vim`, `top` and `htop` all behave normally.
-- **Settings → DNS** — connect **Cloudflare, DigitalOcean, Linode, Vultr, Hetzner DNS** or
+- **DNS** — connect **Cloudflare, DigitalOcean, Linode, Vultr, Hetzner DNS** or
   **Porkbun**. Credentials are tried before they are saved and stored encrypted; records for
   a site and its aliases are then created, updated and deleted with it. Anywhere else works
   too — leave DNS management off and point an A record at the server yourself.

@@ -15,14 +15,14 @@ defineProps({ sites: Array });
                 <h2 class="text-xl font-semibold text-slate-800">Sites</h2>
                 <Link
                     :href="route('sites.create')"
-                    class="rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
+                    class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
                 >
                     New site
                 </Link>
             </div>
         </template>
 
-        <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <table class="min-w-full divide-y divide-slate-200">
                 <thead class="bg-slate-50">
                     <tr
@@ -72,7 +72,7 @@ defineProps({ sites: Array });
                         <td class="px-5 py-3 text-right">
                             <Link
                                 :href="route('sites.show', site.id)"
-                                class="text-orange-600 hover:underline"
+                                class="text-brand-600 hover:underline"
                                 >Manage</Link
                             >
                         </td>
@@ -85,7 +85,7 @@ defineProps({ sites: Array });
                             No sites yet.
                             <Link
                                 :href="route('sites.create')"
-                                class="text-orange-600 hover:underline"
+                                class="text-brand-600 hover:underline"
                                 >Create one</Link
                             >.
                         </td>
