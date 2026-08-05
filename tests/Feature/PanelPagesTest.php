@@ -69,6 +69,7 @@ class PanelPagesTest extends TestCase
             ['databases.create', [], 'Databases/Create'],
             ['email.index', [], 'Email/Index'],
             ['email.domains.create', [], 'Email/CreateDomain'],
+            ['email.domains.show', $mailDomain, 'Email/Show'],
             ['email.accounts.create', $mailDomain, 'Email/CreateAccount'],
             ['dns.create', [], 'System/DnsCreate'],
         ];

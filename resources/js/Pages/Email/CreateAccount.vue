@@ -125,7 +125,7 @@ const submit = () => form.post(route('email.accounts.store', props.domain.id));
                     Create mailbox
                 </PrimaryButton>
                 <Link
-                    :href="route('email.index')"
+                    :href="route('email.domains.show', domain.id)"
                     class="text-sm text-slate-500 hover:text-slate-900"
                 >
                     Cancel

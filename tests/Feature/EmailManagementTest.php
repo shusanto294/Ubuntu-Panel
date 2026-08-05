@@ -272,13 +272,13 @@ class EmailManagementTest extends TestCase
                 'password' => 'a-long-enough-password',
                 'quota_mb' => 0,
             ])
-            ->assertRedirect(route('email.index'))
+            ->assertRedirect(route('email.domains.show', $domain->id))
             ->assertSessionHasNoErrors();
 
         $this->assertSame(0, EmailAccount::first()->quota_mb);
 
-        $shown = $this->actingAs($user)->get(route('email.index'))
-            ->viewData('page')['props']['domains'][0]['accounts'][0];
+        $shown = $this->actingAs($user)->get(route('email.domains.show', $domain->id))
+            ->viewData('page')['props']['domain']['accounts'][0];
 
         $this->assertSame('Unlimited', $shown['quota_label']);
     }

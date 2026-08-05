@@ -63,6 +63,7 @@ Route::middleware(['auth'])->group(function () {
     // Email
     Route::get('email', [EmailController::class, 'index'])->name('email.index');
     Route::get('email/domains/create', [EmailController::class, 'createDomain'])->name('email.domains.create');
+    Route::get('email/domains/{domain}', [EmailController::class, 'showDomain'])->name('email.domains.show');
     Route::get('email/domains/{domain}/accounts/create', [EmailController::class, 'createAccount'])->name('email.accounts.create');
     Route::post('email/domains', [EmailController::class, 'storeDomain'])->name('email.domains.store');
     Route::delete('email/domains/{domain}', [EmailController::class, 'destroyDomain'])->name('email.domains.destroy');

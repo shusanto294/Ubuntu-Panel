@@ -60,6 +60,27 @@ class EmailController extends Controller
         ]);
     }
 
+    /**
+     * One domain, with everything that belongs to it.
+     *
+     * The index used to expand each domain in place — mailboxes, connection
+     * details, DKIM record, four buttons — which reads as a lot of noise for
+     * every domain at once when you came to look at one of them.
+     */
+    public function showDomain(Request $request, EmailDomain $domain)
+    {
+        $this->authorize('view', $domain);
+
+        return Inertia::render('Email/Show', [
+            'domain' => $this->summary($domain->load('accounts')),
+            'roundcubeInstalled' => app(Roundcube::class)->isInstalled(),
+            'activeTask' => ActivityLog::where('type', 'mail')
+                ->where('status', 'running')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+        ]);
+    }
+
     public function createAccount(Request $request, EmailDomain $domain)
     {
         $this->authorize('update', $domain);
@@ -105,7 +126,7 @@ class EmailController extends Controller
 
         CreateEmailDomain::dispatch($record);
 
-        return redirect()->route('email.index')
+        return redirect()->route('email.domains.show', $record->id)
             ->with('success', 'Mail domain queued. DKIM keys and DNS records are being set up.');
     }
 
@@ -115,7 +136,7 @@ class EmailController extends Controller
 
         DeleteEmailDomain::dispatch($domain);
 
-        return back()->with('success', 'Mail domain queued for removal.');
+        return redirect()->route('email.index')->with('success', 'Mail domain queued for removal.');
     }
 
     public function syncDomainDns(Request $request, EmailDomain $domain, MailManager $mail)
@@ -163,7 +184,8 @@ class EmailController extends Controller
 
         CreateEmailAccount::dispatch($account, $data['password']);
 
-        return redirect()->route('email.index')->with('success', 'Mailbox queued for creation.');
+        return redirect()->route('email.domains.show', $domain->id)
+            ->with('success', 'Mailbox queued for creation.');
     }
 
     public function destroyAccount(Request $request, EmailAccount $account)
