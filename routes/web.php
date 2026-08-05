@@ -29,6 +29,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('system/updates', [SystemController::class, 'checkForUpdates'])->name('system.updates');
     Route::get('settings', [SystemController::class, 'settings'])->name('settings');
     Route::post('system/domain', [SystemController::class, 'updateDomain'])->name('system.domain');
+    Route::post('system/restart', [SystemController::class, 'restartDaemons'])->name('system.restart');
 
     // Software
     Route::get('services', [SystemController::class, 'services'])->name('services.index');

@@ -92,4 +92,51 @@ class PanelPagesTest extends TestCase
         $this->get(route('services.index'))->assertRedirect(route('login'));
         $this->get(route('dns.index'))->assertRedirect(route('login'));
     }
+
+    /**
+     * A control panel that cannot restart its own workers asks you to open an
+     * SSH session to fix the thing whose purpose is not making you open one —
+     * and when the broken worker is the terminal daemon, the browser shell is
+     * not available to do it from either.
+     */
+    public function test_the_panels_own_services_can_be_restarted_from_settings(): void
+    {
+        $connection = new \Tests\Support\FakeLocalConnection([
+            'is-active' => ["active\n", 0],
+        ]);
+
+        $this->app->instance(\App\Services\Shell\LocalConnection::class, $connection);
+
+        $this->actingAs(\App\Models\User::factory()->create())
+            ->post(route('system.restart'), ['unit' => 'ubuntu-panel-terminal.service'])
+            ->assertRedirect();
+
+        $this->assertTrue($connection->ranCommandContaining('systemctl restart'));
+        $this->assertTrue($connection->ranCommandContaining('ubuntu-panel-terminal.service'));
+        // A unit file can change under a running system when install.sh is
+        // re-run, and restarting without this starts the old definition.
+        $this->assertTrue($connection->ranCommandContaining('daemon-reload'));
+
+        // PHP-FPM is serving this request; restarting it would kill the request
+        // asking for the restart.
+        $this->assertFalse($connection->ranCommandContaining('fpm'));
+    }
+
+    public function test_an_unknown_unit_is_refused(): void
+    {
+        $connection = new \Tests\Support\FakeLocalConnection;
+        $this->app->instance(\App\Services\Shell\LocalConnection::class, $connection);
+
+        $this->actingAs(\App\Models\User::factory()->create())
+            ->post(route('system.restart'), ['unit' => 'sshd.service'])
+            ->assertRedirect();
+
+        $this->assertFalse($connection->ranCommandContaining('sshd'));
+        $this->assertSame('Unknown service.', session('error'));
+    }
+
+    public function test_guests_cannot_restart_anything(): void
+    {
+        $this->post(route('system.restart'))->assertRedirect(route('login'));
+    }
 }

@@ -1,12 +1,12 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import VersionCard from '@/Components/VersionCard.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
@@ -15,7 +15,23 @@ const props = defineProps({
     defaults: Object,
     phpVersions: Array,
     nodeVersions: Array,
+    daemons: { type: Array, default: () => [] },
 });
+
+const restarting = ref(null);
+
+const restart = (unit = null) => {
+    restarting.value = unit ?? 'all';
+
+    router.post(
+        route('system.restart'),
+        { unit },
+        {
+            preserveScroll: true,
+            onFinish: () => (restarting.value = null),
+        },
+    );
+};
 
 const domainForm = useForm({
     domain: props.panel.domain ?? '',
@@ -164,6 +180,70 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
             </div>
 
             <VersionCard :update="update" />
+
+            <!--
+                The panel's own workers. Nothing here is serving this request —
+                PHP-FPM is, and restarting that would kill the request asking
+                for it — so these can be restarted and the answer is the state
+                afterwards rather than a promise.
+            -->
+            <div
+                v-if="daemons.length"
+                class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2"
+            >
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold text-slate-900">Panel services</h3>
+                        <p class="mt-1 text-sm text-slate-500">
+                            The background workers the panel runs on this
+                            machine. Restarting one is safe — anything queued
+                            stays queued.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        :disabled="restarting !== null"
+                        class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-50"
+                        @click="restart()"
+                    >
+                        {{ restarting === 'all' ? 'Restarting…' : 'Restart all' }}
+                    </button>
+                </div>
+
+                <ul class="mt-4 divide-y divide-slate-100">
+                    <li
+                        v-for="daemon in daemons"
+                        :key="daemon.unit"
+                        class="flex flex-wrap items-center justify-between gap-3 py-3"
+                    >
+                        <div class="min-w-0">
+                            <p class="flex items-center gap-2 text-sm font-medium text-slate-800">
+                                <span
+                                    class="h-2 w-2 shrink-0 rounded-full"
+                                    :class="daemon.active ? 'bg-emerald-500' : 'bg-rose-500'"
+                                />
+                                {{ daemon.label }}
+                                <span
+                                    class="text-xs font-normal"
+                                    :class="daemon.active ? 'text-slate-500' : 'text-rose-600'"
+                                    >{{ daemon.state }}</span
+                                >
+                            </p>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ daemon.what }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            :disabled="restarting !== null"
+                            class="shrink-0 rounded-xl px-3 py-1.5 text-sm text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-50"
+                            @click="restart(daemon.unit)"
+                        >
+                            {{ restarting === daemon.unit ? 'Restarting…' : 'Restart' }}
+                        </button>
+                    </li>
+                </ul>
+            </div>
         </div>
     </AuthenticatedLayout>
 </template>

@@ -259,27 +259,5 @@ const loadTone = computed(() => {
             />
         </div>
 
-        <div
-            class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 px-5 py-3 text-xs text-slate-500"
-        >
-            <span>
-                Uptime
-                <span class="ml-1 font-medium text-slate-700">{{
-                    duration(metrics?.uptime_seconds)
-                }}</span>
-            </span>
-            <span v-if="load">
-                Load
-                <span class="ml-1 font-medium tabular-nums" :class="loadTone">
-                    {{ load[0] }} · {{ load[1] }} · {{ load[2] }}
-                </span>
-            </span>
-            <span v-if="metrics?.swap?.total">
-                Swap
-                <span class="ml-1 font-medium text-slate-700">
-                    {{ bytes(metrics.swap.used) }} of {{ bytes(metrics.swap.total) }}
-                </span>
-            </span>
-        </div>
     </div>
 </template>

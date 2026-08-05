@@ -179,6 +179,11 @@ The queue worker is not optional: provisioning, deployments, database and mail w
 as queued jobs. Without it, tasks sit at 0% forever. The terminal server is not optional
 either if you want the browser shell or live task output — both travel over its websocket.
 
+**Settings → Panel services** shows all three with their live state and restarts any of
+them from the browser, which is the first thing to try when the terminal stops opening.
+PHP-FPM is deliberately not on that list: the panel is being served by it, so restarting it
+kills the request asking for the restart.
+
 `panel:update` restarts all three, detached and a few seconds out, because it is usually
 running inside one of them. It leaves an account of that in `/var/log/ubuntu-panel-restart.log`,
 and `php artisan panel:doctor` reads it back along with each unit's current state — which is

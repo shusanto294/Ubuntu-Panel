@@ -4,7 +4,6 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import LiveUsage from '@/Components/LiveUsage.vue';
 import TaskConsole from '@/Components/TaskConsole.vue';
-import VersionCard from '@/Components/VersionCard.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link } from '@inertiajs/vue3';
 
@@ -250,10 +249,6 @@ const installProgress = computed(() =>
             :ranges="historyRanges"
             class="mt-6"
         />
-
-        <div class="mt-6">
-            <VersionCard :update="update" />
-        </div>
 
         <div v-if="activeTask" class="mt-6">
             <TaskConsole :task="activeTask" title="Running now" />

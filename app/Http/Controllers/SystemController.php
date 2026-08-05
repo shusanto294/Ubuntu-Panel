@@ -12,6 +12,7 @@ use App\Models\Site;
 use App\Services\Dns\DnsProviderRegistry;
 use App\Services\System\HostInfo;
 use App\Services\System\MetricHistory;
+use App\Services\System\PanelDaemons;
 use App\Services\System\PanelDomain;
 use App\Services\System\ServiceCatalog;
 use App\Services\System\ServiceInstaller;
@@ -245,7 +246,25 @@ class SystemController extends Controller
             ],
             'phpVersions' => config('panel.php_versions'),
             'nodeVersions' => config('panel.node_versions'),
+            'daemons' => app(PanelDaemons::class)->status(),
         ]);
+    }
+
+    /**
+     * Turn the panel's own workers off and on again.
+     *
+     * A control panel that cannot restart its own services asks you to open an
+     * SSH session to fix the thing whose purpose is not making you open one —
+     * and when what is broken is the terminal daemon, the browser shell is not
+     * available to do it from either.
+     */
+    public function restartDaemons(Request $request, PanelDaemons $daemons)
+    {
+        $unit = $request->input('unit');
+
+        $result = $daemons->restart(filled($unit) ? (string) $unit : null);
+
+        return back()->with($result['ok'] ? 'success' : 'error', $result['message']);
     }
 
     /**
