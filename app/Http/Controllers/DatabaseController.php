@@ -8,11 +8,13 @@ use App\Jobs\DeleteDatabase;
 use App\Models\Database;
 use App\Models\Service;
 use App\Services\System\PhpMyAdmin;
+use App\Services\Shell\LocalConnection;
 use App\Services\System\ServiceInstaller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
+use Throwable;
 
 class DatabaseController extends Controller
 {
@@ -112,25 +114,33 @@ class DatabaseController extends Controller
     }
 
     /**
-     * Open phpMyAdmin, already signed in to this database.
+     * Open phpMyAdmin signed in over every database on the server.
      *
      * The credentials go into a session phpMyAdmin reads and are never in the
-     * URL, and the redirect is the only way in: without a session it has no
-     * login form to offer, so a stray visit to /phpmyadmin gets nowhere.
+     * URL. Anyone who has not come through here gets the ordinary login form
+     * instead, where a database's own username and password reach that
+     * database and nothing else.
      */
-    public function phpMyAdmin(Request $request, Database $database, PhpMyAdmin $phpMyAdmin)
+    public function phpMyAdmin(Request $request, PhpMyAdmin $phpMyAdmin)
     {
-        $this->authorize('view', $database);
-
-        if ($database->engine !== 'mysql') {
-            return back()->with('error', 'phpMyAdmin only manages MariaDB and MySQL databases.');
-        }
-
         if (! $phpMyAdmin->isInstalled()) {
-            return back()->with('error', 'phpMyAdmin is not installed — add it from Settings → Services.');
+            return back()->with('error', 'phpMyAdmin is not installed — add it from the Services page.');
         }
 
-        return redirect()->away($phpMyAdmin->signOn($database));
+        if (! Service::installed('mysql')) {
+            return back()->with('error', 'MariaDB is not installed on this machine.');
+        }
+
+        // Asserted here rather than only at install time, so a machine that
+        // installed phpMyAdmin before this account existed does not need the
+        // service reinstalling to get it.
+        try {
+            $phpMyAdmin->ensureAdminUser(app(LocalConnection::class));
+        } catch (Throwable $e) {
+            return back()->with('error', 'Could not prepare the phpMyAdmin account: '.$e->getMessage());
+        }
+
+        return redirect()->away($phpMyAdmin->signOnAsAdmin());
     }
 
     /** Reveal the stored password for a database the user owns. */

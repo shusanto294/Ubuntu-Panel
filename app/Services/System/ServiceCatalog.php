@@ -370,6 +370,11 @@ class ServiceCatalog
                 Step::call('Configure phpMyAdmin', function (LocalConnection $ssh) {
                     $pma = app(PhpMyAdmin::class);
 
+                    // The account the panel signs administrators in as. Not
+                    // MariaDB's root: root authenticates over a unix socket and
+                    // has no password to give phpMyAdmin at all.
+                    $pma->ensureAdminUser($ssh);
+
                     $ssh->putFile(PhpMyAdmin::ROOT.'/config.inc.php', $pma->config());
 
                     // The web process writes phpMyAdmin's session and its temp

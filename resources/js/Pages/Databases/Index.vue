@@ -56,12 +56,23 @@ const reveal = async (database) => {
                         on this server
                     </p>
                 </div>
-                <Link
-                    :href="route('databases.create')"
-                    class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
-                >
-                    New database
-                </Link>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Link
+                        :href="route('databases.create')"
+                        class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+                    >
+                        New database
+                    </Link>
+                    <a
+                        v-if="phpMyAdmin"
+                        :href="route('databases.phpmyadmin')"
+                        target="_blank"
+                        rel="noopener"
+                        class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                    >
+                        phpMyAdmin
+                    </a>
+                </div>
             </div>
         </template>
 
@@ -107,14 +118,6 @@ const reveal = async (database) => {
                                     <StatusBadge :status="database.status" />
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-3 text-right">
-                                    <a
-                                        v-if="phpMyAdmin && database.engine === 'mysql' && database.status === 'ready'"
-                                        :href="route('databases.phpmyadmin', database.id)"
-                                        target="_blank"
-                                        rel="noopener"
-                                        class="mr-3 text-brand-600 hover:underline"
-                                        >Manage</a
-                                    >
                                     <button
                                         @click="reveal(database)"
                                         class="text-brand-600 hover:underline"

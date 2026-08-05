@@ -54,19 +54,17 @@ class PhpMyAdminTest extends TestCase
      */
     public function test_signing_on_puts_the_credentials_in_a_session_not_the_url(): void
     {
-        $user = User::factory()->create();
-        $database = $this->database($user);
-
-        $url = app(PhpMyAdmin::class)->signOn($database);
+        $url = app(PhpMyAdmin::class)->signOnAsAdmin();
+        $password = app(PhpMyAdmin::class)->adminPassword();
 
         $this->assertStringStartsWith(PhpMyAdmin::PATH, $url);
-        $this->assertStringNotContainsString('the-password', $url);
-        $this->assertStringNotContainsString('my_app_u', $url);
-        // It lands on the database rather than the server overview.
-        $this->assertStringContainsString('db=my_app', $url);
+        $this->assertStringNotContainsString($password, $url);
+        $this->assertStringNotContainsString(PhpMyAdmin::ADMIN_USER, $url);
+        // The signon server, not the login form.
+        $this->assertStringContainsString('server='.PhpMyAdmin::SIGNON_SERVER, $url);
 
-        $this->assertSame('my_app_u', $_SESSION['PMA_single_signon_user'] ?? null);
-        $this->assertSame('the-password', $_SESSION['PMA_single_signon_password'] ?? null);
+        $this->assertSame(PhpMyAdmin::ADMIN_USER, $_SESSION['PMA_single_signon_user'] ?? null);
+        $this->assertSame($password, $_SESSION['PMA_single_signon_password'] ?? null);
     }
 
     public function test_the_button_is_offered_only_when_it_is_installed(): void
@@ -81,26 +79,58 @@ class PhpMyAdminTest extends TestCase
         $this->assertFalse($installed);
     }
 
-    public function test_it_refuses_engines_it_cannot_manage(): void
+    public function test_it_says_so_rather_than_signing_you_in_to_nothing(): void
     {
-        $user = User::factory()->create();
-        $database = $this->database($user, 'postgres');
+        $this->markInstalled(['mysql']);
 
-        $this->actingAs($user)
-            ->get(route('databases.phpmyadmin', $database))
+        $this->actingAs(User::factory()->create())
+            ->get(route('databases.phpmyadmin'))
             ->assertRedirect();
 
         $this->assertNotNull(session('error'));
     }
 
-    public function test_another_user_cannot_sign_in_to_your_database(): void
+    public function test_guests_cannot_reach_the_sign_on(): void
     {
-        $owner = User::factory()->create();
-        $intruder = User::factory()->create();
+        $this->get(route('databases.phpmyadmin'))->assertRedirect(route('login'));
+    }
 
-        $this->actingAs($intruder)
-            ->get(route('databases.phpmyadmin', $this->database($owner)))
-            ->assertForbidden();
+    /**
+     * Two ways in, and only one of them is a door.
+     *
+     * The login form is the default server, so anyone arriving at /phpmyadmin
+     * without having come through the panel is asked who they are — and a
+     * database's own credentials reach that database and nothing else, because
+     * that is all its MariaDB user is granted. The signon server needs a
+     * session the panel wrote, so it is not a second front door.
+     */
+    public function test_the_configuration_offers_a_login_form_and_a_signon_route(): void
+    {
+        $config = app(PhpMyAdmin::class)->config();
+
+        $this->assertStringContainsString("\$cfg['Servers'][\$i]['auth_type'] = 'cookie';", $config);
+        $this->assertStringContainsString("\$cfg['Servers'][\$i]['auth_type'] = 'signon';", $config);
+        $this->assertStringContainsString(PhpMyAdmin::SIGNON_SESSION, $config);
+        $this->assertStringContainsString("\$cfg['ServerDefault'] = 1;", $config);
+        $this->assertStringContainsString("'AllowNoPassword'] = false", $config);
+
+        // The privileged account's password is a live MariaDB credential and
+        // has no business in a file the web server serves the directory of.
+        $this->assertStringNotContainsString(app(PhpMyAdmin::class)->adminPassword(), $config);
+    }
+
+    /** Root authenticates over a socket and has no password to hand over. */
+    public function test_the_privileged_account_is_the_panels_own_not_root(): void
+    {
+        $connection = new FakeLocalConnection([]);
+
+        app(PhpMyAdmin::class)->ensureAdminUser($connection);
+
+        $ran = implode("\n", $connection->ran);
+
+        $this->assertStringContainsString("CREATE USER IF NOT EXISTS 'ubuntu_panel_admin'@'localhost'", $ran);
+        $this->assertStringContainsString('GRANT ALL PRIVILEGES ON *.*', $ran);
+        $this->assertStringNotContainsString("'root'@", $ran);
     }
 
     /** Upstream tarball, not apt: Debian's package brings its own web server. */
@@ -123,6 +153,7 @@ class PhpMyAdminTest extends TestCase
         $config = $connection->files[PhpMyAdmin::ROOT.'/config.inc.php'] ?? '';
 
         $this->assertStringContainsString("'auth_type'] = 'signon'", $config);
+        $this->assertStringContainsString("'auth_type'] = 'cookie'", $config);
         $this->assertStringContainsString(PhpMyAdmin::SIGNON_SESSION, $config);
         $this->assertStringContainsString("'AllowNoPassword'] = false", $config);
     }

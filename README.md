@@ -222,10 +222,12 @@ in use.
   - **Node.js / Next.js** — git clone or starter app, `npm install`, build, a systemd unit
     on an auto-assigned port, and an nginx reverse proxy.
 - **Databases** — create and drop databases and users on MariaDB, PostgreSQL and MongoDB.
-  MariaDB databases get a **Manage** link that opens phpMyAdmin already signed in as that
-  database's own user — the credentials go into a session phpMyAdmin reads, never into the
-  URL, and it is configured with no login form at all, so arriving at /phpmyadmin any other
-  way gets you nothing.
+  A **phpMyAdmin** button opens it already signed in over every database on the server; the
+  credentials go into a session phpMyAdmin reads, never into the URL. Arriving at
+  /phpmyadmin any other way gets the ordinary login form, where a database's own username
+  and password reach that database and nothing else — which is all its MariaDB user is
+  granted. The privileged account the panel signs you in as is its own, not MariaDB's
+  `root`: root authenticates over a unix socket and has no password to give phpMyAdmin.
   Credentials are generated, encrypted and revealable in the UI. WordPress and Laravel sites
   get theirs automatically, dropped with the site.
 - **Email** — Postfix + Dovecot + OpenDKIM with virtual mailboxes in MariaDB. Add a domain

@@ -55,10 +55,11 @@ Route::middleware(['auth'])->group(function () {
     // Databases
     Route::get('databases', [DatabaseController::class, 'index'])->name('databases.index');
     Route::get('databases/create', [DatabaseController::class, 'create'])->name('databases.create');
+    Route::get('databases/phpmyadmin', [DatabaseController::class, 'phpMyAdmin'])->name('databases.phpmyadmin');
     Route::post('databases', [DatabaseController::class, 'store'])->name('databases.store');
     Route::delete('databases/{database}', [DatabaseController::class, 'destroy'])->name('databases.destroy');
     Route::get('databases/{database}/credentials', [DatabaseController::class, 'credentials'])->name('databases.credentials');
-    Route::get('databases/{database}/phpmyadmin', [DatabaseController::class, 'phpMyAdmin'])->name('databases.phpmyadmin');
+    Route::get('databases/phpmyadmin', [DatabaseController::class, 'phpMyAdmin'])->name('databases.phpmyadmin');
 
     // Email
     Route::get('email', [EmailController::class, 'index'])->name('email.index');
