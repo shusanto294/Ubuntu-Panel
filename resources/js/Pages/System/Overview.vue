@@ -54,9 +54,8 @@ const installProgress = computed(() =>
                     <h2 class="text-xl font-semibold text-slate-800">
                         {{ system.hostname }}
                     </h2>
-                    <p class="text-sm text-slate-500">
-                        {{ system.os ?? 'Ubuntu' }} · PHP {{ system.php_version }} ·
-                        Node {{ system.node_version }}
+                    <p class="font-mono text-sm text-slate-500">
+                        {{ system.public_ip ?? 'address unknown' }}
                     </p>
                 </div>
                 <Link
@@ -99,12 +98,6 @@ const installProgress = computed(() =>
             </div>
         </div>
 
-        <LiveUsage
-            :initial="metrics"
-            :history="history"
-            :ranges="historyRanges"
-            class="mb-6"
-        />
 
         <!--
             The lead tile is filled and the rest are white, which is how the
@@ -200,7 +193,7 @@ const installProgress = computed(() =>
                         </svg>
                     </span>
                     <div>
-                        <p class="text-sm text-slate-500">Software</p>
+                        <p class="text-sm text-slate-500">Services</p>
                         <p class="text-2xl font-semibold text-slate-900">
                             {{ counts.services_installed }}/{{ counts.services_total }}
                         </p>
@@ -248,14 +241,15 @@ const installProgress = computed(() =>
                         </p>
                     </div>
                 </div>
-                <p
-                    v-if="system.mail_hostname"
-                    class="mt-2 truncate text-xs text-slate-500"
-                >
-                    {{ system.mail_hostname }}
-                </p>
             </Link>
         </div>
+
+        <LiveUsage
+            :initial="metrics"
+            :history="history"
+            :ranges="historyRanges"
+            class="mt-6"
+        />
 
         <div class="mt-6">
             <VersionCard :update="update" />

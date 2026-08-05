@@ -65,7 +65,7 @@ class SystemController extends Controller
                 ->whereIn('type', ['provision', 'site', 'database', 'mail'])
                 ->latest('id')
                 ->first()?->toConsolePayload(),
-            'recentActivity' => ActivityLog::latest('id')->limit(10)->get()->map(fn ($log) => [
+            'recentActivity' => ActivityLog::latest('id')->limit(5)->get()->map(fn ($log) => [
                 'id' => $log->id,
                 'type' => $log->type,
                 'action' => $log->action,
@@ -302,6 +302,7 @@ class SystemController extends Controller
     {
         return [
             'hostname' => gethostname() ?: 'this server',
+            'public_ip' => app(HostInfo::class)->publicIp(),
             'os' => $this->settings->get('os'),
             'php_version' => $this->settings->phpVersion(),
             'node_version' => $this->settings->nodeVersion(),

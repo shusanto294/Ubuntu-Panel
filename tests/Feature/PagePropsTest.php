@@ -115,4 +115,50 @@ class PagePropsTest extends TestCase
             }
         }
     }
+
+    /**
+     * The dashboard header carries the address, not the version strings.
+     *
+     * The IP is what you point DNS at and what you ssh to; "Ubuntu 22.04.5 LTS
+     * · PHP 8.3 · Node 22" is three facts you already know and cannot act on.
+     */
+    public function test_the_dashboard_gets_the_servers_address(): void
+    {
+        \Illuminate\Support\Facades\Cache::put('panel:public-ip', '203.0.113.10', now()->addHour());
+
+        $props = $this->actingAs(\App\Models\User::factory()->create())
+            ->get(route('dashboard'))
+            ->viewData('page')['props'];
+
+        $this->assertSame('203.0.113.10', $props['system']['public_ip']);
+    }
+
+    /** Both cards are a glance, not a log — the full history is elsewhere. */
+    public function test_the_dashboard_lists_show_at_most_five(): void
+    {
+        $user = \App\Models\User::factory()->create();
+
+        foreach (range(1, 8) as $i) {
+            \App\Models\Site::create([
+                'user_id' => $user->id,
+                'domain' => "site{$i}.example.com",
+                'root_path' => "/var/www/site{$i}.example.com",
+                'php_version' => '8.3',
+                'type' => 'php',
+            ]);
+
+            \App\Models\ActivityLog::record([
+                'user_id' => $user->id,
+                'type' => 'site',
+                'action' => 'site.deploy',
+                'status' => 'success',
+                'message' => "site{$i}",
+            ]);
+        }
+
+        $props = $this->actingAs($user)->get(route('dashboard'))->viewData('page')['props'];
+
+        $this->assertCount(5, $props['sites']);
+        $this->assertCount(5, $props['recentActivity']);
+    }
 }
