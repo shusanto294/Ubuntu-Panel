@@ -26,6 +26,17 @@ class Site extends Model
     /** Types that get an application database created for them. */
     public const DATABASE_TYPES = ['wordpress', 'laravel'];
 
+    /**
+     * What a WordPress site is called when you do not name it.
+     *
+     * Not the domain. The title is what WordPress puts in the browser tab, in
+     * the header of whatever theme is on it, and in the From line of every mail
+     * it sends — and a domain reads as a placeholder in all three, because it
+     * is one. This says "nobody has set this yet" plainly enough that it gets
+     * changed.
+     */
+    public const DEFAULT_WP_TITLE = 'WordPress Site';
+
     protected $fillable = [
         'user_id', 'dns_account_id', 'database_id', 'domain', 'type', 'aliases',
         'root_path', 'web_directory', 'php_version', 'node_version', 'status', 'ssl', 'last_error',

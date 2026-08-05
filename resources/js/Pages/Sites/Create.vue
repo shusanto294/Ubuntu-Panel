@@ -356,7 +356,7 @@ const submit = () => form.post(route('sites.store'));
                             id="wp_title"
                             v-model="form.wp_title"
                             class="mt-1 block w-full"
-                            :placeholder="form.domain || 'My site'"
+                            placeholder="WordPress Site"
                         />
                     </div>
                     <div>

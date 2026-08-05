@@ -158,7 +158,7 @@ class SiteController extends Controller
             'repository' => $data['repository'] ?: null,
             'branch' => $data['branch'] ?: 'main',
 
-            'wp_title' => $type === 'wordpress' ? ($data['wp_title'] ?: $domain) : null,
+            'wp_title' => $type === 'wordpress' ? ($data['wp_title'] ?: Site::DEFAULT_WP_TITLE) : null,
             'wp_admin_user' => $type === 'wordpress' ? ($data['wp_admin_user'] ?: 'admin') : null,
             'wp_admin_email' => $type === 'wordpress' ? ($data['wp_admin_email'] ?: $request->user()->email) : null,
             'wp_admin_password' => $type === 'wordpress' ? ($data['wp_admin_password'] ?: null) : null,

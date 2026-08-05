@@ -319,4 +319,41 @@ class SiteDeploymentRecipeTest extends TestCase
             fn (string $name) => str_starts_with($name, 'Make sure PHP')
         ));
     }
+
+    /**
+     * A WordPress site nobody named is not called after its domain.
+     *
+     * The title is what WordPress puts in the browser tab, in the theme header
+     * and in the From line of every mail it sends. A domain reads as a
+     * placeholder in all three, because it is one.
+     */
+    public function test_an_unnamed_wordpress_site_gets_a_neutral_title(): void
+    {
+        $site = $this->site(['type' => 'wordpress', 'wp_admin_user' => 'admin']);
+
+        $install = collect((new SiteRecipe($site, app(DatabaseManager::class)))->steps())
+            ->first(fn ($step) => $step->name === 'Install WordPress');
+
+        $command = implode(' ', $install->commands);
+
+        $this->assertStringContainsString("--title='WordPress Site'", $command);
+        $this->assertStringNotContainsString("--title='app.example.com'", $command);
+    }
+
+    public function test_a_named_wordpress_site_keeps_its_name(): void
+    {
+        $site = $this->site([
+            'type' => 'wordpress',
+            'wp_admin_user' => 'admin',
+            'wp_title' => 'Shusanto Writes',
+        ]);
+
+        $install = collect((new SiteRecipe($site, app(DatabaseManager::class)))->steps())
+            ->first(fn ($step) => $step->name === 'Install WordPress');
+
+        $this->assertStringContainsString(
+            "--title='Shusanto Writes'",
+            implode(' ', $install->commands)
+        );
+    }
 }

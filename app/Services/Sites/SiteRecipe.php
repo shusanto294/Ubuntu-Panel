@@ -307,7 +307,7 @@ class SiteRecipe
                     '%s core install --url=%s --title=%s --admin_user=%s --admin_password=%s --admin_email=%s --skip-email',
                     $wp,
                     escapeshellarg(($site->ssl ? 'https://' : 'http://').$site->domain),
-                    escapeshellarg($site->wp_title ?: $site->domain),
+                    escapeshellarg($site->wp_title ?: Site::DEFAULT_WP_TITLE),
                     escapeshellarg($site->wp_admin_user ?: 'admin'),
                     escapeshellarg($adminPassword),
                     escapeshellarg($site->wp_admin_email ?: ($site->user?->email ?: 'admin@'.$site->domain))
