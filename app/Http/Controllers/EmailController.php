@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\DnsAccount;
 use App\Jobs\CreateEmailAccount;
 use App\Jobs\CreateEmailDomain;
@@ -36,6 +37,12 @@ class EmailController extends Controller
             'mailHostname' => $this->settings->get('mail_hostname'),
             'dnsAccounts' => $request->user()->dnsAccounts()->get()->map(fn (DnsAccount $account) => $account->toPanelArray()),
             'roundcubeInstalled' => app(Roundcube::class)->isInstalled(),
+            // Whatever the queue is working on right now, so the page can show
+            // the output instead of a badge that never changes.
+            'activeTask' => ActivityLog::whereIn('type', ['mail'])
+                ->where('status', 'running')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
         ]);
     }
 
@@ -135,7 +142,9 @@ class EmailController extends Controller
         $data = $request->validate([
             'local_part' => ['required', 'string', 'max:64', 'regex:/^[a-z0-9._-]+$/i'],
             'password' => ['required', 'string', 'min:10', 'max:100'],
-            'quota_mb' => ['required', 'integer', 'min:64', 'max:102400'],
+            // 0 is unlimited — Dovecot's `*:bytes=0` means exactly that, so it
+            // needs no special case below either.
+            'quota_mb' => ['required', 'integer', 'min:0', 'max:1024000'],
         ]);
 
         $localPart = strtolower($data['local_part']);
@@ -191,6 +200,9 @@ class EmailController extends Controller
                 'address' => $account->local_part.'@'.$domain->domain,
                 'local_part' => $account->local_part,
                 'quota_mb' => $account->quota_mb,
+                'quota_label' => $account->quota_mb > 0
+                    ? $account->quota_mb.' MB'
+                    : 'Unlimited',
                 'status' => $account->status,
                 'last_error' => $account->last_error,
                 'webmail_url' => Roundcube::urlFor($domain, $account->local_part.'@'.$domain->domain),

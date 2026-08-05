@@ -251,4 +251,55 @@ class EmailManagementTest extends TestCase
         $this->assertStringNotContainsString('hunter2', $redacted);
         $this->assertStringContainsString("IDENTIFIED BY '***'", $redacted);
     }
+
+    /** Zero is unlimited, which is what Dovecot reads `*:bytes=0` as. */
+    public function test_a_mailbox_can_be_created_without_a_size_limit(): void
+    {
+        Queue::fake();
+        $this->withMailServer();
+
+        $user = User::factory()->create();
+        $domain = EmailDomain::create([
+            'user_id' => $user->id,
+            'domain' => 'example.com',
+            'dkim_selector' => 'mail',
+            'status' => 'active',
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('email.accounts.store', $domain->id), [
+                'local_part' => 'info',
+                'password' => 'a-long-enough-password',
+                'quota_mb' => 0,
+            ])
+            ->assertRedirect(route('email.index'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(0, EmailAccount::first()->quota_mb);
+
+        $shown = $this->actingAs($user)->get(route('email.index'))
+            ->viewData('page')['props']['domains'][0]['accounts'][0];
+
+        $this->assertSame('Unlimited', $shown['quota_label']);
+    }
+
+    /** The quota column was stored and never read; the userdb has to be SQL. */
+    public function test_dovecot_is_configured_to_enforce_the_stored_quota(): void
+    {
+        $files = (new \ReflectionClass(\App\Services\Mail\MailServerProvisioner::class))
+            ->getMethod('dovecotFiles');
+        $files->setAccessible(true);
+
+        $written = $files->invoke(app(\App\Services\Mail\MailServerProvisioner::class), 'secret');
+
+        $conf = $written['/etc/dovecot/dovecot.conf'];
+        $sql = $written['/etc/dovecot/dovecot-sql.conf.ext'];
+
+        $this->assertStringContainsString('mail_plugins = quota', $conf);
+        $this->assertStringContainsString('quota = maildir:User quota', $conf);
+        // A static userdb cannot return a per-user rule, which is why the
+        // column sat there being read by nobody.
+        $this->assertStringNotContainsString('driver = static', $conf);
+        $this->assertStringContainsString("CONCAT('*:bytes=', quota) AS quota_rule", $sql);
+    }
 }

@@ -1,5 +1,7 @@
 <script setup>
+import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import Checkbox from '@/Components/Checkbox.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -14,6 +16,13 @@ const form = useForm({
     local_part: '',
     password: '',
     quota_mb: 2048,
+});
+
+// 0 is what Dovecot reads as "no limit", so unlimited is the same field with
+// the number taken away rather than a second one to keep in step with it.
+const unlimited = computed({
+    get: () => Number(form.quota_mb) === 0,
+    set: (on) => (form.quota_mb = on ? 0 : 2048),
 });
 
 const submit = () => form.post(route('email.accounts.store', props.domain.id));
@@ -71,14 +80,28 @@ const submit = () => form.post(route('email.accounts.store', props.domain.id));
             </div>
 
             <div>
-                <InputLabel for="quota_mb" value="Quota (MB)" />
+                <InputLabel for="quota_mb" value="Mailbox size" />
+
+                <label class="mt-2 flex items-center gap-2">
+                    <Checkbox v-model:checked="unlimited" />
+                    <span class="text-sm text-slate-700">
+                        Unlimited — let this mailbox use whatever disk there is
+                    </span>
+                </label>
+
                 <TextInput
+                    v-if="!unlimited"
                     id="quota_mb"
                     type="number"
+                    min="1"
                     v-model="form.quota_mb"
-                    class="mt-1 block w-full sm:max-w-xs"
+                    class="mt-3 block w-full sm:max-w-xs"
                 />
                 <InputError class="mt-2" :message="form.errors.quota_mb" />
+                <p v-if="!unlimited" class="mt-1 text-xs text-slate-500">
+                    In megabytes. Delivery to a full mailbox is rejected, so the
+                    sender finds out rather than the mail disappearing.
+                </p>
             </div>
 
             <div

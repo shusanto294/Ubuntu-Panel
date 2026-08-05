@@ -1,9 +1,23 @@
 <script setup>
+import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import TaskConsole from '@/Components/TaskConsole.vue';
+import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link } from '@inertiajs/vue3';
 
-defineProps({ sites: Array });
+const props = defineProps({
+    sites: Array,
+    activeTask: { type: Object, default: null },
+});
+
+const busy = computed(
+    () =>
+        props.sites.some((site) => isBusyStatus(site.status)) ||
+        props.activeTask?.status === 'running',
+);
+
+useLiveRefresh(busy, ['sites', 'activeTask']);
 </script>
 
 <template>
@@ -21,6 +35,10 @@ defineProps({ sites: Array });
                 </Link>
             </div>
         </template>
+
+        <div v-if="activeTask" class="mb-6">
+            <TaskConsole :task="activeTask" title="Working" />
+        </div>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <table class="min-w-full divide-y divide-slate-200">

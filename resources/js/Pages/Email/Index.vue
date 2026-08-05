@@ -1,7 +1,9 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import TaskConsole from '@/Components/TaskConsole.vue';
+import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link, router } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -10,7 +12,19 @@ const props = defineProps({
     mailHostname: String,
     dnsAccounts: Array,
     roundcubeInstalled: Boolean,
+    activeTask: { type: Object, default: null },
 });
+
+const busy = computed(
+    () =>
+        props.domains.some(
+            (domain) =>
+                isBusyStatus(domain.status) ||
+                domain.accounts.some((account) => isBusyStatus(account.status)),
+        ) || props.activeTask?.status === 'running',
+);
+
+useLiveRefresh(busy, ['domains', 'activeTask']);
 
 const openDomain = ref(props.domains[0]?.id ?? null);
 const showDkim = ref(null);
@@ -35,12 +49,6 @@ const deleteDomain = (domain) => {
     }
 };
 
-const syncDns = (domain) =>
-    router.post(
-        route('email.domains.dns', domain.id),
-        {},
-        { preserveScroll: true },
-    );
 </script>
 
 <template>
@@ -86,6 +94,10 @@ const syncDns = (domain) =>
         </div>
 
         <div v-else class="space-y-4">
+            <div v-if="activeTask">
+                <TaskConsole :task="activeTask" title="Working" />
+            </div>
+
             <div
                 v-for="domain in domains"
                 :key="domain.id"
@@ -120,13 +132,6 @@ const syncDns = (domain) =>
                         >
                             Add mailbox
                         </Link>
-                        <button
-                            v-if="domain.manage_dns"
-                            @click="syncDns(domain)"
-                            class="rounded-xl px-3 py-1.5 text-sm text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
-                        >
-                            Sync DNS
-                        </button>
                         <button
                             @click="
                                 openDomain =
@@ -165,7 +170,7 @@ const syncDns = (domain) =>
                                     {{ account.address }}
                                 </p>
                                 <p class="text-xs text-slate-500">
-                                    quota {{ account.quota_mb }} MB
+                                    quota {{ account.quota_label }}
                                     <span
                                         v-if="account.last_error"
                                         class="text-rose-600"

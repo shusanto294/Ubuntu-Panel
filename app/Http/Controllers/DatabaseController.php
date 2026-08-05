@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Jobs\CreateDatabase;
 use App\Jobs\DeleteDatabase;
 use App\Models\Database;
@@ -39,6 +40,12 @@ class DatabaseController extends Controller
             'availableEngines' => $engines,
             'engines' => config('panel.database_engines'),
             'phpMyAdmin' => app(PhpMyAdmin::class)->isInstalled(),
+            // Whatever the queue is working on right now, so the page can show
+            // the output instead of a badge that never changes.
+            'activeTask' => ActivityLog::whereIn('type', ['database'])
+                ->where('status', 'running')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
         ]);
     }
 

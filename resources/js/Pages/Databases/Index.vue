@@ -1,17 +1,28 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import TaskConsole from '@/Components/TaskConsole.vue';
+import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link, router } from '@inertiajs/vue3';
 
-defineProps({
+const props = defineProps({
     databases: Array,
     availableEngines: Array,
     engines: Object,
     // Whether phpMyAdmin is on the machine, so the button only appears when
     // there is somewhere for it to go.
     phpMyAdmin: Boolean,
+    activeTask: { type: Object, default: null },
 });
+
+const busy = computed(
+    () =>
+        props.databases.some((database) => isBusyStatus(database.status)) ||
+        props.activeTask?.status === 'running',
+);
+
+useLiveRefresh(busy, ['databases', 'activeTask']);
 
 const revealed = ref({});
 
@@ -53,6 +64,10 @@ const reveal = async (database) => {
                 </Link>
             </div>
         </template>
+
+        <div v-if="activeTask" class="mb-6">
+            <TaskConsole :task="activeTask" title="Working" />
+        </div>
 
         <div
             class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"

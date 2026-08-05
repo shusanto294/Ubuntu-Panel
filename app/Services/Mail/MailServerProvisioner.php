@@ -430,13 +430,32 @@ class MailServerProvisioner
             disable_plaintext_auth = yes
             auth_mechanisms = plain login
 
+            # Quotas are stored per mailbox and enforced here. The userdb has to
+            # be SQL rather than static for that: a static one cannot return a
+            # per-user `quota_rule`, which is why the column sat in the database
+            # for a year being read by nobody.
+            mail_plugins = quota
+
             passdb {
               driver = sql
               args = /etc/dovecot/dovecot-sql.conf.ext
             }
             userdb {
-              driver = static
-              args = uid=vmail gid=vmail home=/var/mail/vhosts/%d/%n
+              driver = sql
+              args = /etc/dovecot/dovecot-sql.conf.ext
+            }
+
+            protocol imap {
+              mail_plugins = $mail_plugins quota imap_quota
+            }
+
+            protocol lmtp {
+              mail_plugins = $mail_plugins quota
+            }
+
+            plugin {
+              quota = maildir:User quota
+              quota_grace = 10%
             }
 
             service imap-login {
@@ -497,10 +516,17 @@ class MailServerProvisioner
             !include_try /etc/dovecot/panel-sni.conf
             CONF,
 
+            // `*:bytes=0` is how Dovecot spells "no limit", which is exactly
+            // what a zero in the quota column should mean — so unlimited needs
+            // no special case anywhere, in the query or above it.
             '/etc/dovecot/dovecot-sql.conf.ext' => sprintf(
                 "driver = mysql\nconnect = host=127.0.0.1 dbname=%s user=%s password=%s\n".
                 "default_pass_scheme = SHA512-CRYPT\n".
-                "password_query = SELECT email as user, password FROM virtual_users WHERE email='%%u'\n",
+                "password_query = SELECT email as user, password FROM virtual_users WHERE email='%%u'\n".
+                "user_query = SELECT 5000 AS uid, 5000 AS gid, ".
+                "CONCAT('/var/mail/vhosts/', SUBSTRING_INDEX(email, '@', -1), '/', SUBSTRING_INDEX(email, '@', 1)) AS home, ".
+                "CONCAT('*:bytes=', quota) AS quota_rule ".
+                "FROM virtual_users WHERE email='%%u'\n",
                 self::DB_NAME,
                 self::DB_USER,
                 $password

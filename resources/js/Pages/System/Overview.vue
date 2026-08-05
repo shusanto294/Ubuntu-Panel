@@ -5,6 +5,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import LiveUsage from '@/Components/LiveUsage.vue';
 import TaskConsole from '@/Components/TaskConsole.vue';
 import VersionCard from '@/Components/VersionCard.vue';
+import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -18,6 +19,21 @@ const props = defineProps({
     activeTask: Object,
     recentActivity: Array,
 });
+
+const busy = computed(
+    () =>
+        props.system.preparing ||
+        props.activeTask?.status === 'running' ||
+        props.sites.some((site) => isBusyStatus(site.status)),
+);
+
+useLiveRefresh(busy, [
+    'system',
+    'counts',
+    'sites',
+    'activeTask',
+    'recentActivity',
+]);
 
 const installProgress = computed(() =>
     props.counts.services_total

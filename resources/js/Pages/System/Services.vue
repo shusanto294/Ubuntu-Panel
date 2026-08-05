@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import ServiceList from '@/Components/ServiceList.vue';
 import TaskConsole from '@/Components/TaskConsole.vue';
-import { Head, router } from '@inertiajs/vue3';
+import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { Head } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
@@ -12,35 +13,17 @@ const props = defineProps({
     latestTask: Object,
 });
 
-// While the install queue is draining, keep the service rows in step.
-const preparing = computed(() => props.system.preparing);
+// While the install queue is draining, keep the rows in step. The console
+// streams its own progress; this is what moves each service from `installing`
+// to `installed` as it lands.
+const busy = computed(
+    () =>
+        props.system.preparing ||
+        props.services.some((service) => isBusyStatus(service.status)) ||
+        props.activeTask?.status === 'running',
+);
 
-let timer = null;
-
-const start = () => {
-    if (timer) return;
-    // The console streams its own progress; this is only here to move the
-    // service rows from `installing` to `installed` as each one lands.
-    timer = setInterval(
-        () =>
-            router.reload({
-                only: ['system', 'services', 'activeTask', 'latestTask'],
-                preserveScroll: true,
-            }),
-        10000,
-    );
-};
-
-const stop = () => {
-    if (timer) {
-        clearInterval(timer);
-        timer = null;
-    }
-};
-
-onMounted(() => preparing.value && start());
-onBeforeUnmount(stop);
-watch(preparing, (value) => (value ? start() : stop()));
+useLiveRefresh(busy, ['system', 'services', 'activeTask', 'latestTask']);
 </script>
 
 <template>

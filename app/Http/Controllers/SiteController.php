@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\DnsAccount;
 use App\Jobs\CreateSite;
 use App\Jobs\DeleteSite;
@@ -33,7 +34,15 @@ class SiteController extends Controller
             ->get()
             ->map(fn (Site $site) => $this->summary($site));
 
-        return Inertia::render('Sites/Index', ['sites' => $sites]);
+        return Inertia::render('Sites/Index', [
+            'sites' => $sites,
+            // Whatever the queue is working on right now, so the page can show
+            // the output instead of a badge that never changes.
+            'activeTask' => ActivityLog::whereIn('type', ['site', 'database', 'dns'])
+                ->where('status', 'running')
+                ->latest('id')
+                ->first()?->toConsolePayload(),
+        ]);
     }
 
     public function create(Request $request)
