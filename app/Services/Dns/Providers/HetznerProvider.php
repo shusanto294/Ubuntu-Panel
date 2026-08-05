@@ -44,6 +44,39 @@ class HetznerProvider extends HttpProvider
         return $zones;
     }
 
+    public function records(string $zoneId, string $zoneName): array
+    {
+        $body = $this->request('get', '/records', ['zone_id' => $zoneId, 'per_page' => 100]);
+
+        $records = [];
+
+        foreach ($body['records'] ?? [] as $record) {
+            $type = strtoupper((string) $record['type']);
+            $value = (string) ($record['value'] ?? '');
+            $priority = null;
+
+            // No priority column: "10 mail.example.com" is how Hetzner keeps
+            // an MX, so it comes apart here the same way it goes together on
+            // the way in.
+            if (in_array($type, ['MX', 'SRV'], true) && preg_match('/^(\d+)\s+(.*)$/', $value, $m)) {
+                $priority = (int) $m[1];
+                $value = $m[2];
+            }
+
+            $records[] = [
+                'id' => (string) $record['id'],
+                'type' => $type,
+                'name' => $this->absoluteName($record['name'] ?? '@', $zoneName),
+                'content' => $value,
+                'priority' => $priority,
+                'ttl' => isset($record['ttl']) ? (int) $record['ttl'] : null,
+                'proxied' => false,
+            ];
+        }
+
+        return $records;
+    }
+
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string
     {
         $name = $record->relativeName($zoneName, '@');

@@ -42,6 +42,33 @@ class LinodeProvider extends HttpProvider
         return $zones;
     }
 
+    public function records(string $zoneId, string $zoneName): array
+    {
+        $records = [];
+        $page = 1;
+
+        do {
+            $body = $this->request('get', "/domains/{$zoneId}/records", ['page' => $page, 'page_size' => 100]);
+
+            foreach ($body['data'] ?? [] as $record) {
+                $records[] = [
+                    'id' => (string) $record['id'],
+                    'type' => strtoupper((string) $record['type']),
+                    'name' => $this->absoluteName($record['name'] ?? '', $zoneName),
+                    'content' => (string) ($record['target'] ?? ''),
+                    'priority' => isset($record['priority']) ? (int) $record['priority'] : null,
+                    'ttl' => isset($record['ttl_sec']) ? (int) $record['ttl_sec'] : null,
+                    'proxied' => false,
+                ];
+            }
+
+            $pages = (int) ($body['pages'] ?? 1);
+            $page++;
+        } while ($page <= $pages);
+
+        return $records;
+    }
+
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string
     {
         $name = $record->relativeName($zoneName, '');

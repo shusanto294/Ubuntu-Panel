@@ -81,6 +81,9 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('dns-accounts/{account}', [DnsAccountController::class, 'destroy'])->name('dns.destroy');
     Route::post('dns-accounts/{account}/verify', [DnsAccountController::class, 'verify'])->name('dns.verify');
     Route::get('dns-accounts/{account}/zones', [DnsAccountController::class, 'zones'])->name('dns.zones');
+    Route::get('dns-accounts/{account}/records', [DnsAccountController::class, 'records'])->name('dns.records');
+    Route::post('dns-accounts/{account}/records', [DnsAccountController::class, 'storeRecord'])->name('dns.records.store');
+    Route::delete('dns-accounts/{account}/records', [DnsAccountController::class, 'destroyRecord'])->name('dns.records.destroy');
 
     // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

@@ -136,4 +136,92 @@ class DnsIntegrationTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'DELETE'
             && str_ends_with($request->url(), '/zones/zone-1/dns_records/record-1'));
     }
+
+    /** Adding a record from the panel, without opening the provider's own UI. */
+    public function test_a_record_can_be_written_from_the_panel(): void
+    {
+        Http::fake([
+            // Nothing of that type and name yet.
+            'api.cloudflare.com/client/v4/zones/z1/dns_records?*' => Http::response([
+                'success' => true, 'result' => [],
+            ]),
+            'api.cloudflare.com/*' => Http::response(['success' => true, 'result' => ['id' => 'new']]),
+        ]);
+
+        $user = User::factory()->create();
+        $account = $user->dnsAccounts()->create([
+            'provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf',
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('dns.records.store', $account->id), [
+                'zone_id' => 'z1',
+                'zone_name' => 'example.com',
+                'type' => 'A',
+                'name' => 'www',
+                'content' => '203.0.113.10',
+            ])
+            ->assertRedirect();
+
+        $this->assertNull(session('error'));
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'POST'
+                && str_contains($request->url(), '/zones/z1/dns_records')
+                // The label is qualified against the zone before it goes out.
+                && ($request->data()['name'] ?? null) === 'www.example.com';
+        });
+    }
+
+    /** An empty name is the apex, which is what "the domain itself" means. */
+    public function test_an_empty_name_writes_the_apex(): void
+    {
+        Http::fake([
+            'api.cloudflare.com/client/v4/zones/z1/dns_records?*' => Http::response(['success' => true, 'result' => []]),
+            'api.cloudflare.com/*' => Http::response(['success' => true, 'result' => ['id' => 'new']]),
+        ]);
+
+        $user = User::factory()->create();
+        $account = $user->dnsAccounts()->create([
+            'provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf',
+        ]);
+
+        $this->actingAs($user)->post(route('dns.records.store', $account->id), [
+            'zone_id' => 'z1',
+            'zone_name' => 'example.com',
+            'type' => 'A',
+            'name' => '',
+            'content' => '203.0.113.10',
+        ]);
+
+        Http::assertSent(fn ($request) => $request->method() !== 'POST'
+            || ($request->data()['name'] ?? null) === 'example.com');
+    }
+
+    public function test_records_belong_to_the_credential_that_owns_them(): void
+    {
+        $owner = User::factory()->create();
+        $intruder = User::factory()->create();
+
+        $account = $owner->dnsAccounts()->create([
+            'provider' => 'cloudflare', 'label' => 'Personal', 'api_token' => 'cf',
+        ]);
+
+        $this->actingAs($intruder)
+            ->get(route('dns.records', $account->id).'?zone_id=z1&zone_name=example.com')
+            ->assertForbidden();
+
+        $this->actingAs($intruder)
+            ->post(route('dns.records.store', $account->id), [
+                'zone_id' => 'z1', 'zone_name' => 'example.com',
+                'type' => 'A', 'name' => 'www', 'content' => '203.0.113.10',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($intruder)
+            ->delete(route('dns.records.destroy', $account->id), [
+                'zone_id' => 'z1', 'zone_name' => 'example.com', 'record_id' => 'r1',
+            ])
+            ->assertForbidden();
+    }
 }

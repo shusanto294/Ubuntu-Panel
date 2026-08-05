@@ -43,6 +43,25 @@ abstract class HttpProvider implements DnsProvider
     }
 
     /**
+     * A provider's relative name, made absolute.
+     *
+     * Providers spell the apex as `@`, as the empty string, or as the zone
+     * name itself, and everything else as either a label or the whole
+     * hostname. Callers get one shape.
+     */
+    protected function absoluteName(?string $name, string $zone): string
+    {
+        $zone = rtrim($zone, '.');
+        $name = rtrim((string) $name, '.');
+
+        if ($name === '' || $name === '@' || $name === $zone) {
+            return $zone;
+        }
+
+        return str_ends_with($name, '.'.$zone) ? $name : $name.'.'.$zone;
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */

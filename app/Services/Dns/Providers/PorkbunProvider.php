@@ -36,6 +36,29 @@ class PorkbunProvider extends HttpProvider
         );
     }
 
+    public function records(string $zoneId, string $zoneName): array
+    {
+        $body = $this->request('post', "/dns/retrieve/{$zoneId}");
+
+        $records = [];
+
+        foreach ($body['records'] ?? [] as $record) {
+            $records[] = [
+                'id' => (string) $record['id'],
+                'type' => strtoupper((string) $record['type']),
+                'name' => $this->absoluteName($record['name'] ?? '', $zoneName),
+                'content' => (string) ($record['content'] ?? ''),
+                'priority' => isset($record['prio']) && $record['prio'] !== '' && $record['prio'] !== '0'
+                    ? (int) $record['prio']
+                    : null,
+                'ttl' => isset($record['ttl']) ? (int) $record['ttl'] : null,
+                'proxied' => false,
+            ];
+        }
+
+        return $records;
+    }
+
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string
     {
         $body = $this->request('post', "/dns/retrieve/{$zoneId}");

@@ -44,6 +44,37 @@ class VultrProvider extends HttpProvider
         return $zones;
     }
 
+    public function records(string $zoneId, string $zoneName): array
+    {
+        $records = [];
+        $cursor = null;
+
+        do {
+            $body = $this->request('get', "/domains/{$zoneId}/records", array_filter([
+                'per_page' => 100,
+                'cursor' => $cursor,
+            ]));
+
+            foreach ($body['records'] ?? [] as $record) {
+                $records[] = [
+                    'id' => (string) $record['id'],
+                    'type' => strtoupper((string) $record['type']),
+                    'name' => $this->absoluteName($record['name'] ?? '', $zoneName),
+                    'content' => (string) ($record['data'] ?? ''),
+                    'priority' => isset($record['priority']) && (int) $record['priority'] >= 0
+                        ? (int) $record['priority']
+                        : null,
+                    'ttl' => isset($record['ttl']) ? (int) $record['ttl'] : null,
+                    'proxied' => false,
+                ];
+            }
+
+            $cursor = $body['meta']['links']['next'] ?? null;
+        } while ($cursor);
+
+        return $records;
+    }
+
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string
     {
         $name = $record->relativeName($zoneName, '');

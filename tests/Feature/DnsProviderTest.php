@@ -191,4 +191,92 @@ class DnsProviderTest extends TestCase
 
         $this->driver('linode')->verify();
     }
+
+    /**
+     * Reading records back is the same disagreement in the other direction.
+     *
+     * Every provider stores the apex under a different name and calls the value
+     * something else, and two of them keep MX priority inside the value. The
+     * panel's list has to look identical whichever one is behind it, or the
+     * page has to know which provider it is talking to — which is the thing
+     * drivers exist to stop.
+     */
+    public function test_every_provider_reports_records_in_the_same_shape(): void
+    {
+        $cases = [
+            'cloudflare' => [
+                'api.cloudflare.com/*' => ['success' => true, 'result' => [
+                    ['id' => 'r1', 'type' => 'a', 'name' => 'www.example.com', 'content' => '203.0.113.10', 'ttl' => 1, 'proxied' => true],
+                ], 'result_info' => ['total_pages' => 1]],
+            ],
+            'digitalocean' => [
+                'api.digitalocean.com/*' => ['domain_records' => [
+                    ['id' => 11, 'type' => 'A', 'name' => 'www', 'data' => '203.0.113.10', 'ttl' => 1800],
+                ]],
+            ],
+            'linode' => [
+                'api.linode.com/*' => ['data' => [
+                    ['id' => 12, 'type' => 'A', 'name' => 'www', 'target' => '203.0.113.10', 'ttl_sec' => 300],
+                ], 'pages' => 1],
+            ],
+            'vultr' => [
+                'api.vultr.com/*' => ['records' => [
+                    ['id' => 'r2', 'type' => 'A', 'name' => 'www', 'data' => '203.0.113.10', 'ttl' => 300, 'priority' => -1],
+                ]],
+            ],
+            'hetzner' => [
+                'dns.hetzner.com/*' => ['records' => [
+                    ['id' => 'r3', 'type' => 'A', 'name' => 'www', 'value' => '203.0.113.10', 'ttl' => 300],
+                ]],
+            ],
+            'porkbun' => [
+                'porkbun.com/*' => ['status' => 'SUCCESS', 'records' => [
+                    ['id' => '14', 'type' => 'A', 'name' => 'www.example.com', 'content' => '203.0.113.10', 'ttl' => '600', 'prio' => '0'],
+                ]],
+            ],
+        ];
+
+        foreach ($cases as $provider => $fake) {
+            Http::fake(array_map(fn ($body) => Http::response($body), $fake));
+
+            $records = $this->driver($provider)->records('zone-1', 'example.com');
+
+            $this->assertCount(1, $records, $provider);
+
+            $record = $records[0];
+
+            // Absolute, whatever the provider stores.
+            $this->assertSame('www.example.com', $record['name'], $provider);
+            $this->assertSame('A', $record['type'], $provider);
+            $this->assertSame('203.0.113.10', $record['content'], $provider);
+            $this->assertArrayHasKey('priority', $record, $provider);
+            $this->assertArrayHasKey('ttl', $record, $provider);
+            $this->assertIsBool($record['proxied'], $provider);
+        }
+    }
+
+    /** Cloudflare's TTL of 1 means "automatic", which is not a TTL. */
+    public function test_cloudflares_automatic_ttl_is_reported_as_no_ttl(): void
+    {
+        Http::fake(['api.cloudflare.com/*' => Http::response(['success' => true, 'result' => [
+            ['id' => 'r1', 'type' => 'A', 'name' => 'example.com', 'content' => '203.0.113.10', 'ttl' => 1],
+        ], 'result_info' => ['total_pages' => 1]])]);
+
+        $this->assertNull($this->driver('cloudflare')->records('z', 'example.com')[0]['ttl']);
+    }
+
+    /** Hetzner has no priority column: "10 mail.example.com" is an MX there. */
+    public function test_hetzner_mx_priority_comes_back_out_of_the_value(): void
+    {
+        Http::fake(['dns.hetzner.com/*' => Http::response(['records' => [
+            ['id' => 'r1', 'type' => 'MX', 'name' => '@', 'value' => '10 mail.example.com', 'ttl' => 300],
+        ]])]);
+
+        $record = $this->driver('hetzner')->records('z', 'example.com')[0];
+
+        $this->assertSame(10, $record['priority']);
+        $this->assertSame('mail.example.com', $record['content']);
+        // `@` is the apex, and the apex is the zone.
+        $this->assertSame('example.com', $record['name']);
+    }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\DnsAccount;
 use App\Services\Dns\DnsProviderRegistry;
+use App\Services\Dns\DnsRecord;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -14,6 +15,9 @@ use Throwable;
  */
 class DnsAccountController extends Controller
 {
+    /** What the record form offers. Anything else is a job for the provider. */
+    public const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'];
+
     public function index(Request $request)
     {
         return Inertia::render('System/Dns', [
@@ -23,6 +27,7 @@ class DnsAccountController extends Controller
                 ->get()
                 ->map(fn (DnsAccount $account) => $account->toPanelArray()),
             'providers' => DnsProviderRegistry::options(),
+            'recordTypes' => self::RECORD_TYPES,
         ]);
     }
 
@@ -105,7 +110,122 @@ class DnsAccountController extends Controller
         }
     }
 
-    /** JSON list of zones, used by the site creation form. */
+    /**
+     * Every record in one zone.
+     *
+     * Fetched on demand rather than stored: the provider is the record of what
+     * exists, and a copy of it in the panel's database would be wrong the first
+     * time anybody used the provider's own dashboard.
+     */
+    public function records(Request $request, DnsAccount $account)
+    {
+        $this->authorize('view', $account);
+
+        $data = $request->validate([
+            'zone_id' => ['required', 'string', 'max:255'],
+            'zone_name' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $records = $account->driver()->records($data['zone_id'], rtrim($data['zone_name'], '.'));
+
+            // Grouped the way a zone file reads: apex first, then by name, with
+            // the record types in a stable order inside each.
+            usort($records, function (array $a, array $b) use ($data) {
+                $zone = rtrim($data['zone_name'], '.');
+
+                return [$a['name'] === $zone ? 0 : 1, $a['name'], $a['type']]
+                    <=> [$b['name'] === $zone ? 0 : 1, $b['name'], $b['type']];
+            });
+
+            return response()->json(['records' => $records]);
+        } catch (Throwable $e) {
+            return response()->json(['records' => [], 'error' => $e->getMessage()], 422);
+        }
+    }
+
+    public function storeRecord(Request $request, DnsAccount $account)
+    {
+        $this->authorize('update', $account);
+
+        $data = $request->validate([
+            'zone_id' => ['required', 'string', 'max:255'],
+            'zone_name' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'string', Rule::in(self::RECORD_TYPES)],
+            // Empty means the apex, which is what people type when they mean
+            // "the domain itself".
+            'name' => ['nullable', 'string', 'max:255'],
+            'content' => ['required', 'string', 'max:2048'],
+            'priority' => ['nullable', 'integer', 'min:0', 'max:65535'],
+            'ttl' => ['nullable', 'integer', 'min:0', 'max:604800'],
+            'proxied' => ['boolean'],
+        ]);
+
+        $zone = rtrim($data['zone_name'], '.');
+        $name = trim((string) ($data['name'] ?? ''));
+
+        $record = DnsRecord::fromArray([
+            'type' => $data['type'],
+            'name' => $this->qualify($name, $zone),
+            'content' => $data['content'],
+            'priority' => $data['type'] === 'MX' ? ($data['priority'] ?? 10) : ($data['priority'] ?? null),
+            'ttl' => $data['ttl'] ?? 0,
+            'proxied' => ($data['proxied'] ?? false) && $account->driver()->supportsProxy(),
+        ]);
+
+        try {
+            $driver = $account->driver();
+
+            // Same type and name already there: overwrite rather than add a
+            // second one, which is what every provider's own UI does and what
+            // "add an A record for www" means when there is one already.
+            $existing = $driver->findRecordId($data['zone_id'], $zone, $record);
+
+            $existing
+                ? $driver->update($data['zone_id'], $zone, $existing, $record)
+                : $driver->create($data['zone_id'], $zone, $record);
+        } catch (Throwable $e) {
+            return back()->with('error', 'Could not write the record: '.$e->getMessage());
+        }
+
+        return back()->with(
+            'success',
+            $record->type.' record for '.$record->name.($existing ? ' updated.' : ' created.')
+        );
+    }
+
+    public function destroyRecord(Request $request, DnsAccount $account)
+    {
+        $this->authorize('update', $account);
+
+        $data = $request->validate([
+            'zone_id' => ['required', 'string', 'max:255'],
+            'zone_name' => ['required', 'string', 'max:255'],
+            'record_id' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $account->driver()->delete($data['zone_id'], rtrim($data['zone_name'], '.'), $data['record_id']);
+        } catch (Throwable $e) {
+            return back()->with('error', 'Could not delete the record: '.$e->getMessage());
+        }
+
+        return back()->with('success', 'Record deleted.');
+    }
+
+    /** `www` in `example.com` is `www.example.com`; nothing is the apex. */
+    protected function qualify(string $name, string $zone): string
+    {
+        $name = rtrim($name, '.');
+
+        if ($name === '' || $name === '@' || $name === $zone) {
+            return $zone;
+        }
+
+        return str_ends_with($name, '.'.$zone) ? $name : $name.'.'.$zone;
+    }
+
+    /** JSON list of zones, used by the site creation form and the DNS page. */
     public function zones(Request $request, DnsAccount $account)
     {
         $this->authorize('view', $account);

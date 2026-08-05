@@ -35,6 +35,18 @@ interface DnsProvider
      */
     public function findZone(string $hostname): ?array;
 
+    /**
+     * Every record in a zone, in the panel's own terms.
+     *
+     * Names come back fully qualified whatever the provider stores, and MX
+     * priority comes back as a number even where the provider keeps it as the
+     * first word of the value — the same normalising the write path does, in
+     * the other direction.
+     *
+     * @return array<int, array{id: string, type: string, name: string, content: string, priority: ?int, ttl: ?int, proxied: bool}>
+     */
+    public function records(string $zoneId, string $zoneName): array;
+
     /** The id of an existing record of the same type and name, if there is one. */
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string;
 

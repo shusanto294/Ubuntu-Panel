@@ -262,7 +262,14 @@ in use.
   shell history, colours, Ctrl+C, `vim`, `top` and `htop` all behave normally.
 - **DNS** — connect **Cloudflare, DigitalOcean, Linode, Vultr, Hetzner DNS** or
   **Porkbun**. Credentials are tried before they are saved and stored encrypted; records for
-  a site and its aliases are then created, updated and deleted with it. Anywhere else works
+  a site and its aliases are then created, updated and deleted with it.
+
+  The page also manages the zones themselves: pick a domain and every record in it is read
+  from the provider, with add and delete for A, AAAA, CNAME, TXT, MX, NS, SRV and CAA —
+  proxying included where the provider has it. Nothing is cached, because the provider is
+  the record of what exists and a copy here would be wrong the first time you used their
+  dashboard. Adding a type and name that already exists overwrites it rather than creating a
+  second one. Anywhere else works
   too — leave DNS management off and point an A record at the server yourself.
 
   Cloudflare gets one thing the others do not: certificates are issued over DNS-01 when a

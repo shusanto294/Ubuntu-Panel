@@ -54,6 +54,34 @@ class CloudflareProvider extends HttpProvider
         return $zones;
     }
 
+    public function records(string $zoneId, string $zoneName): array
+    {
+        $records = [];
+        $page = 1;
+
+        do {
+            $body = $this->request('get', "/zones/{$zoneId}/dns_records", ['per_page' => 100, 'page' => $page]);
+
+            foreach ($body['result'] ?? [] as $record) {
+                $records[] = [
+                    'id' => (string) $record['id'],
+                    'type' => strtoupper((string) $record['type']),
+                    'name' => rtrim((string) $record['name'], '.'),
+                    'content' => (string) ($record['content'] ?? ''),
+                    'priority' => isset($record['priority']) ? (int) $record['priority'] : null,
+                    // 1 is Cloudflare's "automatic", which is not a TTL.
+                    'ttl' => ($record['ttl'] ?? 1) > 1 ? (int) $record['ttl'] : null,
+                    'proxied' => (bool) ($record['proxied'] ?? false),
+                ];
+            }
+
+            $info = $body['result_info'] ?? [];
+            $page++;
+        } while (($info['total_pages'] ?? 1) >= $page);
+
+        return $records;
+    }
+
     public function findRecordId(string $zoneId, string $zoneName, DnsRecord $record): ?string
     {
         $body = $this->request('get', "/zones/{$zoneId}/dns_records", [
