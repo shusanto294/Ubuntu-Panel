@@ -153,6 +153,54 @@ class MailProvisionTest extends TestCase
         $this->assertStringContainsString('exit 1', $restart);
     }
 
+    /**
+     * Root-only directories are probed with sudo, or the probe lies.
+     *
+     * /etc/ssl/private is 0710 root:ssl-cert and /etc/opendkim/keys is 0700
+     * opendkim — the panel user cannot traverse either, so an unprivileged
+     * `test -f` there reports "missing" for a file that exists. Once it did:
+     * the install failed on its own certificate check with the certificate
+     * sitting in place.
+     */
+    public function test_files_the_panel_user_cannot_reach_are_probed_with_sudo(): void
+    {
+        $ran = $this->provision()->ran;
+
+        $paths = ['/etc/ssl/private/', '/etc/dovecot/', '/etc/opendkim/keys/'];
+
+        foreach ($ran as $command) {
+            foreach ($paths as $path) {
+                $this->assertStringNotContainsString(
+                    'test -f '.$path,
+                    str_replace('sudo test -f '.$path, '', $command),
+                    "{$path} was probed without sudo, which cannot see it: {$command}"
+                );
+            }
+        }
+    }
+
+    /**
+     * The install ends by taking every other-user permission off /etc/dovecot,
+     * so from then on only the privileged form of the detect probe can see the
+     * file it looks for. Without it the panel reports the mail server it just
+     * installed as missing, for as long as the machine exists.
+     */
+    public function test_mail_is_detected_through_the_directory_the_install_locks_down(): void
+    {
+        $connection = new FakeLocalConnection([
+            // Order matters: the fake matches by substring, and the privileged
+            // form contains the unprivileged one.
+            'sudo test -f /etc/dovecot/dovecot-sql.conf.ext' => ['', 0],
+            'test -f /etc/dovecot/dovecot-sql.conf.ext' => ['', 1],
+        ]);
+
+        $this->markInstalled([]);
+
+        $this->app->make(ServiceInstaller::class)->detect($connection, ['mail']);
+
+        $this->assertSame(Service::INSTALLED, Service::where('key', 'mail')->value('status'));
+    }
+
     public function test_a_failed_step_records_the_output_not_just_the_command(): void
     {
         $this->provision([

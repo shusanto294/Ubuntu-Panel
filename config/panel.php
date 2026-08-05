@@ -10,7 +10,7 @@ return [
     | Bump `version` in the same commit as every push to that branch — see
     | "Publishing an update" in the README.
     */
-    'version' => '1.7.1',
+    'version' => '1.7.2',
     'repository' => env('PANEL_REPOSITORY', 'https://github.com/shusanto294/Ubuntu-Panel'),
     'update_branch' => env('PANEL_UPDATE_BRANCH', 'main'),
     'system_user' => env('PANEL_SYSTEM_USER', 'ubuntupanel'),
@@ -180,7 +180,12 @@ return [
             // install separately is not finished installing.
             'default' => true,
             'requires' => ['mysql'],
-            'detect' => 'command -v postfix && test -f /etc/dovecot/dovecot-sql.conf.ext',
+            // `sudo` on the second half is not decoration: the install ends by
+            // taking every other-user permission off /etc/dovecot, so the panel
+            // user cannot traverse it afterwards. Without sudo this probe says
+            // "not installed" about a mail server it just finished installing,
+            // for as long as the machine exists.
+            'detect' => 'command -v postfix && sudo test -f /etc/dovecot/dovecot-sql.conf.ext',
             'version' => 'postconf -h mail_version 2>/dev/null',
         ],
     ],

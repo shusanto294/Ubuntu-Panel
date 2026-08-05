@@ -62,27 +62,34 @@ class MailManager
                     'sudo chown -R vmail:vmail /var/mail/vhosts',
                 ]),
 
+                // Every probe below runs under sudo, including the plain
+                // `test` and `grep` ones. /etc/opendkim/keys is mode 0700
+                // opendkim, so the panel user cannot traverse it: an
+                // unprivileged `test -f` on the private key answers "missing"
+                // about a key that is there, and the domain would be issued a
+                // brand new DKIM key every time it synced — invalidating the
+                // TXT record already published for it.
                 Step::make('Generate the DKIM key', [
                     'sudo mkdir -p '.escapeshellarg("/etc/opendkim/keys/{$name}"),
                     sprintf(
-                        'test -f /etc/opendkim/keys/%1$s/%2$s.private || sudo opendkim-genkey -b 2048 -d %1$s -D /etc/opendkim/keys/%1$s -s %2$s -v',
+                        'sudo test -f /etc/opendkim/keys/%1$s/%2$s.private || sudo opendkim-genkey -b 2048 -d %1$s -D /etc/opendkim/keys/%1$s -s %2$s -v',
                         $name,
                         $selector
                     ),
                     sprintf('sudo chown -R opendkim:opendkim /etc/opendkim/keys/%s', $name),
                     sprintf('sudo chmod 600 /etc/opendkim/keys/%s/%s.private', $name, $selector),
                     sprintf(
-                        'grep -q "%1$s._domainkey.%2$s" /etc/opendkim/KeyTable || echo "%1$s._domainkey.%2$s %2$s:%1$s:/etc/opendkim/keys/%2$s/%1$s.private" | sudo tee -a /etc/opendkim/KeyTable > /dev/null',
+                        'sudo grep -q "%1$s._domainkey.%2$s" /etc/opendkim/KeyTable || echo "%1$s._domainkey.%2$s %2$s:%1$s:/etc/opendkim/keys/%2$s/%1$s.private" | sudo tee -a /etc/opendkim/KeyTable > /dev/null',
                         $selector,
                         $name
                     ),
                     sprintf(
-                        'grep -q "@%2$s" /etc/opendkim/SigningTable || echo "*@%2$s %1$s._domainkey.%2$s" | sudo tee -a /etc/opendkim/SigningTable > /dev/null',
+                        'sudo grep -q "@%2$s" /etc/opendkim/SigningTable || echo "*@%2$s %1$s._domainkey.%2$s" | sudo tee -a /etc/opendkim/SigningTable > /dev/null',
                         $selector,
                         $name
                     ),
                     sprintf(
-                        'grep -q "^%1$s$" /etc/opendkim/TrustedHosts || echo "%1$s" | sudo tee -a /etc/opendkim/TrustedHosts > /dev/null',
+                        'sudo grep -q "^%1$s$" /etc/opendkim/TrustedHosts || echo "%1$s" | sudo tee -a /etc/opendkim/TrustedHosts > /dev/null',
                         $name
                     ),
                     'sudo systemctl restart opendkim',

@@ -107,9 +107,15 @@ class MailServerProvisioner
             // path, and Dovecot will not start if the file is missing. The
             // package generates it on install, but only on a machine where
             // `ssl-cert` was not already unpacked without its certificate.
+            //
+            // Every test here runs under sudo. /etc/ssl/private is mode 0710
+            // root:ssl-cert, so the panel user cannot even traverse it — an
+            // unprivileged `test -f` on the key reports "missing" for a file
+            // that is sitting right there, which is a failure the output gives
+            // you no way to tell from the real thing.
             Step::make('Make sure a TLS certificate exists', [
-                'test -f /etc/ssl/certs/ssl-cert-snakeoil.pem || sudo make-ssl-cert generate-default-snakeoil --force-overwrite',
-                'test -f /etc/ssl/certs/ssl-cert-snakeoil.pem && test -f /etc/ssl/private/ssl-cert-snakeoil.key',
+                'sudo test -f /etc/ssl/certs/ssl-cert-snakeoil.pem || sudo make-ssl-cert generate-default-snakeoil --force-overwrite',
+                'sudo test -f /etc/ssl/certs/ssl-cert-snakeoil.pem && sudo test -f /etc/ssl/private/ssl-cert-snakeoil.key',
             ]),
 
             Step::call('Write Dovecot configuration', function (LocalConnection $ssh) use ($password) {
