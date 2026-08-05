@@ -87,6 +87,12 @@ class Site extends Model
         return array_values(array_unique(array_merge([$this->domain], $this->aliases ?? [])));
     }
 
+    /** Where this site answers, in the scheme it is actually serving. */
+    public function url(): string
+    {
+        return ($this->ssl ? 'https://' : 'http://').$this->domain;
+    }
+
     public function documentRoot(): string
     {
         return rtrim($this->root_path, '/').$this->web_directory;

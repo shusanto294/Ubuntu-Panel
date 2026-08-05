@@ -329,6 +329,7 @@ class SiteController extends Controller
         $payload = [
             'id' => $site->id,
             'domain' => $site->domain,
+            'url' => $site->url(),
             'type' => $site->type,
             'type_label' => $site->typeLabel(),
             'aliases' => $site->aliases ?? [],

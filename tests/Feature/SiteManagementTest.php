@@ -227,4 +227,43 @@ class SiteManagementTest extends TestCase
 
         $this->assertSame(0, Site::count());
     }
+
+    /**
+     * The domain on the Sites page is a link to the site, in the scheme it is
+     * actually serving — an https:// link to a site whose certificate never
+     * issued is a browser warning rather than a site.
+     */
+    public function test_the_site_list_carries_a_url_in_the_scheme_it_serves(): void
+    {
+        $user = User::factory()->create();
+
+        $secure = Site::create([
+            'user_id' => $user->id,
+            'domain' => 'secure.example.com',
+            'root_path' => '/var/www/secure.example.com',
+            'php_version' => '8.3',
+            'type' => 'wordpress',
+            'ssl' => true,
+        ]);
+
+        $plain = Site::create([
+            'user_id' => $user->id,
+            'domain' => 'plain.example.com',
+            'root_path' => '/var/www/plain.example.com',
+            'php_version' => '8.3',
+            'type' => 'php',
+            'ssl' => false,
+        ]);
+
+        $this->assertSame('https://secure.example.com', $secure->url());
+        $this->assertSame('http://plain.example.com', $plain->url());
+
+        $listed = collect(
+            $this->actingAs($user)->get(route('sites.index'))
+                ->viewData('page')['props']['sites']
+        )->keyBy('domain');
+
+        $this->assertSame('https://secure.example.com', $listed['secure.example.com']['url']);
+        $this->assertSame('http://plain.example.com', $listed['plain.example.com']['url']);
+    }
 }

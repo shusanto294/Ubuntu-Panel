@@ -81,14 +81,13 @@ const destroy = () => {
                         {{ site.domain }}
                     </h2>
                     <p class="text-sm text-slate-500">
-                        {{ site.type_label }} on
-                        · {{ site.document_root }}
+                        {{ site.type_label }} · {{ site.document_root }}
                     </p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <StatusBadge :status="site.status" />
                     <a
-                        :href="`http${site.ssl ? 's' : ''}://${site.domain}`"
+                        :href="site.url"
                         target="_blank"
                         rel="noopener"
                         class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
