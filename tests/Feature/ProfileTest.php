@@ -61,38 +61,17 @@ class ProfileTest extends TestCase
         $this->assertNotNull($user->refresh()->email_verified_at);
     }
 
-    public function test_user_can_delete_their_account(): void
+    /**
+     * There is no account deletion. This panel has one administrator and it is
+     * the only way in — a button that can lock you out of the machine you are
+     * administering is not a feature, and the route is gone rather than hidden.
+     */
+    public function test_the_account_cannot_be_deleted(): void
     {
         $user = User::factory()->create();
 
-        $response = $this
-            ->actingAs($user)
-            ->delete('/profile', [
-                'password' => 'password',
-            ]);
-
-        $response
-            ->assertSessionHasNoErrors()
-            ->assertRedirect('/');
-
-        $this->assertGuest();
-        $this->assertNull($user->fresh());
-    }
-
-    public function test_correct_password_must_be_provided_to_delete_account(): void
-    {
-        $user = User::factory()->create();
-
-        $response = $this
-            ->actingAs($user)
-            ->from('/profile')
-            ->delete('/profile', [
-                'password' => 'wrong-password',
-            ]);
-
-        $response
-            ->assertSessionHasErrors('password')
-            ->assertRedirect('/profile');
+        $this->actingAs($user)->delete('/profile', ['password' => 'password'])
+            ->assertMethodNotAllowed();
 
         $this->assertNotNull($user->fresh());
     }

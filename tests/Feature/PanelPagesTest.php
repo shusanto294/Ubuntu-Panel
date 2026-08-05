@@ -66,7 +66,11 @@ class PanelPagesTest extends TestCase
             ['sites.create', [], 'Sites/Create'],
             ['sites.show', $site, 'Sites/Show'],
             ['databases.index', [], 'Databases/Index'],
+            ['databases.create', [], 'Databases/Create'],
             ['email.index', [], 'Email/Index'],
+            ['email.domains.create', [], 'Email/CreateDomain'],
+            ['email.accounts.create', $mailDomain, 'Email/CreateAccount'],
+            ['dns.create', [], 'System/DnsCreate'],
         ];
 
         foreach ($pages as [$name, $params, $component]) {

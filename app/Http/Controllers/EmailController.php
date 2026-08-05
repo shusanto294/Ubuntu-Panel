@@ -37,6 +37,29 @@ class EmailController extends Controller
         ]);
     }
 
+    /**
+     * Adding a domain, and adding a mailbox to one, are pages rather than
+     * forms wedged beside the list. Both ask enough questions to deserve the
+     * room, and neither is what you came to this section to look at.
+     */
+    public function createDomain(Request $request)
+    {
+        return Inertia::render('Email/CreateDomain', [
+            'mailConfigured' => $this->settings->boolean('mail_configured'),
+            'dnsAccounts' => $request->user()->dnsAccounts()->get()
+                ->map(fn (DnsAccount $account) => $account->toPanelArray()),
+        ]);
+    }
+
+    public function createAccount(Request $request, EmailDomain $domain)
+    {
+        $this->authorize('update', $domain);
+
+        return Inertia::render('Email/CreateAccount', [
+            'domain' => $this->summary($domain->load('accounts')),
+        ]);
+    }
+
     public function storeDomain(Request $request)
     {
         $data = $request->validate([
@@ -73,7 +96,8 @@ class EmailController extends Controller
 
         CreateEmailDomain::dispatch($record);
 
-        return back()->with('success', 'Mail domain queued. DKIM keys and DNS records are being set up.');
+        return redirect()->route('email.index')
+            ->with('success', 'Mail domain queued. DKIM keys and DNS records are being set up.');
     }
 
     public function destroyDomain(Request $request, EmailDomain $domain)
@@ -128,7 +152,7 @@ class EmailController extends Controller
 
         CreateEmailAccount::dispatch($account, $data['password']);
 
-        return back()->with('success', 'Mailbox queued for creation.');
+        return redirect()->route('email.index')->with('success', 'Mailbox queued for creation.');
     }
 
     public function destroyAccount(Request $request, EmailAccount $account)

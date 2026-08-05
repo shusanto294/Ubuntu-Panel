@@ -111,8 +111,6 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                 </form>
             </div>
 
-            <VersionCard :update="update" />
-
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Defaults for new sites</h3>
                 <p class="mt-1 text-sm text-slate-500">
@@ -164,6 +162,8 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     <PrimaryButton :disabled="defaultsForm.processing">Save</PrimaryButton>
                 </form>
             </div>
+
+            <VersionCard :update="update" />
         </div>
     </AuthenticatedLayout>
 </template>

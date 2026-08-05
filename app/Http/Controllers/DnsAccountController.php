@@ -26,6 +26,13 @@ class DnsAccountController extends Controller
         ]);
     }
 
+    public function create()
+    {
+        return Inertia::render('System/DnsCreate', [
+            'providers' => DnsProviderRegistry::options(),
+        ]);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate($this->rules());
@@ -39,7 +46,8 @@ class DnsAccountController extends Controller
         $account->verified_at = now();
         $account->save();
 
-        return back()->with('success', DnsProviderRegistry::label($account->provider).' connected.');
+        return redirect()->route('dns.index')
+            ->with('success', DnsProviderRegistry::label($account->provider).' connected.');
     }
 
     public function update(Request $request, DnsAccount $account)

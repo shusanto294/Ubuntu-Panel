@@ -43,20 +43,12 @@ const installProgress = computed(() =>
                         Node {{ system.node_version }}
                     </p>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <Link
-                        :href="route('sites.create')"
-                        class="rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
-                    >
-                        New site
-                    </Link>
-                    <Link
-                        :href="route('services.index')"
-                        class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                        Software
-                    </Link>
-                </div>
+                <Link
+                    :href="route('sites.create')"
+                    class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+                >
+                    New site
+                </Link>
             </div>
         </template>
 

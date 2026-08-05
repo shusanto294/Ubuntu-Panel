@@ -42,6 +42,23 @@ class DatabaseController extends Controller
         ]);
     }
 
+    /**
+     * The create form on a page of its own.
+     *
+     * It used to sit beside the list, taking a third of the width whether or
+     * not you were creating anything — and the list, which is the reason you
+     * came, got what was left.
+     */
+    public function create()
+    {
+        $this->installer->refresh(Service::ENGINE_KEYS);
+
+        return Inertia::render('Databases/Create', [
+            'availableEngines' => Service::availableEngines(),
+            'engines' => config('panel.database_engines'),
+        ]);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -75,7 +92,7 @@ class DatabaseController extends Controller
 
         CreateDatabase::dispatch($database);
 
-        return back()->with('success', 'Database queued for creation.');
+        return redirect()->route('databases.index')->with('success', 'Database queued for creation.');
     }
 
     public function destroy(Request $request, Database $database)

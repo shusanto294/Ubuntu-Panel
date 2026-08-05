@@ -54,6 +54,7 @@ Route::middleware(['auth'])->group(function () {
 
     // Databases
     Route::get('databases', [DatabaseController::class, 'index'])->name('databases.index');
+    Route::get('databases/create', [DatabaseController::class, 'create'])->name('databases.create');
     Route::post('databases', [DatabaseController::class, 'store'])->name('databases.store');
     Route::delete('databases/{database}', [DatabaseController::class, 'destroy'])->name('databases.destroy');
     Route::get('databases/{database}/credentials', [DatabaseController::class, 'credentials'])->name('databases.credentials');
@@ -61,6 +62,8 @@ Route::middleware(['auth'])->group(function () {
 
     // Email
     Route::get('email', [EmailController::class, 'index'])->name('email.index');
+    Route::get('email/domains/create', [EmailController::class, 'createDomain'])->name('email.domains.create');
+    Route::get('email/domains/{domain}/accounts/create', [EmailController::class, 'createAccount'])->name('email.accounts.create');
     Route::post('email/domains', [EmailController::class, 'storeDomain'])->name('email.domains.store');
     Route::delete('email/domains/{domain}', [EmailController::class, 'destroyDomain'])->name('email.domains.destroy');
     Route::post('email/domains/{domain}/dns', [EmailController::class, 'syncDomainDns'])->name('email.domains.dns');
@@ -69,6 +72,7 @@ Route::middleware(['auth'])->group(function () {
 
     // DNS credentials — Cloudflare, DigitalOcean, Linode and the rest.
     Route::get('dns', [DnsAccountController::class, 'index'])->name('dns.index');
+    Route::get('dns/create', [DnsAccountController::class, 'create'])->name('dns.create');
     Route::post('dns-accounts', [DnsAccountController::class, 'store'])->name('dns.store');
     Route::patch('dns-accounts/{account}', [DnsAccountController::class, 'update'])->name('dns.update');
     Route::delete('dns-accounts/{account}', [DnsAccountController::class, 'destroy'])->name('dns.destroy');
@@ -78,7 +82,6 @@ Route::middleware(['auth'])->group(function () {
     // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
 require __DIR__.'/auth.php';
