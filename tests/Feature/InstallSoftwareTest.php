@@ -280,4 +280,24 @@ class InstallSoftwareTest extends TestCase
             fn ($c) => str_contains($c, 'apt-get install -y')
         )));
     }
+
+    /**
+     * A freshly booted Ubuntu runs unattended-upgrades, and apt fails outright
+     * rather than waiting when something else holds the dpkg lock — which is
+     * exactly the machine somebody pastes an install command into.
+     */
+    public function test_apt_is_told_to_wait_for_the_lock_rather_than_fail(): void
+    {
+        $connection = $this->bareMachine();
+
+        $this->artisan('panel:install-services --services=base')->assertSuccessful();
+
+        $config = $connection->files['/etc/apt/apt.conf.d/99-ubuntu-panel'] ?? '';
+
+        $this->assertStringContainsString('DPkg::Lock::Timeout', $config);
+
+        // A drop-in rather than a flag, so it also covers the apt runs inside
+        // NodeSource's setup script and add-apt-repository.
+        $this->assertStringContainsString('600', $config);
+    }
 }

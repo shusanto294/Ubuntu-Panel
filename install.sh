@@ -66,11 +66,58 @@ die()  { printf '\n\033[0;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 
+# A freshly booted Ubuntu runs unattended-upgrades, which holds the dpkg lock
+# for the first few minutes of the machine's life — which is exactly when
+# somebody pastes an install command into it. apt then exits immediately with
+# "Could not get lock /var/lib/dpkg/lock-frontend", and the installer died on
+# whichever step happened to be first past the post.
+#
+# `DPkg::Lock::Timeout` makes apt wait for the lock instead of giving up. It is
+# written as a config drop-in rather than passed on the command line, so it also
+# covers the apt runs the panel does later and the ones inside NodeSource's
+# setup script and `add-apt-repository`, which are nobody's command line to
+# change. In apt since 2.0, which is 20.04 — older than anything this installer
+# supports.
+cat > /etc/apt/apt.conf.d/99-ubuntu-panel <<'APTCONF'
+// Managed by the Ubuntu Panel installer
+DPkg::Lock::Timeout "600";
+APTCONF
+
+# And wait up front, so the pause has a reason attached to it rather than being
+# ten silent minutes. `fuser` is in psmisc, which is not guaranteed to be here
+# yet — without it the timeout above still does the waiting, just quietly.
+wait_for_apt() {
+    command -v fuser >/dev/null 2>&1 || return 0
+
+    local waited=0
+
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        if [[ $waited -eq 0 ]]; then
+            log "Waiting for another package manager to finish"
+            printf '    A fresh Ubuntu installs security updates on first boot, and apt\n'
+            printf '    allows one at a time. This clears itself; nothing is wrong.\n'
+        fi
+
+        sleep 5
+        waited=$((waited + 5))
+
+        if [[ $waited -ge 900 ]]; then
+            die "Another package manager has held the dpkg lock for 15 minutes. Check with: ps aux | grep -E 'apt|dpkg|unattended'"
+        fi
+    done
+
+    [[ $waited -gt 0 ]] && ok "apt is free after ${waited}s"
+
+    return 0
+}
+
 # A third-party repository that publishes nothing for this release (an old
 # MongoDB or PHP list, say) makes apt-get update exit non-zero. That is not a
 # reason to abandon the install, so refreshing is advisory: if a package we
 # actually need is missing, the install step below says so properly.
 apt_update() {
+    wait_for_apt
+
     if ! apt-get update -qq 2>/tmp/panel-apt-update.log; then
         printf '    \033[0;33m!\033[0m some apt repositories failed to refresh (ignored):\n'
         grep -E "^(E|W):" /tmp/panel-apt-update.log | sed 's/^/      /' | head -5 || true

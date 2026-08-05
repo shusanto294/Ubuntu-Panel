@@ -277,6 +277,20 @@ class ServiceCatalog
                 Step::make('Prepare the web root', [
                     'sudo mkdir -p /var/www',
                 ]),
+
+                // apt fails outright when something else holds the dpkg lock,
+                // and on a freshly booted machine that something is
+                // unattended-upgrades. This tells apt to wait instead — as a
+                // drop-in rather than a flag, so it covers the apt runs inside
+                // NodeSource's setup script and `add-apt-repository` too.
+                Step::call('Let apt wait for the dpkg lock', function (LocalConnection $ssh) {
+                    $ssh->putFile(
+                        '/etc/apt/apt.conf.d/99-ubuntu-panel',
+                        "// Managed by Ubuntu Panel\nDPkg::Lock::Timeout \"600\";\n"
+                    );
+
+                    return 'apt will wait up to ten minutes for the lock rather than failing.';
+                }),
             ],
 
             'nginx' => [
