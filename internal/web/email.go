@@ -187,6 +187,21 @@ func (a *App) emailRepair(w http.ResponseWriter, r *http.Request) {
 	inertia.Back(w, r, "/email")
 }
 
+// emailTest sends a message through the server the way a mail client would, and
+// writes every reply to the log.
+func (a *App) emailTest(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r.Context())
+
+	if !a.Store.ServiceInstalled("mail") {
+		a.failBack(w, r, "The mail server is not installed yet — install it from Apps first.")
+		return
+	}
+
+	a.Queue.PushID(queue.MailTest, "user", user.ID)
+
+	inertia.Back(w, r, "/email")
+}
+
 // emailRetryDomain runs the domain's setup again.
 //
 // A mail domain that failed had no way back: the row exists, so adding it again

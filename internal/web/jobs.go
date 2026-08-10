@@ -133,6 +133,16 @@ func (a *App) registerJobs() {
 		return a.Mail.Configure(ctx, payload.User)
 	})
 
+	a.Queue.Handle(queue.MailTest, func(ctx context.Context, job *store.Job) error {
+		var payload userPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Mail.TestDelivery(ctx, payload.User)
+	})
+
 	a.Queue.Handle(queue.MailDomainCreate, func(ctx context.Context, job *store.Job) error {
 		var payload domainPayload
 

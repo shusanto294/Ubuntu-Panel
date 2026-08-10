@@ -89,6 +89,7 @@ func (a *App) routes() *router {
 	// Email
 	rt.get("/email", "email.index", authenticated, a.emailIndex)
 	rt.post("/email/repair", "email.repair", authenticated, a.emailRepair)
+	rt.post("/email/test", "email.test", authenticated, a.emailTest)
 	rt.get("/email/domains/create", "email.domains.create", authenticated, a.emailCreateDomain)
 	rt.post("/email/domains", "email.domains.store", authenticated, a.emailStoreDomain)
 	rt.get("/email/domains/{domain}", "email.domains.show", authenticated, a.emailShowDomain)

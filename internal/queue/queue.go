@@ -37,6 +37,7 @@ const (
 	MailAccountCreate = "mail.account.create"
 	MailAccountDelete = "mail.account.delete"
 	MailConfigure     = "mail.configure"
+	MailTest          = "mail.test"
 	MailDomainDNS     = "mail.domain.dns"
 
 	PanelDomain = "panel.domain"
