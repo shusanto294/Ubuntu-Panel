@@ -1,7 +1,11 @@
 node_modules/
-internal/assets/public/build/
 dist/
-ubuntu-panel
+
+# The built frontend and the built binary. Anchored with a leading slash: an
+# unanchored `ubuntu-panel` also matches the cmd/ubuntu-panel source directory.
+/internal/assets/public/build/
+/ubuntu-panel
+
 *.db
 *.db-shm
 *.db-wal
