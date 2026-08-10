@@ -15,7 +15,16 @@ import (
 // dovecotHash produces the SHA512-CRYPT hash Dovecot stores.
 //
 // `doveadm pw` reads the password from stdin rather than from argv, so it never
-// appears in `ps`.
+// appears in `ps` — but it asks for it *twice*, enter and retype. Given it once
+// the second read hits end of file, and rather than failing it prints
+//
+//	Error: Password mismatch
+//
+// on standard output and exits zero. That sentence was written into the
+// password column as though it were the hash, so every mailbox the panel
+// created was refused at login with the right password and the table looked
+// fine at a glance. It is fed twice now, and the answer is checked for the
+// shape of a hash before anything stores it.
 func dovecotHash(password string) (string, error) {
 	staged, err := os.CreateTemp("", "ubuntu-panel-pw-*")
 	if err != nil {
@@ -27,7 +36,7 @@ func dovecotHash(password string) (string, error) {
 
 	staged.Chmod(0o600)
 
-	if _, err := staged.WriteString(password); err != nil {
+	if _, err := staged.WriteString(password + "\n" + password + "\n"); err != nil {
 		staged.Close()
 		return "", errors.New("could not stage the password")
 	}
@@ -36,16 +45,37 @@ func dovecotHash(password string) (string, error) {
 
 	result := proc.Run("sudo doveadm pw -s SHA512-CRYPT < "+proc.Quote(name), time.Minute)
 
-	if result.OK() && result.Output != "" {
-		return strings.TrimSpace(result.Output), nil
+	hash := strings.TrimSpace(result.Output)
+
+	if !result.OK() || hash == "" {
+		if hash == "" {
+			hash = "no output"
+		}
+
+		return "", fmt.Errorf("doveadm could not hash the password: %s", hash)
 	}
 
-	output := result.Output
-	if output == "" {
-		output = "no output"
+	if !isPasswordHash(hash) {
+		// Whatever this is, it is not a hash, and storing it is how a mailbox
+		// ends up with a password nothing can ever match.
+		return "", fmt.Errorf("doveadm did not return a password hash, it returned %q", hash)
 	}
 
-	return "", fmt.Errorf("doveadm could not hash the password: %s", output)
+	return hash, nil
+}
+
+// isPasswordHash reports whether doveadm handed back something Dovecot will
+// treat as a hash: the scheme it was asked for, then crypt's own prefix.
+func isPasswordHash(hash string) bool {
+	if !strings.HasPrefix(hash, "{SHA512-CRYPT}") {
+		return false
+	}
+
+	if strings.ContainsAny(hash, " \t") {
+		return false
+	}
+
+	return strings.HasPrefix(strings.TrimPrefix(hash, "{SHA512-CRYPT}"), "$6$")
 }
 
 // authTest asks Dovecot whether this mailbox can log in, and puts its answer in

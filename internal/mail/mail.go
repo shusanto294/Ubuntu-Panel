@@ -147,6 +147,78 @@ func (s *Service) EnsureSchema() error {
 	return runSQL(script)
 }
 
+// resyncMailboxes writes every mailbox the panel knows about into the mail
+// server's tables again, hashed correctly.
+func (s *Service) resyncMailboxes(runner *tasks.Runner) (string, error) {
+	ctx := context.Background()
+
+	domains, err := s.Store.EmailDomains(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	written, failed := 0, 0
+
+	for _, domain := range domains {
+		script := fmt.Sprintf("INSERT IGNORE INTO %s.virtual_domains (name) VALUES (%s);\n",
+			mailDB, sqlQuote(domain.Domain))
+
+		accounts, err := s.Store.EmailAccounts(ctx, domain.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, account := range accounts {
+			address := account.Address(domain.Domain)
+
+			if account.Password == "" {
+				// Nothing stored to hash — the application key changed, or the
+				// mailbox predates the panel keeping one.
+				runner.Writef("%s: the panel has no copy of this password, so it cannot be "+
+					"rewritten. Delete the mailbox and add it again.\n", address)
+
+				failed++
+
+				continue
+			}
+
+			hash, err := dovecotHash(account.Password)
+			if err != nil {
+				runner.Writef("%s: %v\n", address, err)
+
+				failed++
+
+				continue
+			}
+
+			script += fmt.Sprintf(
+				"INSERT INTO %s.virtual_users (domain_id, email, password, quota_bytes) "+
+					"SELECT id, %s, %s, %d FROM %s.virtual_domains WHERE name = %s "+
+					"ON DUPLICATE KEY UPDATE password = VALUES(password), "+
+					"quota_bytes = VALUES(quota_bytes);\n",
+				mailDB, sqlQuote(address), sqlQuote(hash),
+				int64(account.QuotaMB)*1024*1024, mailDB, sqlQuote(domain.Domain))
+
+			written++
+		}
+
+		if err := runSQL(script); err != nil {
+			return "", err
+		}
+	}
+
+	if written == 0 && failed == 0 {
+		return "There are no mailboxes to rewrite yet.", nil
+	}
+
+	if failed > 0 {
+		return fmt.Sprintf("Rewrote %d mailbox(es); %d could not be rewritten, named above.",
+			written, failed), nil
+	}
+
+	return fmt.Sprintf("Rewrote %d mailbox(es) with a freshly hashed password.", written), nil
+}
+
 // diagnose prints the state of everything a login goes through.
 func (s *Service) diagnose(runner *tasks.Runner) (string, error) {
 	// The password databases, in the order Dovecot tries them. A `driver = pam`
@@ -439,6 +511,14 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 		"sudo systemctl restart opendkim || true")
 
 	list.Add("Restart Postfix", "sudo systemctl restart postfix")
+
+	// Every mailbox rewritten from the panel's own copy of its password.
+	//
+	// A mailbox whose stored hash is wrong is refused at login and looks
+	// perfectly fine in the table, so repairing the mail server means repairing
+	// them: the panel has the passwords, hashing is cheap, and writing a
+	// correct hash over a correct hash costs nothing.
+	list.AddFn("Rewrite the mailbox passwords", s.resyncMailboxes).Optional()
 
 	// What the login path actually looks like on this machine, written into the
 	// console where the operator already is.
