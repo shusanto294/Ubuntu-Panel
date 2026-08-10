@@ -153,3 +153,55 @@ func account(provider string) *store.DNSAccount {
 		APISecret: "secret",
 	}
 }
+
+// Deleting a mail domain has to take its records with it, including the ones
+// published before the panel recorded their ids. Matching is exact on purpose:
+// a verification TXT somebody else put at the apex is not the panel's to
+// remove.
+func TestOnlyThePanelsOwnMailRecordsAreMatched(t *testing.T) {
+	domain := &store.EmailDomain{Domain: "example.com", DKIMSelector: "mail"}
+
+	mine := []Record{
+		{Type: "A", Name: "mail.example.com", Content: "203.0.113.10"},
+		{Type: "MX", Name: "example.com", Content: "mail.example.com", Priority: 10},
+		{Type: "MX", Name: "example.com", Content: "mail.example.com.", Priority: 10},
+		{Type: "TXT", Name: "example.com", Content: "v=spf1 a:mail.example.com ~all"},
+		{Type: "TXT", Name: "_dmarc.example.com", Content: "v=DMARC1; p=none"},
+		{Type: "TXT", Name: "mail._domainkey.example.com", Content: "v=DKIM1; k=rsa; p=MIIB"},
+	}
+
+	for _, record := range mine {
+		if !ours(record, domain) {
+			t.Errorf("%s %s %q was not recognised as the panel's", record.Type, record.Name, record.Content)
+		}
+	}
+
+	theirs := []Record{
+		{Type: "A", Name: "example.com", Content: "203.0.113.10"},
+		{Type: "A", Name: "www.example.com", Content: "203.0.113.10"},
+		{Type: "MX", Name: "example.com", Content: "aspmx.l.google.com", Priority: 1},
+		{Type: "TXT", Name: "example.com", Content: "google-site-verification=abc"},
+		{Type: "TXT", Name: "example.com", Content: "v=spf1 include:_spf.google.com ~all"},
+		{Type: "TXT", Name: "_dmarc.example.com", Content: "some other note"},
+		{Type: "TXT", Name: "selector2._domainkey.example.com", Content: "v=DKIM1; k=rsa; p=ZZZ"},
+		{Type: "CNAME", Name: "mail.example.com", Content: "elsewhere.example"},
+	}
+
+	for _, record := range theirs {
+		if ours(record, domain) {
+			t.Errorf("%s %s %q would have been deleted and is not the panel's",
+				record.Type, record.Name, record.Content)
+		}
+	}
+}
+
+// A selector other than the default still has its key removed.
+func TestADKIMRecordIsMatchedOnTheDomainsOwnSelector(t *testing.T) {
+	domain := &store.EmailDomain{Domain: "example.com", DKIMSelector: "panel2026"}
+
+	record := Record{Type: "TXT", Name: "panel2026._domainkey.example.com", Content: "v=DKIM1; p=x"}
+
+	if !ours(record, domain) {
+		t.Fatal("the domain's own DKIM record was not recognised")
+	}
+}

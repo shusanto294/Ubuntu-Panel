@@ -29,6 +29,7 @@
 #   PANEL_PORT=8088          loopback port nginx proxies to
 #   PANEL_SWAP=1             create a swapfile if the box has none and < 1.5 GB
 #   PANEL_SKIP_APT=0         skip the apt dependency step
+#   PANEL_INSTALL_APPS=all   what a first start installs: all | core | none
 #   PANEL_FROM_SOURCE=0      1 forces a source build even inside a release
 #   NO_COLOR=1               plain output
 #
@@ -866,6 +867,13 @@ else
     conf_ensure PANEL_WORKERS   "2"
 fi
 
+# What a first start puts on the machine by itself. `all` is every app on the
+# Apps page, which is what makes a fresh server ready to host a site without
+# anybody installing anything first; `core` is only what a site cannot run
+# without; `none` leaves it to you. It happens once, on a panel that has never
+# installed an app.
+conf_ensure PANEL_INSTALL_APPS  "${PANEL_INSTALL_APPS:-all}"
+
 conf_ensure PANEL_REPOSITORY    "https://github.com/shusanto294/Ubuntu-Panel-Go"
 conf_ensure PANEL_UPDATE_BRANCH "main"
 
@@ -1190,6 +1198,19 @@ printf '    %-13s %s\n' "URL" "$PANEL_URL"
 
 if [ "$MODE" = install ]; then
     printf '    %-13s open the URL — it will ask you to create the first one\n' "Account"
+
+    APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
+
+    case "${APPS_CHOICE:-all}" in
+        none)
+            printf '    %-13s nothing installed yet — pick what you need on the Apps page\n' "Apps"
+            ;;
+        *)
+            printf '    %-13s installing %s in the background; watch it on the Apps page\n' \
+                "Apps" "${APPS_CHOICE:-all}"
+            printf '    %-13s nginx, PHP, MariaDB and the rest land over the next few minutes\n' ""
+            ;;
+    esac
 fi
 
 printf '\n'

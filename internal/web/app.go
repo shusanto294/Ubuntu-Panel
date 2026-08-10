@@ -80,7 +80,14 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 // Start brings up the background workers. Called after the server is wired but
 // before it listens, so a deployment interrupted by a restart resumes as soon
 // as the panel is back.
-func (a *App) Start(ctx context.Context) { a.Queue.Start(ctx) }
+func (a *App) Start(ctx context.Context) {
+	a.Queue.Start(ctx)
+
+	// A fresh machine installs what a server needs without being asked. The
+	// work goes on the queue that has just started, so the panel is answering
+	// while it runs.
+	go a.BootstrapApps(ctx)
+}
 
 // Stop lets the workers finish.
 func (a *App) Stop() { a.Queue.Stop() }

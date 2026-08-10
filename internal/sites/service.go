@@ -12,6 +12,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
 	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
 )
 
@@ -293,6 +294,25 @@ func (s *Service) requestCertificate(ctx context.Context, siteID int64) func(*ta
 
 		for _, hostname := range site.Hostnames() {
 			domains.WriteString(" -d " + proc.Quote(hostname))
+		}
+
+		// The record was published a moment ago, and Let's Encrypt is about to
+		// ask a resolver that has not heard about it. Waiting turns "certbot
+		// did not issue a certificate" into a certificate a minute later.
+		expected := system.PublicIP()
+		resolution := system.WaitForHostname(ctx, site.Domain, expected, 2*time.Minute)
+
+		switch {
+		case len(resolution.Addresses) == 0:
+			return "", fmt.Errorf(
+				"%s does not resolve yet, so no certificate was requested — issuing against a "+
+					"hostname nothing answers for fails every time. Point it at %s, then redeploy.",
+				site.Domain, expected)
+
+		case !resolution.Matches:
+			runner.Writef("%s resolves to %s rather than %s. Trying anyway: a proxy in front "+
+				"passes the challenge through, and a stale record does not.\n",
+				site.Domain, strings.Join(resolution.Addresses, ", "), expected)
 		}
 
 		email := "admin@" + site.Domain

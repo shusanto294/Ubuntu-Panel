@@ -20,7 +20,7 @@ const (
 
 	// Version is stamped into the page payload and reported by --version.
 	// Bumped in the same commit as the tag that builds a release from it.
-	Version = "2.0.4"
+	Version = "2.1.0"
 )
 
 // Config is the whole of the panel's settings. Every field has a working
@@ -47,6 +47,13 @@ type Config struct {
 
 	// Workers is how many queue workers run deployments and installs.
 	Workers int
+
+	// InstallApps is what a first start puts on the machine by itself:
+	// `all` (everything in the catalogue), `core` (only what a site cannot run
+	// without), or `none`. It happens once, on a panel that has never installed
+	// anything, so re-running it after somebody removed an app does not put it
+	// back.
+	InstallApps string
 
 	// Debug serves the frontend from disk and logs every request. Off in
 	// production, where the embedded build is both faster and immutable.
@@ -88,6 +95,7 @@ func Load(path string) (*Config, error) {
 		Repository:   get("PANEL_REPOSITORY", "https://github.com/shusanto294/Ubuntu-Panel-Go"),
 		UpdateBranch: get("PANEL_UPDATE_BRANCH", "main"),
 		AppKey:       get("PANEL_APP_KEY", ""),
+		InstallApps:  strings.ToLower(get("PANEL_INSTALL_APPS", "all")),
 		Debug:        truthy(get("PANEL_DEBUG", "")),
 	}
 

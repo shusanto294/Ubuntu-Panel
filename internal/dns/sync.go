@@ -200,6 +200,18 @@ func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain
 }
 
 // RemoveForMail takes a mail domain's records back down.
+//
+// The ids the panel recorded when it published them are the first pass. The
+// second is by name, type and content, because a domain set up before the panel
+// recorded ids — or by hand, or by an earlier panel — has records that are
+// plainly the panel's and no id to find them by. Deleting a mail domain and
+// leaving its MX behind means mail for it keeps arriving at a server that no
+// longer accepts it.
+//
+// Nothing is matched loosely. A TXT at the apex is only removed when it is an
+// SPF record naming this server's mail host; an MX only when it points at it.
+// Somebody else's verification record at the same name is not the panel's to
+// delete.
 func RemoveForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain) (string, error) {
 	if domain.DNSAccountID <= 0 {
 		return "No DNS records were published for this domain.", nil
@@ -219,14 +231,82 @@ func RemoveForMail(ctx context.Context, st *store.Store, domain *store.EmailDoma
 
 	var log strings.Builder
 
+	removed := map[string]bool{}
+
 	for name, id := range domain.RecordIDs() {
 		if err := client.DeleteRecord(zoneID, zoneName, id); err != nil {
 			fmt.Fprintf(&log, "%s: %v\n", name, err)
 			continue
 		}
 
+		removed[id] = true
+
 		fmt.Fprintf(&log, "%s removed\n", name)
 	}
 
+	records, err := client.Records(zoneID, zoneName)
+	if err != nil {
+		// The stored ids are gone either way; a listing the provider would not
+		// give up is not a reason to fail the deletion.
+		fmt.Fprintf(&log, "Could not list the zone to check for leftovers: %v\n", err)
+
+		return log.String(), nil
+	}
+
+	for _, record := range records {
+		if removed[record.ID] || !ours(record, domain) {
+			continue
+		}
+
+		if err := client.DeleteRecord(zoneID, zoneName, record.ID); err != nil {
+			fmt.Fprintf(&log, "%s %s: %v\n", record.Type, record.Name, err)
+			continue
+		}
+
+		fmt.Fprintf(&log, "%s %s removed\n", record.Type, record.Name)
+	}
+
+	st.SetEmailDomainDNS(domain.ID, "")
+
+	if log.Len() == 0 {
+		return "No DNS records for this domain were found at the provider.", nil
+	}
+
 	return log.String(), nil
+}
+
+// ours reports whether a record is one the panel publishes for a mail domain.
+func ours(record Record, domain *store.EmailDomain) bool {
+	host := "mail." + domain.Domain
+	apex := domain.Domain
+
+	selector := domain.DKIMSelector
+	if selector == "" {
+		selector = "mail"
+	}
+
+	switch record.Type {
+	case "A", "AAAA":
+		return record.Name == host
+
+	case "MX":
+		return record.Name == apex && strings.TrimRight(record.Content, ".") == host
+
+	case "TXT":
+		content := strings.Trim(record.Content, "\"")
+
+		if record.Name == apex {
+			return strings.HasPrefix(content, "v=spf1") && strings.Contains(content, host)
+		}
+
+		if record.Name == "_dmarc."+apex {
+			return strings.HasPrefix(content, "v=DMARC1")
+		}
+
+		if record.Name == selector+"._domainkey."+apex {
+			return strings.HasPrefix(content, "v=DKIM1")
+		}
+	}
+
+	return false
 }

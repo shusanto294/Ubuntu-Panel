@@ -162,9 +162,11 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 		}).Optional()
 	}
 
-	// Optional: a mail domain whose webmail could not be set up is still a
-	// working mail domain, reachable by any IMAP client.
-	list.AddFn("Set up webmail", s.configureWebmail(ctx, domainID)).Optional()
+	// Optional, both of them: a mail domain whose webmail or certificate could
+	// not be set up is still a working mail domain, reachable by any IMAP
+	// client.
+	list.AddFn("Serve mail."+domain.Domain, s.serveMailHost(ctx, domainID)).Optional()
+	list.AddFn("Get a certificate for mail."+domain.Domain, s.secureMailHost(ctx, domainID)).Optional()
 
 	if tasks.New(s.Store, taskID).Run(list) {
 		s.Store.SetEmailDomainStatus(domainID, "active", "")
@@ -213,7 +215,11 @@ func (s *Service) DeleteDomain(ctx context.Context, domainID int64) error {
 			"'/etc/nginx/sites-available/webmail-%[1]s'; "+
 			"sudo nginx -t && sudo systemctl reload nginx", domain.Domain)).Optional()
 
-	if domain.ManageDNS && domain.DNSAccountID > 0 {
+	// Not gated on manage_dns: a domain whose DNS management was switched off
+	// after setup still has the records the panel published, and leaving an MX
+	// behind means mail for a domain this server no longer accepts keeps
+	// arriving at it.
+	if domain.DNSAccountID > 0 {
 		list.AddFn("Remove the mail DNS records", func(runner *tasks.Runner) (string, error) {
 			return dns.RemoveForMail(ctx, s.Store, domain)
 		}).Optional()
@@ -297,7 +303,7 @@ func (s *Service) webmailConfig(host string) error {
 // carries the ACME challenge and redirects; 443 answers from the first run, on
 // the self-signed pair until certbot has been — exactly as a site with no
 // certificate yet does.
-func webmailVhost(host, php string, tls bool) string {
+func webmailVhost(host, php string, tls, roundcube bool) string {
 	cert := sites.DefaultCert + ".crt"
 	key := sites.DefaultCert + ".key"
 
@@ -308,6 +314,34 @@ func webmailVhost(host, php string, tls bool) string {
 
 	if php == "" {
 		php = "8.3"
+	}
+
+	// Without Roundcube there is nothing to serve, but the hostname still has
+	// to answer: it is what the MX points at and what the certificate is for,
+	// and a 443 that nothing listens on lands on the catch-all with a
+	// self-signed certificate — which is what "mail.example.com has no SSL"
+	// actually is.
+	body := "    location / { return 200 \"Webmail is not installed on this server.\\n\"; }\n" +
+		"    default_type text/plain;\n"
+
+	if roundcube {
+		body = fmt.Sprintf(
+			"    root %s;\n"+
+				"    index index.php;\n"+
+				"    client_max_body_size 64M;\n"+
+				"\n"+
+				"    location / { try_files $uri $uri/ /index.php$is_args$args; }\n"+
+				"\n"+
+				"    location ~ ^/(config|temp|logs|bin|SQL|installer)/ { deny all; }\n"+
+				"    location ~ /\\.(?!well-known).* { deny all; }\n"+
+				"\n"+
+				"    location ~ \\.php$ {\n"+
+				"        include snippets/fastcgi-php.conf;\n"+
+				"        fastcgi_pass unix:/run/php/php%s-fpm.sock;\n"+
+				"        fastcgi_read_timeout 300;\n"+
+				"        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;\n"+
+				"        fastcgi_param HTTPS $panel_https;\n"+
+				"    }\n", roundcubeRoot, php)
 	}
 
 	return fmt.Sprintf(
@@ -334,28 +368,13 @@ func webmailVhost(host, php string, tls bool) string {
 			"    ssl_certificate_key %s;\n"+
 			"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
 			"\n"+
-			"    root %s;\n"+
-			"    index index.php;\n"+
-			"    client_max_body_size 64M;\n"+
-			"\n"+
 			"    access_log /var/log/nginx/%s-access.log;\n"+
 			"    error_log  /var/log/nginx/%s-error.log;\n"+
 			"\n"+
-			"    location / { try_files $uri $uri/ /index.php$is_args$args; }\n"+
-			"\n"+
-			"    location ~ ^/(config|temp|logs|bin|SQL|installer)/ { deny all; }\n"+
-			"    location ~ /\\.(?!well-known).* { deny all; }\n"+
-			"\n"+
-			"    location ~ \\.php$ {\n"+
-			"        include snippets/fastcgi-php.conf;\n"+
-			"        fastcgi_pass unix:/run/php/php%s-fpm.sock;\n"+
-			"        fastcgi_read_timeout 300;\n"+
-			"        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;\n"+
-			"        fastcgi_param HTTPS $panel_https;\n"+
-			"    }\n"+
+			"%s"+
 			"}\n",
 		config.Name, host, host, sites.ACMEWebroot, host, cert, key,
-		roundcubeRoot, host, host, php)
+		host, host, body)
 }
 
 // webmailPHPVersion decides which PHP runs the webmail.
@@ -390,60 +409,72 @@ func webmailPHPVersion(runner *tasks.Runner) (string, error) {
 	return "8.3", nil
 }
 
-// configureWebmail takes an unpacked Roundcube to a login page on
-// https://mail.<domain>.
+// serveMailHost puts a vhost behind mail.<domain>, whether or not Roundcube is
+// there to fill it.
+//
+// The hostname is what the MX points at, what mail clients connect to and what
+// the certificate is issued for, so it has to answer on both ports from the
+// first setup. Serving it only when webmail happened to be installed is what
+// left https://mail.<domain> landing on the catch-all behind the self-signed
+// pair — a certificate warning for a mail domain that was otherwise set up
+// correctly.
 //
 // Every piece here is written to be rewritten, so this runs again on every
 // domain setup and lands in the same place.
-func (s *Service) configureWebmail(ctx context.Context, domainID int64) func(*tasks.Runner) (string, error) {
+func (s *Service) serveMailHost(ctx context.Context, domainID int64) func(*tasks.Runner) (string, error) {
 	return func(runner *tasks.Runner) (string, error) {
-		if !s.Store.ServiceInstalled("roundcube") {
-			return "Roundcube is not installed, so there is no webmail to serve. " +
-				"Install it from Apps and set this domain up again.", nil
-		}
-
 		domain, err := s.Store.FindEmailDomain(ctx, domainID)
 		if err != nil {
 			return "", errors.New("mail domain vanished")
 		}
 
 		host := domain.WebmailHost()
+		roundcube := s.Store.ServiceInstalled("roundcube")
 
 		var log strings.Builder
 
-		if err := s.webmailDatabase(); err != nil {
-			return "", err
-		}
+		php := ""
 
-		// Roundcube ships its schema as a file, and it is a CREATE script
-		// rather than an upgrade one — so it is imported only when the tables
-		// are absent.
-		if err := runner.Must(fmt.Sprintf(
-			"sudo mysql %[1]s -e 'SELECT 1 FROM users LIMIT 1' >/dev/null 2>&1 || "+
-				"sudo mysql %[1]s < %[2]s/SQL/mysql.initial.sql", roundcubeDB, roundcubeRoot),
-			2*time.Minute); err != nil {
-			return "", err
-		}
+		if roundcube {
+			if err := s.webmailDatabase(); err != nil {
+				return "", err
+			}
 
-		// Roundcube writes to these two and nothing else.
-		if err := runner.Must(fmt.Sprintf(
-			"sudo mkdir -p %[1]s/temp %[1]s/logs && sudo chown -R www-data:www-data %[1]s/temp %[1]s/logs",
-			roundcubeRoot), time.Minute); err != nil {
-			return "", err
-		}
+			// Roundcube ships its schema as a file, and it is a CREATE script
+			// rather than an upgrade one — so it is imported only when the
+			// tables are absent.
+			if err := runner.Must(fmt.Sprintf(
+				"sudo mysql %[1]s -e 'SELECT 1 FROM users LIMIT 1' >/dev/null 2>&1 || "+
+					"sudo mysql %[1]s < %[2]s/SQL/mysql.initial.sql", roundcubeDB, roundcubeRoot),
+				2*time.Minute); err != nil {
+				return "", err
+			}
 
-		if err := s.webmailConfig(domain.Domain); err != nil {
-			return "", err
-		}
+			// Roundcube writes to these two and nothing else.
+			if err := runner.Must(fmt.Sprintf(
+				"sudo mkdir -p %[1]s/temp %[1]s/logs && "+
+					"sudo chown -R www-data:www-data %[1]s/temp %[1]s/logs",
+				roundcubeRoot), time.Minute); err != nil {
+				return "", err
+			}
 
-		php, err := webmailPHPVersion(runner)
-		if err != nil {
-			return "", err
+			if err := s.webmailConfig(domain.Domain); err != nil {
+				return "", err
+			}
+
+			if php, err = webmailPHPVersion(runner); err != nil {
+				return "", err
+			}
+		} else {
+			log.WriteString("Roundcube is not installed, so " + host + " answers with a note " +
+				"rather than a webmail. Install it from Apps and set this domain up again.\n")
 		}
 
 		available := "/etc/nginx/sites-available/webmail-" + domain.Domain
 
-		if err := proc.PutFile(available, webmailVhost(host, php, false), true); err != nil {
+		// The plain form first: nginx will not load a vhost naming a
+		// certificate that has not been issued.
+		if err := proc.PutFile(available, webmailVhost(host, php, false, roundcube), true); err != nil {
 			return "", err
 		}
 
@@ -454,43 +485,90 @@ func (s *Service) configureWebmail(ctx context.Context, domainID int64) func(*ta
 			return "", err
 		}
 
-		fmt.Fprintf(&log, "Webmail is being served at https://%s.\n", host)
+		fmt.Fprintf(&log, "%s is being served.\n", host)
 
-		// The certificate. Failing to get one leaves a working webmail behind a
-		// browser warning rather than no webmail at all, so nothing below is
-		// fatal.
+		return log.String(), nil
+	}
+}
+
+// secureMailHost gets a certificate for mail.<domain> and puts everything that
+// speaks TLS behind it.
+//
+// Optional, in the sense that failing leaves a working mail domain behind a
+// browser warning rather than no mail domain at all.
+func (s *Service) secureMailHost(ctx context.Context, domainID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		domain, err := s.Store.FindEmailDomain(ctx, domainID)
+		if err != nil {
+			return "", errors.New("mail domain vanished")
+		}
+
+		host := domain.WebmailHost()
+		available := "/etc/nginx/sites-available/webmail-" + domain.Domain
+		roundcube := s.Store.ServiceInstalled("roundcube")
+
+		php := ""
+		if roundcube {
+			php, _ = webmailPHPVersion(runner)
+		}
+
+		var log strings.Builder
+
 		if !proc.Ok("command -v certbot >/dev/null 2>&1") {
-			log.WriteString("Certbot is not installed, so it is on a self-signed certificate. " +
-				"Install Certbot from Apps and set this domain up again.\n")
-
 			s.webmailSmokeTest(runner, host)
 
-			return log.String(), nil
+			return "Certbot is not installed, so " + host + " stays on the self-signed " +
+				"certificate. Install Certbot from Apps and set this domain up again.", nil
+		}
+
+		// The A record was published a moment ago and Let's Encrypt is about to
+		// ask a resolver that has not heard about it yet. Waiting here is the
+		// difference between a certificate and an error about a challenge that
+		// says nothing about DNS.
+		expected := system.PublicIP()
+		resolution := system.WaitForHostname(ctx, host, expected, 2*time.Minute)
+
+		switch {
+		case len(resolution.Addresses) == 0:
+			s.webmailSmokeTest(runner, host)
+
+			return fmt.Sprintf(
+				"%s does not resolve yet, so no certificate was requested — issuing against a "+
+					"hostname nothing answers for fails every time. Add an A record pointing it "+
+					"at %s, then set this domain up again.", host, expected), nil
+
+		case !resolution.Matches:
+			fmt.Fprintf(&log, "%s resolves to %s rather than %s. Trying anyway: a proxy in "+
+				"front passes the challenge through, and a stale record does not.\n",
+				host, strings.Join(resolution.Addresses, ", "), expected)
+
+		default:
+			fmt.Fprintf(&log, "%s resolves to this server.\n", host)
 		}
 
 		runner.Exec(fmt.Sprintf(
-			"sudo certbot certonly --webroot -w %s -d '%s' --non-interactive --agree-tos "+
-				"--email 'admin@%s' --keep-until-expiring --no-eff-email 2>&1",
-			sites.ACMEWebroot, host, domain.Domain), 10*time.Minute)
+			"sudo certbot certonly --webroot -w %s -d %s --non-interactive --agree-tos "+
+				"--email %s --keep-until-expiring --no-eff-email 2>&1",
+			sites.ACMEWebroot, proc.Quote(host), proc.Quote("admin@"+domain.Domain)), 10*time.Minute)
 
-		if !proc.Ok(fmt.Sprintf("sudo test -f /etc/letsencrypt/live/%s/fullchain.pem", host)) {
+		if !proc.Ok("sudo test -f " + proc.Quote("/etc/letsencrypt/live/"+host+"/fullchain.pem")) {
 			fmt.Fprintf(&log,
 				"No certificate was issued for %s, so it stays on the self-signed one. "+
-					"Check that %s resolves to this server and is not proxied by a CDN.\n", host, host)
+					"The certbot output above says why.\n", host)
 
 			s.webmailSmokeTest(runner, host)
 
 			return log.String(), nil
 		}
 
-		if err := proc.PutFile(available, webmailVhost(host, php, true), true); err != nil {
+		if err := proc.PutFile(available, webmailVhost(host, php, true, roundcube), true); err != nil {
 			return "", err
 		}
 
 		// Tested before the reload: a vhost nginx refuses freezes the running
 		// configuration for every site on the box.
 		if err := runner.Must("sudo nginx -t && sudo systemctl reload nginx", time.Minute); err != nil {
-			proc.PutFile(available, webmailVhost(host, php, false), true)
+			proc.PutFile(available, webmailVhost(host, php, false, roundcube), true)
 			proc.Ok("sudo nginx -t && sudo systemctl reload nginx")
 
 			return "", err
@@ -498,10 +576,53 @@ func (s *Service) configureWebmail(ctx context.Context, domainID int64) func(*ta
 
 		fmt.Fprintf(&log, "Certificate issued — https://%s is live.\n", host)
 
+		// The same certificate is what IMAP and SMTP should present. Without
+		// this they keep the snakeoil pair, and a mail client says the server
+		// cannot be verified for a domain whose webmail is perfectly secure.
+		if s.Store.Setting("mail_hostname", host) == host {
+			if err := s.useCertificate(runner, host); err != nil {
+				fmt.Fprintf(&log, "The mail server kept its own certificate: %v\n", err)
+			} else {
+				fmt.Fprintf(&log, "Postfix and Dovecot now present the certificate for %s.\n", host)
+			}
+		}
+
 		s.webmailSmokeTest(runner, host)
 
 		return log.String(), nil
 	}
+}
+
+// useCertificate points Postfix and Dovecot at an issued certificate.
+//
+// Both are asked to prove they will start with it before anything is reloaded:
+// Dovecot refuses to start on a certificate it cannot read, and a mail server
+// that will not come up is worse than one presenting a self-signed pair.
+func (s *Service) useCertificate(runner *tasks.Runner, host string) error {
+	live := "/etc/letsencrypt/live/" + host
+
+	// The panel user cannot traverse /etc/letsencrypt, and neither can dovecot
+	// unless the group is opened up — which is what certbot's own nginx plugin
+	// does on install.
+	command := fmt.Sprintf(
+		"sudo chmod 0755 /etc/letsencrypt/live /etc/letsencrypt/archive && "+
+			"sudo postconf -e 'smtpd_tls_cert_file = %[1]s/fullchain.pem' && "+
+			"sudo postconf -e 'smtpd_tls_key_file = %[1]s/privkey.pem' && "+
+			"printf '%%s\\n' 'ssl_cert = <%[1]s/fullchain.pem' 'ssl_key = <%[1]s/privkey.pem' "+
+			"| sudo tee /etc/dovecot/conf.d/99-ubuntu-panel-tls.conf > /dev/null && "+
+			"sudo doveconf -n > /dev/null && "+
+			"sudo systemctl reload postfix && sudo systemctl restart dovecot", live)
+
+	if err := runner.Must(command, 2*time.Minute); err != nil {
+		// Put Dovecot back on whatever it had rather than leaving it refusing
+		// to start.
+		proc.Ok("sudo rm -f /etc/dovecot/conf.d/99-ubuntu-panel-tls.conf && " +
+			"sudo systemctl restart dovecot")
+
+		return err
+	}
+
+	return nil
 }
 
 // webmailSmokeTest asks for the page.

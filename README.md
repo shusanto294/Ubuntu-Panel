@@ -26,6 +26,13 @@ a systemd unit.
 Then open the server's address in a browser. With no account yet it asks you to
 create the first one.
 
+A fresh panel installs the software a server needs by itself — nginx, PHP-FPM,
+MariaDB, Certbot, WP-CLI, Node and the rest of the Apps page — in the
+background, on the first start. Watch it on the Apps page; it takes a few
+minutes. Set `PANEL_INSTALL_APPS=core` for only what a site cannot run without,
+or `none` to choose them yourself. It happens once, on a panel that has never
+installed an app, so removing one afterwards is a decision the panel keeps.
+
 Options are environment variables, or flags after `bash -s --`:
 
 ```sh
@@ -170,6 +177,7 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_PUBLIC` | `$PANEL_ROOT/public` (only with `PANEL_DEBUG`) |
 | `PANEL_APP_KEY` | — (written by the installer; encrypts every stored credential) |
 | `PANEL_WORKERS` | `2` (`1` on a machine under 1.5 GB) |
+| `PANEL_INSTALL_APPS` | `all` — what a first start installs: `all`, `core` or `none` |
 | `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel-Go` |
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |

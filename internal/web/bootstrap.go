@@ -1,0 +1,75 @@
+package web
+
+import (
+	"context"
+
+	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
+	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
+)
+
+// bootstrapSetting is how the panel remembers it has done this. It is a
+// setting rather than "are any apps installed?" so that removing every app
+// afterwards is a decision the panel respects instead of undoing on the next
+// restart.
+const bootstrapSetting = "apps_bootstrapped"
+
+// BootstrapApps installs the software a server needs, on a panel that has never
+// installed any.
+//
+// A control panel whose first screen is a list of things you have to install
+// before you can do anything is a control panel that has handed the work back.
+// This queues them on the first start and lets the ordinary installer run:
+// same task, same console, same page — the operator opens Apps and watches it
+// happen rather than starting it.
+//
+// PANEL_INSTALL_APPS decides how much: `all` is the catalogue, `core` is what
+// no site can run without, `none` is nothing.
+func (a *App) BootstrapApps(ctx context.Context) {
+	choice := a.Config.InstallApps
+
+	if choice == "" {
+		choice = "all"
+	}
+
+	if choice == "none" || a.Store.SettingBool(bootstrapSetting, false) {
+		return
+	}
+
+	// Only ever on a machine the panel has not installed anything on. An
+	// operator who removed MongoDB is not asking for it back every restart.
+	if len(a.Store.InstalledServiceKeys(ctx)) > 0 || a.Store.ServicesPending() {
+		a.Store.SetSetting(bootstrapSetting, "1")
+
+		return
+	}
+
+	keys := []string{}
+
+	for _, entry := range catalog.Entries {
+		if choice == "all" || entry.Core {
+			keys = append(keys, entry.Key)
+		}
+	}
+
+	queued := a.Catalog.Queue(keys, false)
+
+	if queued == 0 {
+		a.Store.SetSetting(bootstrapSetting, "1")
+
+		return
+	}
+
+	// The install belongs to whoever set the panel up. On a first start nobody
+	// has an account yet, so it belongs to nobody and the task simply has no
+	// owner — which is right: it is the panel installing its own dependencies.
+	if _, err := a.Queue.PushID(queue.ServicesInstall, "user", 0); err != nil {
+		a.Log.Error("could not queue the first-run install", "error", err)
+
+		return
+	}
+
+	a.Store.SetSetting(bootstrapSetting, "1")
+
+	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
+		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+}
