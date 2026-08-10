@@ -59,20 +59,26 @@ func (s *Service) WriteSharedConfig(runner *tasks.Runner) error {
 		proc.Ok(command)
 	}
 
-	return proc.PutFile("/etc/nginx/conf.d/000-panel-default.conf", s.catchAll(), true)
+	return proc.PutFile(catchAllPath, catchAll(portEightyClaimed()), true)
 }
+
+// catchAllPath is the panel's own default-server file. It is named to sort
+// first in conf.d, so nginx reads it before anything else that might want the
+// slot.
+const catchAllPath = "/etc/nginx/conf.d/000-panel-default.conf"
 
 // catchAll is the default-server configuration, minus whichever half something
 // else already owns.
 //
 // nginx allows exactly one default_server per address, and a second is not a
 // warning: it refuses to load the configuration at all — for every site on the
-// box. The panel's own vhost claims port 80 so that the panel answers on the
-// server's bare IP address, so the catch-all only claims what is free.
-func (s *Service) catchAll() string {
+// box, and for the panel itself, which is served through the same nginx. The
+// panel's own vhost claims port 80 so that the panel answers on the server's
+// bare IP address, so the catch-all only claims what is free.
+func catchAll(portEightyTaken bool) string {
 	full := defaultServer()
 
-	if !portEightyClaimed() {
+	if !portEightyTaken {
 		return full
 	}
 
@@ -90,11 +96,21 @@ func (s *Service) catchAll() string {
 
 // portEightyClaimed reports whether another configuration file already holds
 // the port 80 default-server slot.
+//
+// `grep -R` rather than `-r`: everything in sites-enabled is a symlink into
+// sites-available, and `-r` skips symlinks it meets while recursing. It found
+// nothing, the catch-all claimed a slot the panel's own vhost already had, and
+// nginx refused the whole configuration with
+//
+//	a duplicate default server for 0.0.0.0:80 in /etc/nginx/sites-enabled/ubuntu-panel:3
+//
+// which failed the nginx install and would have failed every site deployment
+// after it.
 func portEightyClaimed() bool {
 	return proc.Ok(
-		"grep -rlE '^[[:space:]]*listen[[:space:]]+(\\[::\\]:)?80[^;]*default_server' " +
+		"grep -RlE '^[[:space:]]*listen[[:space:]]+(\\[::\\]:)?80[^;]*default_server' " +
 			"/etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null " +
-			"| grep -v '000-panel-default.conf' | grep -q .")
+			"| grep -v " + proc.Quote(catchAllPath) + " | grep -q .")
 }
 
 // http2Supported asks the nginx on this machine.

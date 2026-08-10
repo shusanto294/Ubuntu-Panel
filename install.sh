@@ -1025,6 +1025,23 @@ fi
 
 ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/ubuntu-panel
 
+# Heal a duplicate default server before testing the configuration.
+#
+# A panel built before this check wrote its catch-all with `listen 80
+# default_server` while this vhost already had one — and nginx does not warn
+# about a second, it refuses the whole configuration, so the machine is left
+# with an nginx that will not reload and an update that cannot get past
+# `nginx -t`. The catch-all is the panel's own file and the one that yields:
+# this vhost holds port 80 so the panel keeps answering on the server's bare
+# address.
+CATCH_ALL=/etc/nginx/conf.d/000-panel-default.conf
+
+if [ -f "$CATCH_ALL" ] && grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?80[^;]*default_server' "$CATCH_ALL" \
+   && grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?80[^;]*default_server' "$NGINX_SITE"; then
+    sed -i -E '/^[[:space:]]*listen[[:space:]]+(\[::\]:)?80[^;]*default_server/s/ default_server//' "$CATCH_ALL"
+    ok "Removed a duplicate port 80 default server from $CATCH_ALL"
+fi
+
 if logged nginx -t; then
     ok "nginx accepted the configuration"
 else

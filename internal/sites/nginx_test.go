@@ -117,3 +117,41 @@ func TestDocumentRootJoinsWithoutDoubleSlashes(t *testing.T) {
 		t.Fatalf("document root is %q", root)
 	}
 }
+
+// nginx allows exactly one default_server per address, and the panel's own
+// vhost holds port 80 so the panel answers on the server's bare IP. A
+// catch-all that claims it too is not a warning: nginx refuses the whole
+// configuration, for every site on the box and for the panel with them.
+func TestCatchAllYieldsPortEightyWhenSomethingElseHasIt(t *testing.T) {
+	shared := catchAll(true)
+
+	if strings.Contains(shared, "listen 80 default_server") {
+		t.Fatalf("the catch-all claimed a port 80 default server that is already taken:\n%s", shared)
+	}
+
+	if !strings.Contains(shared, "listen 443 ssl default_server") {
+		t.Fatal("the catch-all gave up the 443 slot as well")
+	}
+
+	if !strings.Contains(shared, "No site is configured for this hostname.") {
+		t.Fatal("the 443 half lost its body")
+	}
+}
+
+// With nothing else holding it — a machine where the panel's own vhost has not
+// been written yet — the catch-all takes both, so an unknown hostname gets a
+// 404 rather than whichever site happens to be first.
+func TestCatchAllTakesBothSlotsWhenTheyAreFree(t *testing.T) {
+	shared := catchAll(false)
+
+	if !strings.Contains(shared, "listen 80 default_server") ||
+		!strings.Contains(shared, "listen 443 ssl default_server") {
+		t.Fatalf("the catch-all did not claim both free slots:\n%s", shared)
+	}
+
+	// The ACME webroot has to stay reachable on 80, or no certificate can ever
+	// be issued for a hostname that has no site yet.
+	if !strings.Contains(shared, "/.well-known/acme-challenge/") {
+		t.Fatal("the port 80 half does not serve the ACME challenge")
+	}
+}
