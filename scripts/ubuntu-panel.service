@@ -1,0 +1,30 @@
+[Unit]
+Description=Ubuntu Panel
+Documentation=https://github.com/shusanto294/Ubuntu-Panel-Go
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/ubuntu-panel/bin/ubuntu-panel --config /etc/ubuntu-panel/panel.conf
+Restart=always
+RestartSec=2
+
+# The panel provisions services, so it runs as root. Everything below narrows
+# what that root can reach: it needs its own state, the sites it serves, and the
+# system tools it drives — not the rest of the filesystem.
+User=root
+WorkingDirectory=/opt/ubuntu-panel
+
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ubuntu-panel /var/log/ubuntu-panel /var/www /etc/ubuntu-panel
+
+# Journal gets everything; the panel also writes its own log file.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

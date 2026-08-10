@@ -1,0 +1,187 @@
+<script setup>
+import { computed, ref } from 'vue';
+import { router } from '@inertiajs/vue3';
+
+/**
+ * What version is installed, and whether a newer one has been published.
+ *
+ * The update is a button now. It restarts the service that would be serving
+ * the click, so it cannot run inside the request — the panel starts it in a
+ * transient systemd unit of its own and answers before it begins. The command
+ * stays underneath for anyone who would rather watch it in a shell.
+ */
+const props = defineProps({
+    update: { type: Object, required: true },
+});
+
+const state = ref(props.update);
+const checking = ref(false);
+
+const current = computed(() => state.value.current ?? {});
+const latest = computed(() => state.value.latest ?? {});
+const available = computed(() => state.value.available);
+const error = computed(() => latest.value.error);
+
+const describe = (version) => {
+    if (!version) return 'unknown';
+    const parts = [];
+    if (version.version) parts.push(version.version);
+    if (version.commit) parts.push(version.commit);
+    return parts.length ? parts.join(' · ') : 'unknown';
+};
+
+const when = (iso) =>
+    iso
+        ? new Date(iso).toLocaleDateString([], {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+          })
+        : '';
+
+const check = async () => {
+    checking.value = true;
+
+    try {
+        const { data } = await window.axios.get(route('system.updates'));
+        state.value = data;
+    } catch (e) {
+        state.value = {
+            ...state.value,
+            latest: { ...latest.value, error: 'Could not reach GitHub.' },
+        };
+    } finally {
+        checking.value = false;
+    }
+};
+
+// The panel builds this: it knows where it is installed and which user owns
+// it, and neither is guaranteed to be the default.
+const command = computed(
+    () =>
+        state.value.command ??
+        'cd /opt/ubuntu-panel && sudo -u ubuntupanel php artisan panel:update',
+);
+const copied = ref(false);
+const updating = ref(false);
+
+const update = () => {
+    if (
+        !confirm(
+            'Update the panel now?\n\n' +
+                'The newest release is downloaded and installed. The panel restarts, ' +
+                'so this page will be unreachable for a minute. The database, your ' +
+                'settings and the nginx vhost are kept.',
+        )
+    )
+        return;
+
+    updating.value = true;
+    router.post(route('system.update'), {}, { preserveScroll: true });
+};
+
+const copy = async () => {
+    try {
+        await navigator.clipboard.writeText(command.value);
+        copied.value = true;
+        setTimeout(() => (copied.value = false), 2000);
+    } catch (e) {
+        // Clipboard is unavailable over plain HTTP; the text is selectable.
+    }
+};
+</script>
+
+<template>
+    <div
+        class="rounded-xl border bg-white p-5"
+        :class="available ? 'border-brand-300' : 'border-slate-200'"
+    >
+        <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+                <div class="flex items-center gap-2">
+                    <p class="text-sm font-semibold text-slate-700">Panel version</p>
+                    <span
+                        v-if="available"
+                        class="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-medium text-brand-800"
+                    >
+                        update available
+                    </span>
+                    <span
+                        v-else-if="!error"
+                        class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                    >
+                        up to date
+                    </span>
+                </div>
+
+                <p class="mt-1 font-mono text-sm text-slate-800">
+                    {{ describe(current) }}
+                </p>
+                <p v-if="current.committed_at" class="text-xs text-slate-500">
+                    installed {{ when(current.committed_at) }}
+                </p>
+            </div>
+
+            <button
+                @click="check"
+                :disabled="checking"
+                class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+                {{ checking ? 'Checking…' : 'Check for updates' }}
+            </button>
+        </div>
+
+        <p v-if="error" class="mt-3 text-xs text-amber-700">
+            Could not check for updates: {{ error }}
+        </p>
+
+        <div v-else-if="available" class="mt-4 border-t border-slate-100 pt-4">
+            <p class="text-xs text-slate-600">
+                Latest published:
+                <span class="font-mono text-slate-800">{{ describe(latest) }}</span>
+                <span v-if="latest.committed_at" class="text-slate-400">
+                    · {{ when(latest.committed_at) }}
+                </span>
+                <a
+                    v-if="latest.url"
+                    :href="latest.url"
+                    target="_blank"
+                    rel="noopener"
+                    class="ml-1 text-brand-600 hover:underline"
+                    >view</a
+                >
+            </p>
+
+            <button
+                @click="update"
+                :disabled="updating"
+                class="mt-3 w-full rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+            >
+                {{ updating ? 'Update started — the panel is restarting…' : 'Update now' }}
+            </button>
+
+            <p v-if="updating" class="mt-2 text-xs text-slate-500">
+                Give it a minute, then reload. Progress:
+                <code class="font-mono">journalctl -u ubuntu-panel-update -f</code>
+            </p>
+
+            <p class="mt-3 text-xs text-slate-500">
+                Or run it yourself, and watch it finish:
+            </p>
+
+            <div
+                class="mt-2 flex items-center justify-between gap-3 rounded-md bg-slate-900 px-3 py-2"
+            >
+                <code class="truncate font-mono text-xs text-slate-100">{{
+                    command
+                }}</code>
+                <button
+                    @click="copy"
+                    class="shrink-0 text-xs text-slate-400 transition hover:text-white"
+                >
+                    {{ copied ? 'copied' : 'copy' }}
+                </button>
+            </div>
+        </div>
+    </div>
+</template>

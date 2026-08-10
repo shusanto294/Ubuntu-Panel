@@ -1,0 +1,7 @@
+node_modules/
+internal/assets/public/build/
+dist/
+ubuntu-panel
+*.db
+*.db-shm
+*.db-wal
