@@ -182,6 +182,16 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |
 
+The panel keeps its own state in SQLite while the sites and mailboxes it
+manages use MariaDB, and that is deliberate rather than a stage on the way to
+something else. The largest table the panel owns is `metric_samples`: one row a
+minute, pruned at 35 days, so about 50,000 rows and a few megabytes however
+long the server runs. Everything else is one row per site, database, mailbox or
+task. What SQLite buys against that is the thing that matters on a control
+panel — it always starts. A panel whose own state lived in MariaDB could not
+come up while MariaDB was down, which is exactly when you would want to open
+the panel and look at MariaDB.
+
 `PANEL_APP_KEY` is 32 random bytes, base64, and every stored credential — DNS
 API tokens, database and mailbox passwords — is encrypted with it, in the same
 AES-256-GCM form the C panel used. Losing it, or changing it, makes all of them
