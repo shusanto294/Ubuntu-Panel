@@ -147,6 +147,79 @@ func (s *Service) EnsureSchema() error {
 	return runSQL(script)
 }
 
+// diagnose prints the state of everything a login goes through.
+func (s *Service) diagnose(runner *tasks.Runner) (string, error) {
+	// The password databases, in the order Dovecot tries them. A `driver = pam`
+	// above `driver = sql` is the whole bug: PAM fails for an address that is
+	// not a unix account, and Dovecot stops at the first failure.
+	runner.Exec("echo '--- password databases, in order:'; sudo doveconf -n passdb userdb || true",
+		30*time.Second)
+
+	runner.Exec("echo '--- what includes what:'; "+
+		"grep -nE '^[[:space:]]*!?#?!?include' /etc/dovecot/conf.d/10-auth.conf || true",
+		30*time.Second)
+
+	// Whether Dovecot's own account can read the table — with the credentials
+	// from the file it actually reads, so a mismatch shows up here rather than
+	// as a refused login.
+	runner.Exec(fmt.Sprintf(
+		"echo '--- can Dovecot read the mailbox table:'; "+
+			"user=$(sudo sed -n 's/.*user=\\([^ ]*\\).*/\\1/p' /etc/dovecot/dovecot-sql.conf.ext); "+
+			"pass=$(sudo sed -n 's/.*password=\\(.*\\)$/\\1/p' /etc/dovecot/dovecot-sql.conf.ext); "+
+			"mysql -h 127.0.0.1 -u \"$user\" -p\"$pass\" -N -B "+
+			"-e 'SELECT count(*) FROM %s.virtual_users;' 2>&1 "+
+			"| sed 's/^/mailboxes visible to Dovecot: /'", mailDB), time.Minute)
+
+	runner.Exec(fmt.Sprintf(
+		"echo '--- mailboxes the panel wrote:'; "+
+			"sudo mysql -N -B -e 'SELECT email, LEFT(password, 14), quota_bytes FROM %s.virtual_users;' "+
+			"2>&1 | sed 's/^/  /'", mailDB), time.Minute)
+
+	runner.Exec("echo '--- is Dovecot listening:'; "+
+		"(sudo ss -lntp | grep -E ':(143|993)\\b' || echo 'nothing on 143 or 993')",
+		30*time.Second)
+
+	// Dovecot's own answer for a real mailbox, through the same passdb chain a
+	// login uses. The password is the panel's stored copy, so nothing has to be
+	// typed again.
+	if account, address := s.firstMailbox(); address != "" {
+		runner.Writef("--- asking Dovecot about %s:\n", address)
+		authTest(runner, address, account)
+	} else {
+		runner.Write("--- no mailbox exists yet to test a login with.\n")
+	}
+
+	runner.Exec("echo '--- the last authentication lines in the mail log:'; "+
+		"sudo grep -iE 'auth|login' /var/log/mail.log 2>/dev/null | tail -n 15 || "+
+		"sudo journalctl -u dovecot --no-pager -n 15 || true", 30*time.Second)
+
+	return "The login path is above: which password databases Dovecot consults, whether it can " +
+		"read the mailbox table, what is in it, and what it says when asked directly.", nil
+}
+
+// firstMailbox is a real mailbox to test with, and its password.
+func (s *Service) firstMailbox() (string, string) {
+	domains, err := s.Store.EmailDomains(context.Background())
+	if err != nil {
+		return "", ""
+	}
+
+	for _, domain := range domains {
+		accounts, err := s.Store.EmailAccounts(context.Background(), domain.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, account := range accounts {
+			if account.Password != "" {
+				return account.Password, account.Address(domain.Domain)
+			}
+		}
+	}
+
+	return "", ""
+}
+
 // mailStoreCommand creates the vmail account and the root of the mail store.
 //
 // Created when the mail server is configured, and needed by every mailbox
@@ -366,6 +439,16 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 		"sudo systemctl restart opendkim || true")
 
 	list.Add("Restart Postfix", "sudo systemctl restart postfix")
+
+	// What the login path actually looks like on this machine, written into the
+	// console where the operator already is.
+	//
+	// "Login failed" is the least informative sentence in mail, and every layer
+	// under it is invisible from a browser: which password databases Dovecot
+	// consults and in what order, whether it can reach the table at all,
+	// whether the row is there, and what it says when asked directly. Guessing
+	// between those from a screenshot is a round trip each time.
+	list.AddFn("Check the login path", s.diagnose).Optional()
 
 	if !tasks.New(s.Store, taskID).Run(list) {
 		return errors.New("the mail server was not configured")
