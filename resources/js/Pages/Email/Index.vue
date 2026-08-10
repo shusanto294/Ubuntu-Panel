@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
@@ -17,13 +17,22 @@ const props = defineProps({
     activeTask: { type: Object, default: null },
 });
 
+// Covers the gap between the button posting and a worker picking the job up.
+// There is no task to watch for the first second or so, and the page that comes
+// back from the post is rendered before one exists — so without this the
+// progress only appeared on a manual reload, or on another page that happened
+// to be watching the same queue.
+const awaiting = ref(false);
+
 const busy = computed(
     () =>
+        awaiting.value ||
         props.domains.some(
             (domain) =>
                 isBusyStatus(domain.status) ||
                 domain.accounts.some((account) => isBusyStatus(account.status)),
-        ) || props.activeTask?.status === 'running',
+        ) ||
+        props.activeTask?.status === 'running',
 );
 
 useLiveRefresh(busy, ['domains', 'activeTask']);
@@ -31,8 +40,18 @@ useLiveRefresh(busy, ['domains', 'activeTask']);
 // Rewrites the schema, the mail store, the Postfix maps and the Dovecot
 // config. Every statement in that task is idempotent, so it is the same run
 // whether the server has never been configured or has lost a piece of it.
-const repair = () =>
-    router.post(route('email.repair'), {}, { preserveScroll: true });
+const repair = () => {
+    awaiting.value = true;
+
+    router.post(
+        route('email.repair'),
+        {},
+        {
+            preserveScroll: true,
+            onFinish: () => setTimeout(() => (awaiting.value = false), 8000),
+        },
+    );
+};
 </script>
 
 <template>
@@ -67,6 +86,10 @@ const repair = () =>
             </div>
         </template>
 
+        <div v-if="activeTask" class="mb-6">
+            <TaskStatus :task="activeTask" />
+        </div>
+
         <RequiredApps
             v-if="!mailConfigured"
             :apps="requirements"
@@ -75,10 +98,6 @@ const repair = () =>
         />
 
         <template v-else>
-            <div v-if="activeTask" class="mb-6">
-                <TaskStatus :task="activeTask" />
-            </div>
-
             <div
                 class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
             >

@@ -275,15 +275,22 @@ func (s *Service) webmailDatabase() error {
 
 // webmailConfig writes Roundcube's configuration.
 //
-// IMAP and SMTP over the loopback: Dovecot and Postfix are on this machine, so
-// there is no certificate to validate and nothing on the wire to overhear.
+// IMAP over the loopback in the clear: Dovecot is on this machine, so there is
+// nothing on the wire to overhear. Submission is different — port 587 demands
+// STARTTLS, because it is the port a phone on a hotel network uses, and a
+// webmail on the same box has to speak the same protocol as everybody else.
+// The certificate it meets there is this server's own, which is either
+// self-signed or issued for a hostname that is not `localhost`, so peer
+// verification is off for this one loopback connection.
 func (s *Service) webmailConfig(host string) error {
 	contents := fmt.Sprintf(
 		"<?php\n"+
 			"/* Managed by %s. Changes here are overwritten. */\n"+
 			"$config['db_dsnw'] = 'mysql://%s:%s@127.0.0.1/%s';\n"+
 			"$config['imap_host'] = 'localhost:143';\n"+
-			"$config['smtp_host'] = 'localhost:587';\n"+
+			"$config['smtp_host'] = 'tls://localhost:587';\n"+
+			"$config['smtp_conn_options'] = ['ssl' => ['verify_peer' => false, "+
+			"'verify_peer_name' => false, 'allow_self_signed' => true]];\n"+
 			"$config['smtp_user'] = '%%u';\n"+
 			"$config['smtp_pass'] = '%%p';\n"+
 			"$config['support_url'] = '';\n"+

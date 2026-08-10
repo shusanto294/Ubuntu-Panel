@@ -147,6 +147,54 @@ func (s *Service) EnsureSchema() error {
 	return runSQL(script)
 }
 
+// writeDKIMConfig writes OpenDKIM's configuration outright.
+//
+// It used to be appended to, and only when the file had no `Socket` line at
+// all — which Debian's does: a unix socket under /run/opendkim. Postfix is
+// configured to talk to a milter on 127.0.0.1:8891, so it found nothing there,
+// and `milter_default_action = accept` meant mail went out unsigned rather than
+// not at all. Unsigned mail from a new server is mail in a spam folder, and
+// nothing in the panel said a word about it.
+//
+// TrustedHosts is the other half. Without it OpenDKIM signs nothing sent from
+// this machine, because it does not consider this machine one of its own.
+func (s *Service) writeDKIMConfig() error {
+	trusted := "# Managed by " + config.Name + " — hosts whose outgoing mail is signed.\n" +
+		"127.0.0.1\n" +
+		"::1\n" +
+		"localhost\n"
+
+	if err := proc.PutFile("/etc/opendkim/TrustedHosts", trusted, true); err != nil {
+		return err
+	}
+
+	contents := "# Managed by " + config.Name + ". Changes here are overwritten.\n" +
+		"Syslog                  yes\n" +
+		"SyslogSuccess           yes\n" +
+		"LogWhy                  no\n" +
+		"\n" +
+		"Canonicalization        relaxed/simple\n" +
+		// Sign what leaves, verify what arrives.
+		"Mode                    sv\n" +
+		"SubDomains              no\n" +
+		"OversignHeaders         From\n" +
+		"\n" +
+		"UserID                  opendkim\n" +
+		"UMask                   007\n" +
+		"\n" +
+		// The address Postfix's smtpd_milters names. A unix socket would be
+		// tidier and is not what the panel told Postfix to expect.
+		"Socket                  inet:8891@127.0.0.1\n" +
+		"PidFile                 /run/opendkim/opendkim.pid\n" +
+		"\n" +
+		"KeyTable                /etc/opendkim/KeyTable\n" +
+		"SigningTable            refile:/etc/opendkim/SigningTable\n" +
+		"ExternalIgnoreList      refile:/etc/opendkim/TrustedHosts\n" +
+		"InternalHosts           refile:/etc/opendkim/TrustedHosts\n"
+
+	return proc.PutFile("/etc/opendkim.conf", contents, true)
+}
+
 // resyncMailboxes writes every mailbox the panel knows about into the mail
 // server's tables again, hashed correctly.
 func (s *Service) resyncMailboxes(runner *tasks.Runner) (string, error) {
@@ -247,9 +295,28 @@ func (s *Service) diagnose(runner *tasks.Runner) (string, error) {
 			"sudo mysql -N -B -e 'SELECT email, LEFT(password, 14), quota_bytes FROM %s.virtual_users;' "+
 			"2>&1 | sed 's/^/  /'", mailDB), time.Minute)
 
-	runner.Exec("echo '--- is Dovecot listening:'; "+
-		"(sudo ss -lntp | grep -E ':(143|993)\\b' || echo 'nothing on 143 or 993')",
+	runner.Exec("echo '--- what is listening:'; "+
+		"(sudo ss -lntp | grep -E ':(25|143|465|587|993|995)\\b' || echo 'nothing on any mail port')",
 		30*time.Second)
+
+	// Reaching a port is one claim and being answered by a mail server is
+	// another. Bash speaks enough TCP to tell them apart without another
+	// package on the machine.
+	runner.Exec("echo '--- does each port answer:'; "+
+		"for port in 25 587 465 143 993; do "+
+		"  if exec 3<>/dev/tcp/127.0.0.1/$port 2>/dev/null; then "+
+		"    read -t 3 -r line <&3 || line='(no banner — TLS from the first byte)'; "+
+		"    echo \"  $port: $line\"; exec 3<&-; exec 3>&-; "+
+		"  else echo \"  $port: nothing is listening\"; fi; "+
+		"done", time.Minute)
+
+	// Whether submission would take a login at all, which is what a webmail's
+	// "Connection to server failed" hides.
+	runner.Exec("echo '--- what submission offers:'; "+
+		"(printf 'EHLO localhost\\r\\nQUIT\\r\\n' | "+
+		"timeout 10 openssl s_client -quiet -starttls smtp -connect 127.0.0.1:587 2>/dev/null "+
+		"| grep -iE 'AUTH|STARTTLS|250' | sed 's/^/  /') || "+
+		"echo '  submission did not answer a STARTTLS conversation'", time.Minute)
 
 	// Dovecot's own answer for a real mailbox, through the same passdb chain a
 	// login uses. The password is the panel's stored copy, so nothing has to be
@@ -411,12 +478,23 @@ func (s *Service) writeConfigs() error {
 			"virtual_transport = lmtp:unix:private/dovecot-lmtp\n"+
 			"smtpd_sasl_type = dovecot\n"+
 			"smtpd_sasl_path = private/auth\n"+
-			"smtpd_sasl_auth_enable = yes\n"+
+			// Off on port 25, which is the one the whole internet can reach and
+			// the one that only ever carries mail *to* this server. Clients
+			// authenticate on submission and smtps below, where TLS is
+			// compulsory.
+			"smtpd_sasl_auth_enable = no\n"+
+			"smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, "+
+			"defer_unauth_destination\n"+
 			"smtpd_tls_security_level = may\n"+
 			"smtp_tls_security_level = may\n"+
 			"smtpd_milters = inet:127.0.0.1:8891\n"+
 			"non_smtpd_milters = inet:127.0.0.1:8891\n"+
-			"milter_default_action = accept\n",
+			"milter_default_action = accept\n"+
+			// Roundcube offers 75 MB and Postfix's default refuses anything
+			// over 10, so the webmail invites an attachment the server then
+			// bounces.
+			"message_size_limit = 78643200\n"+
+			"mailbox_size_limit = 0\n",
 		config.Name, hostname)
 
 	return proc.PutFile("/etc/postfix/main.cf.d/ubuntu-panel.cf", postfix, true)
@@ -440,6 +518,13 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 	if err := s.EnsureSchema(); err != nil {
 		s.Store.AppendTaskOutput(taskID, err.Error())
 		s.Store.FinishTask(taskID, "failed", "The mail schema could not be created.", 0)
+
+		return err
+	}
+
+	if err := s.writeDKIMConfig(); err != nil {
+		s.Store.AppendTaskOutput(taskID, err.Error())
+		s.Store.FinishTask(taskID, "failed", "The OpenDKIM configuration could not be written.", 0)
 
 		return err
 	}
@@ -500,15 +585,41 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 		"sudo systemctl restart dovecot",
 		"sudo systemctl restart postfix")
 
+	// Submission and smtps, which is how anything sends mail.
+	//
+	// Debian ships both commented out in master.cf, so a stock Postfix listens
+	// on 25 and nothing else — and 25 accepts mail *for* this server rather
+	// than *from* its users. A webmail pointed at 587 gets "Connection to
+	// server failed", which is true and says nothing about why.
+	//
+	// `postconf -M` and `-P` edit master.cf by name, so running this again
+	// changes nothing rather than appending a second copy of the service.
+	list.Add("Open the submission ports",
+		"sudo postconf -M submission/inet='submission inet n - y - - smtpd'",
+		"sudo postconf -P 'submission/inet/syslog_name=postfix/submission'",
+		// Compulsory TLS: a password on port 587 is a password, and this is the
+		// port a phone on a hotel network uses.
+		"sudo postconf -P 'submission/inet/smtpd_tls_security_level=encrypt'",
+		"sudo postconf -P 'submission/inet/smtpd_sasl_auth_enable=yes'",
+		"sudo postconf -P 'submission/inet/smtpd_sasl_type=dovecot'",
+		"sudo postconf -P 'submission/inet/smtpd_sasl_path=private/auth'",
+		"sudo postconf -P 'submission/inet/smtpd_sasl_security_options=noanonymous'",
+		"sudo postconf -P 'submission/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject'",
+
+		"sudo postconf -M smtps/inet='smtps inet n - y - - smtpd'",
+		"sudo postconf -P 'smtps/inet/syslog_name=postfix/smtps'",
+		"sudo postconf -P 'smtps/inet/smtpd_tls_wrappermode=yes'",
+		"sudo postconf -P 'smtps/inet/smtpd_sasl_auth_enable=yes'",
+		"sudo postconf -P 'smtps/inet/smtpd_sasl_type=dovecot'",
+		"sudo postconf -P 'smtps/inet/smtpd_sasl_path=private/auth'",
+		"sudo postconf -P 'smtps/inet/smtpd_sasl_security_options=noanonymous'",
+		"sudo postconf -P 'smtps/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject'")
+
 	list.Add("Start OpenDKIM",
 		"sudo mkdir -p /etc/opendkim/keys",
-		"sudo chown -R opendkim:opendkim /etc/opendkim",
-		"grep -q '^Socket' /etc/opendkim.conf || "+
-			"printf 'Socket inet:8891@127.0.0.1\\nKeyTable /etc/opendkim/KeyTable\\n"+
-			"SigningTable refile:/etc/opendkim/SigningTable\\nCanonicalization relaxed/simple\\n' "+
-			"| sudo tee -a /etc/opendkim.conf > /dev/null",
 		"sudo touch /etc/opendkim/KeyTable /etc/opendkim/SigningTable",
-		"sudo systemctl restart opendkim || true")
+		"sudo chown -R opendkim:opendkim /etc/opendkim",
+		"sudo systemctl restart opendkim")
 
 	list.Add("Restart Postfix", "sudo systemctl restart postfix")
 
