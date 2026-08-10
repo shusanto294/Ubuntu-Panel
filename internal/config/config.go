@@ -19,7 +19,8 @@ const (
 	Name = "Ubuntu Panel"
 
 	// Version is stamped into the page payload and reported by --version.
-	Version = "2.0.0-dev"
+	// Bumped in the same commit as the tag that builds a release from it.
+	Version = "2.0.0"
 )
 
 // Config is the whole of the panel's settings. Every field has a working
