@@ -109,6 +109,8 @@ func (s *Service) preSteps(list *tasks.List, key string) {
 				s.Store.NodeVersion())).Group(key)
 
 	case "mail":
+		// Postfix asks for this at install time and never again. A better name
+		// arrives with the first mail domain; this is only what it starts with.
 		hostname := s.Store.Setting("mail_hostname", system.Hostname())
 
 		list.Add("Pre-answer the Postfix prompts",

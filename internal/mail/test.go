@@ -52,6 +52,16 @@ func (s *Service) TestDelivery(ctx context.Context, userID int64) error {
 		fmt.Sprintf("sleep 2; sudo ls -l %s/Maildir/new 2>/dev/null | tail -n 5 || "+
 			"echo 'no Maildir for this mailbox yet'", proc.Quote(maildir(address))))
 
+	list.Add("What this server calls itself",
+		"echo \"  EHLO name: $(sudo postconf -h myhostname)\"; "+
+			"name=$(sudo postconf -h myhostname); "+
+			"resolved=$(getent hosts \"$name\" | awk '{print $1}' | tr '\\n' ' '); "+
+			"if [ -n \"$resolved\" ]; then echo \"  it resolves to: $resolved\"; "+
+			"else echo \"  it resolves to NOTHING — receivers penalise this. \"; fi; "+
+			"echo \"  reverse DNS for this server: $(dig +short -x "+
+			"$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null) 2>/dev/null || "+
+			"echo 'could not be checked')\"")
+
 	list.Add("What the webmail is configured to use",
 		"grep -hE \"imap_host|smtp_host|smtp_conn_options\" "+
 			"/usr/share/ubuntu-panel/roundcube/config/config.inc.php 2>/dev/null "+

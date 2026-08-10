@@ -395,6 +395,29 @@ func (s *Service) firstMailbox() (string, string) {
 	return "", ""
 }
 
+// Hostname is the name this server gives when it greets another mail server.
+//
+// It matters more than it looks. Receivers check that the name in EHLO resolves
+// to something, and a bare `vmi3499224` — which is what a VPS is called out of
+// the box, and what Postfix uses by default — resolves to nothing at all. That
+// is a spam score penalty on every message before the content is read, and it
+// is also the name the TLS certificate has to match.
+//
+// So: whatever the operator set, or `mail.<domain>` for the first mail domain —
+// which the panel has already published an A record for and issued a
+// certificate for — and only then the machine's own name.
+func (s *Service) Hostname() string {
+	if name := s.Store.Setting("mail_hostname", ""); name != "" {
+		return name
+	}
+
+	if domains, err := s.Store.EmailDomains(context.Background()); err == nil && len(domains) > 0 {
+		return domains[len(domains)-1].WebmailHost()
+	}
+
+	return system.Hostname()
+}
+
 // mailStoreCommand creates the vmail account and the root of the mail store.
 //
 // Created when the mail server is configured, and needed by every mailbox
@@ -503,11 +526,14 @@ func (s *Service) writeConfigs() error {
 	}
 
 	// Postfix main.cf additions, as a drop-in the panel owns entirely.
-	hostname := s.Store.Setting("mail_hostname", system.Hostname())
+	hostname := s.Hostname()
 
 	postfix := fmt.Sprintf(
 		"# Managed by %s\n"+
 			"myhostname = %s\n"+
+			// The name in EHLO when this server sends, which is what a receiver
+			// checks against DNS.
+			"smtp_helo_name = $myhostname\n"+
 			"virtual_mailbox_domains = proxy:mysql:/etc/postfix/sql/virtual-domains.cf\n"+
 			"virtual_mailbox_maps = proxy:mysql:/etc/postfix/sql/virtual-mailboxes.cf\n"+
 			"virtual_alias_maps = proxy:mysql:/etc/postfix/sql/virtual-aliases.cf\n"+

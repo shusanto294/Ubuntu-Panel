@@ -153,6 +153,31 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 		return "Mail tables are in place.", nil
 	})
 
+	// The first mail domain decides what this server calls itself, unless
+	// somebody already chose. Postfix greets other servers with that name and
+	// they check it resolves; the machine's own `vmi3499224` does not.
+	list.AddFn("Name this server after the domain", func(runner *tasks.Runner) (string, error) {
+		if existing := s.Store.Setting("mail_hostname", ""); existing != "" {
+			return "This server already greets other servers as " + existing + ".", nil
+		}
+
+		hostname := domain.WebmailHost()
+
+		s.Store.SetSetting("mail_hostname", hostname)
+
+		if err := s.writeConfigs(); err != nil {
+			return "", err
+		}
+
+		if err := runner.Must("sudo postconf -e "+proc.Quote("myhostname="+hostname)+
+			" && sudo systemctl reload postfix", time.Minute); err != nil {
+			return "", err
+		}
+
+		return "This server now greets other servers as " + hostname + ", which resolves to it " +
+			"and matches its certificate.", nil
+	}).Optional()
+
 	list.AddFn("Register the domain", s.registerDomain(ctx, domainID))
 	list.AddFn("Generate the DKIM key", s.generateDKIM(ctx, domainID))
 
