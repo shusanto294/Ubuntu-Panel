@@ -1,0 +1,84 @@
+# Build the release tarballs and publish them, so nothing is ever compiled on
+# the server the panel is installed on.
+#
+# Push a tag and this runs:
+#
+#     git tag v2.0.0 && git push origin v2.0.0
+#
+# It builds the frontend once, cross-compiles the binary for amd64 and arm64
+# (CGO is off and the SQLite driver is pure Go, so no cross-toolchain is
+# involved), and attaches both tarballs and their SHA-256 files to the release
+# get.sh downloads from.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+  # Also runnable by hand, for a release built from a branch rather than a tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. v2.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build-release.sh stamps the release with `git describe`, which needs
+          # the tags a shallow clone does not fetch.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build the release tarballs
+        env:
+          # A tag build takes its version from the tag; a manual run takes the
+          # one that was typed.
+          PANEL_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        run: ./scripts/build-release.sh amd64 arm64
+
+      - name: Prove the binaries are static
+        run: |
+          for binary in $(find dist -name '*.tar.gz'); do
+              tar -xzf "$binary" -C /tmp
+          done
+
+          for binary in /tmp/ubuntu-panel-*/ubuntu-panel; do
+              file "$binary"
+              # A dynamically linked binary would need libraries on the server,
+              # which is the whole thing this build exists to avoid.
+              file "$binary" | grep -q 'statically linked' \
+                  || { echo "$binary is not static"; exit 1; }
+          done
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true

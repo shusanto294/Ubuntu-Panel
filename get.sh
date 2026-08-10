@@ -7,10 +7,12 @@
 # It finds the newest release, downloads the tarball for this machine's
 # architecture, checks it against the published SHA-256, unpacks it and runs
 # the installer inside it. Nothing is compiled on this server: the binary was
-# built somewhere else, and the frontend is inside it.
+# built somewhere else, and the frontend is inside it. No Go, no Node, no
+# compiler, and no build memory on a machine whose job is to serve sites.
 #
-# If no release has been published yet, it clones the repository and builds
-# here instead — the one command works either way.
+# Building here is possible and never automatic: `--from-source` asks for it
+# explicitly. Falling back to it silently is how a one-minute install becomes a
+# five-minute one that leaves a Go toolchain behind on a 1 GB VPS.
 #
 # Re-running it is the update path, and the installer keeps the database, the
 # application key and the panel's own nginx vhost.
@@ -118,8 +120,14 @@ trap cleanup EXIT
 
 # ----------------------------------------------------------- source build
 
+# Only ever reached through --from-source or PANEL_FROM_SOURCE=1. This is the
+# path that installs a Go toolchain and Node on the server.
 build_from_source() {
     say "Installing from source"
+
+    warn "This compiles on this machine: it installs Go and Node here and needs a"
+    warn "few minutes and ~1 GB of memory. Publishing a release builds it on GitHub"
+    warn "instead, and the install becomes a download."
 
     export DEBIAN_FRONTEND=noninteractive
     command -v git >/dev/null 2>&1 || {
@@ -176,10 +184,15 @@ case "$HTTP_CODE" in
         if [ -n "$PANEL_VERSION" ]; then
             die "No release tagged $PANEL_VERSION at $REPO_URL/releases."
         fi
-        # Nothing published yet. Building here takes a few minutes more and
-        # produces the same panel, so do that rather than stop.
-        warn "No release has been published yet — building on this machine instead."
-        build_from_source
+
+        printf '\n%s!! No release has been published yet, so there is no binary to download.%s\n' \
+            "$RED" "$RESET" >&2
+        printf '\n   Publish one — the tag builds it on GitHub and attaches the tarballs:\n\n' >&2
+        printf '       git tag v1.0.0 && git push origin v1.0.0\n\n' >&2
+        printf '   Then this command works as written. To build on this server instead,\n' >&2
+        printf '   which installs Go and Node here:\n\n' >&2
+        printf '       curl -fsSL https://raw.githubusercontent.com/%s/main/get.sh | sudo bash -s -- --from-source\n\n' "$REPO" >&2
+        exit 1
         ;;
     403|429)
         die "GitHub is rate-limiting this IP (HTTP $HTTP_CODE). Try again shortly, pin a release with PANEL_VERSION=v1.0.0, or build here with PANEL_FROM_SOURCE=1."
@@ -218,8 +231,7 @@ TARBALL="${URL##*/}"
 say "Downloading $TARBALL"
 
 if ! curl -fSL --progress-bar --max-time 600 -o "$TMP/$TARBALL" "$URL"; then
-    warn "Release $TAG has no $ARCH build."
-    build_from_source
+    die "Release $TAG has no $ARCH build. Check $REPO_URL/releases, or build on this server with --from-source."
 fi
 
 SIZE="$(wc -c <"$TMP/$TARBALL" | tr -d ' ')"

@@ -17,11 +17,11 @@ One command on a fresh Ubuntu server:
 curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
 ```
 
-It downloads the release built for the machine's architecture, checks it
-against the published SHA-256, and runs the installer inside it. If no release
-has been published yet it clones the repository and builds here instead —
-fetching Go and Node if the machine does not have them — so the same command
-works either way.
+It downloads the release built for this machine's architecture, checks it
+against the published SHA-256, and runs the installer inside it. Nothing is
+compiled on the server: no Go, no Node, no compiler, and no build memory on a
+machine whose job is to serve sites. The install is a download, a file copy and
+a systemd unit.
 
 Then open the server's address in a browser. With no account yet it asks you to
 create the first one.
@@ -34,9 +34,11 @@ curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/ge
 curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash -s -- --version v1.2.0
 ```
 
-`--from-source` builds on this machine rather than downloading; `--version`
-pins a release. `PANEL_ROOT`, `PANEL_USER` and `PANEL_SKIP_APT` work the same
-way.
+`--version` pins a release. `--from-source` is the escape hatch: it clones and
+compiles on the server, which means installing Go and Node there, and it is
+never chosen automatically — a one-minute install silently becoming a
+five-minute one that leaves a toolchain behind is not a fallback anybody asked
+for. `PANEL_ROOT`, `PANEL_USER` and `PANEL_SKIP_APT` work the same way.
 
 What it leaves behind: the binary at `/opt/ubuntu-panel/bin/ubuntu-panel`, the
 configuration at `/etc/ubuntu-panel/panel.conf` (including `PANEL_APP_KEY` —
@@ -113,17 +115,31 @@ rules that failure came down to are enforced in one place each:
   protocol's own way to say "leave the app and load this URL". Both rules have
   tests in `internal/web/web_test.go`.
 
-## Build
+## Build and release
 
 ```sh
 make            # frontend, then the binary with the frontend embedded
 make test
-make release    # dist/*.tar.gz, ready to publish as a GitHub release
+make release    # dist/*.tar.gz for amd64 and arm64, plus their SHA-256 files
 ```
 
 `CGO_ENABLED=0` throughout: the SQLite driver is pure Go, so cross-compiling for
-a server from any machine needs no toolchain and the result has no shared
-library dependencies.
+a server from any machine needs no toolchain, and the result is a static binary
+with nothing to resolve on the machine it lands on. That is what lets the
+install be a download.
+
+Releases are built by GitHub rather than by hand. Push a tag and
+`.github/workflows/release.yml` runs the tests, builds both architectures,
+checks that each binary really is statically linked, and attaches the tarballs
+to the release:
+
+```sh
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+`get.sh` then finds that release and installs it. There is also a
+`workflow_dispatch` trigger, for building a release from a branch without
+tagging it.
 
 ## Run
 
