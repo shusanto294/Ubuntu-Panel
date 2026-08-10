@@ -68,6 +68,18 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
             </div>
         </template>
 
+        <!--
+            Above the columns rather than inside the card that started it.
+            Setting a hostname rewrites the vhost and reloads nginx, and while
+            that runs the card underneath is a form you should not be filling
+            in again — so the progress belongs where every other page puts it,
+            full width under the header, rather than wedged between a warning
+            and the field it is about.
+        -->
+        <div v-if="activeTask ?? latestTask" class="mb-6">
+            <TaskStatus :task="activeTask ?? latestTask" />
+        </div>
+
         <div class="grid gap-6 lg:grid-cols-2">
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Panel address</h3>
@@ -118,10 +130,6 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     Certbot is not installed, so setting a hostname puts the panel
                     on it over HTTP only. Install Certbot from Apps first if you
                     want HTTPS in the same run.
-                </div>
-
-                <div v-if="activeTask ?? latestTask" class="mt-4">
-                    <TaskStatus :task="activeTask ?? latestTask" />
                 </div>
 
                 <form @submit.prevent="submitDomain" class="mt-4 space-y-4">
