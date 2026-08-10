@@ -323,10 +323,35 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 	list.Add("Configure Dovecot",
 		"sudo chown root:dovecot /etc/dovecot/dovecot-sql.conf.ext",
 		"sudo chmod 640 /etc/dovecot/dovecot-sql.conf.ext",
+
+		// Stop asking PAM about mailboxes that are not unix accounts.
+		//
+		// Debian's 10-auth.conf includes auth-system.conf.ext, and it is
+		// included before this panel's drop-in — so PAM is the first passdb in
+		// the chain. Asked about apple@example.com it does not answer "no such
+		// user" and move on; it fails, and Dovecot stops at the first passdb
+		// that fails rather than trying the next one. The mailbox is in the SQL
+		// table, the password is right, and the login is refused: exactly the
+		// "Login failed" a webmail shows with nothing else to say.
+		//
+		// Commented out rather than deleted, and only when it is still active,
+		// so running this again is running it once.
+		"grep -qE '^[[:space:]]*!include auth-system.conf.ext' /etc/dovecot/conf.d/10-auth.conf && "+
+			"sudo sed -i 's|^[[:space:]]*!include auth-system.conf.ext|"+
+			"# Disabled by Ubuntu Panel: mailboxes are SQL rows, not unix accounts.\\n"+
+			"#!include auth-system.conf.ext|' /etc/dovecot/conf.d/10-auth.conf || true",
+
 		// Read the whole configuration back before restarting on it: Dovecot
 		// refuses to start on a file it cannot parse, and a mail server that
 		// will not come up is worse than one that is merely misconfigured.
 		"sudo doveconf -n > /dev/null",
+
+		// The passdb chain is what was just changed, so it is what gets
+		// checked: one line naming the driver, and a failure here is a mail
+		// server that will refuse every login.
+		"sudo doveconf -n passdb | grep -q 'driver = sql' || "+
+			"{ echo 'Dovecot is not configured to read mailboxes from SQL.'; exit 1; }",
+
 		"sudo systemctl restart dovecot",
 		"sudo systemctl restart postfix")
 

@@ -58,10 +58,10 @@ func dovecotHash(password string) (string, error) {
 // panel already has the password it just set.
 //
 // The password goes in through stdin, so it never appears in `ps`.
-func authTest(runner *tasks.Runner, address, password string) string {
+func authTest(runner *tasks.Runner, address, password string) (string, bool) {
 	staged, err := os.CreateTemp("", "ubuntu-panel-auth-*")
 	if err != nil {
-		return ""
+		return "", true
 	}
 
 	name := staged.Name()
@@ -75,12 +75,12 @@ func authTest(runner *tasks.Runner, address, password string) string {
 		proc.Quote(address), proc.Quote(name)), time.Minute)
 
 	if code == 0 {
-		return "Dovecot accepted " + address + "."
+		return "Dovecot accepted " + address + ".", true
 	}
 
-	return "Dovecot refused " + address + " — its answer is above. A passdb that is not " +
-		"consulted, a database it cannot read and a wrong password all end up here, and it " +
-		"says which."
+	return "Dovecot refused this mailbox, so a mail client will say the password is wrong. " +
+		"Repair the mail server from the Email page — that rewrites the Dovecot configuration " +
+		"and re-checks it — then repair this mailbox.", false
 }
 
 // CreateAccount provisions one mailbox.
@@ -120,7 +120,14 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 		return fail(err.Error())
 	}
 
-	script := fmt.Sprintf(
+	// The domain row first. The mailbox insert selects the domain's id, so a
+	// missing domain makes it a statement that inserts nothing and reports
+	// success — a mailbox the panel calls active and Dovecot has never heard
+	// of, which is a "Login failed" with a correct password behind it.
+	script := fmt.Sprintf("INSERT IGNORE INTO %s.virtual_domains (name) VALUES (%s);\n",
+		mailDB, sqlQuote(domain.Domain))
+
+	script += fmt.Sprintf(
 		"INSERT INTO %s.virtual_users (domain_id, email, password, quota_bytes) "+
 			"SELECT id, %s, %s, %d FROM %s.virtual_domains WHERE name = %s "+
 			"ON DUPLICATE KEY UPDATE password = VALUES(password), quota_bytes = VALUES(quota_bytes);\n",
@@ -129,6 +136,16 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 
 	if err := runSQL(script); err != nil {
 		return fail(err.Error())
+	}
+
+	// Asked of the table rather than assumed from an exit status: the insert
+	// above is a SELECT with no rows on a machine whose mail schema was
+	// reinstalled underneath, and MariaDB calls that success.
+	if !proc.Ok(fmt.Sprintf("sudo mysql -N -B -e %s | grep -q '^1$'",
+		proc.Quote(fmt.Sprintf("SELECT count(*) FROM %s.virtual_users WHERE email = %s;",
+			mailDB, sqlQuote(address))))) {
+		return fail("The mailbox was not written to the mail server's table, so nothing would " +
+			"accept its password. Repair the mail server from the Email page and try again.")
 	}
 
 	list := &tasks.List{}
@@ -142,9 +159,17 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 	// Last, because it is the only step that reports on the finished article
 	// rather than building part of it. Never fatal: the mailbox exists either
 	// way, and a mail server that is not answering yet is a thing to fix rather
-	// than a reason to unwind.
+	// than a reason to unwind — but what Dovecot said goes on the mailbox, so
+	// the Email page carries the answer rather than the log being the only
+	// place it was ever written.
 	list.AddFn("Check the mailbox can log in", func(runner *tasks.Runner) (string, error) {
-		return authTest(runner, address, account.Password), nil
+		answer, ok := authTest(runner, address, account.Password)
+
+		if !ok {
+			s.Store.SetEmailAccountStatus(accountID, "active", answer)
+		}
+
+		return answer, nil
 	}).Optional()
 
 	if tasks.New(s.Store, taskID).Run(list) {
