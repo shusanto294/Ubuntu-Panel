@@ -11,8 +11,7 @@ import (
 //
 // Names match the C panel's exactly, because they are what the Vue pages build
 // every URL from through the route() helper. Keeping them identical is what
-// lets the frontend come across unmodified and lets a page be ported one at a
-// time rather than all at once.
+// lets the frontend come across unmodified.
 func (a *App) routes() *router {
 	rt := newRouter(a)
 
@@ -32,29 +31,101 @@ func (a *App) routes() *router {
 	rt.post("/setup", "", guest, a.setup)
 
 	// This machine
-	rt.get("/dashboard", "dashboard", authenticated, a.dashboard)
+	rt.get("/dashboard", "dashboard", authenticated, a.overview)
+	rt.get("/system/metrics", "system.metrics", authenticated, a.metricsEndpoint)
+	rt.get("/system/metrics/history", "system.metrics.history", authenticated, a.metricHistory)
+	rt.get("/system/credentials", "system.credentials", authenticated, a.credentials)
+	rt.patch("/system/settings", "system.settings", authenticated, a.updateSettings)
+	rt.get("/system/updates", "system.updates", authenticated, a.checkUpdates)
+	rt.get("/settings", "settings", authenticated, a.settings)
+	rt.post("/system/domain", "system.domain", authenticated, a.updateDomain)
+	rt.post("/system/update", "system.update", authenticated, a.updatePanel)
+
+	// Apps.
+	//
+	// The route *names* stay `services.*`: they are what the Vue pages call
+	// route() with, and renaming them buys a different string for the same
+	// endpoint. The URL and the label are what anybody actually sees, and those
+	// say apps.
+	rt.get("/apps", "services.index", authenticated, a.apps)
+	rt.post("/apps/detect", "services.detect", authenticated, a.servicesDetect)
+	rt.post("/apps/install", "services.install-many", authenticated, a.servicesInstallMany)
+	rt.post("/apps/{service}/install", "services.install", authenticated, a.servicesInstallOne)
+	rt.post("/apps/{service}/retry", "services.retry", authenticated, a.servicesRetry)
+	rt.post("/apps/{service}/uninstall", "services.uninstall", authenticated, a.servicesUninstall)
+
+	// The old path, so a bookmark or an open tab does not 404.
+	rt.get("/services", "services.index-legacy", authenticated, a.apps)
+
+	// Logs. Every queued job writes a task, and this is where they are read —
+	// the pages that start the work show a line of progress and link here
+	// rather than carrying a console each.
+	rt.get("/logs", "logs.index", authenticated, a.logsIndex)
+	rt.get("/logs/{task}", "logs.show", authenticated, a.logsShow)
+
+	rt.get("/tasks/latest", "tasks.latest", authenticated, a.tasksLatest)
+	rt.get("/tasks/{task}", "tasks.show", authenticated, a.tasksShow)
+
+	// Sites
+	rt.get("/sites", "sites.index", authenticated, a.sitesIndex)
+	rt.get("/sites/create", "sites.create", authenticated, a.sitesCreate)
+	rt.post("/sites", "sites.store", authenticated, a.sitesStore)
+	rt.get("/sites/{site}", "sites.show", authenticated, a.sitesShow)
+	rt.delete("/sites/{site}", "sites.destroy", authenticated, a.sitesDestroy)
+	rt.post("/sites/{site}/dns-sync", "sites.dns-sync", authenticated, a.sitesSyncDNS)
+	rt.post("/sites/{site}/redeploy", "sites.redeploy", authenticated, a.sitesRedeploy)
+	rt.post("/sites/{site}/pull", "sites.pull", authenticated, a.sitesPull)
+	rt.post("/sites/{site}/restart", "sites.restart", authenticated, a.sitesRestart)
+
+	// Databases
+	rt.get("/databases", "databases.index", authenticated, a.databasesIndex)
+	rt.get("/databases/create", "databases.create", authenticated, a.databasesCreate)
+	rt.post("/databases", "databases.store", authenticated, a.databasesStore)
+	rt.delete("/databases/{database}", "databases.destroy", authenticated, a.databasesDestroy)
+	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
+		a.databasesCredentials)
+
+	// Email
+	rt.get("/email", "email.index", authenticated, a.emailIndex)
+	rt.post("/email/repair", "email.repair", authenticated, a.emailRepair)
+	rt.get("/email/domains/create", "email.domains.create", authenticated, a.emailCreateDomain)
+	rt.post("/email/domains", "email.domains.store", authenticated, a.emailStoreDomain)
+	rt.get("/email/domains/{domain}", "email.domains.show", authenticated, a.emailShowDomain)
+	rt.delete("/email/domains/{domain}", "email.domains.destroy", authenticated, a.emailDestroyDomain)
+	rt.post("/email/domains/{domain}/dns", "email.domains.dns", authenticated, a.emailSyncDNS)
+	rt.post("/email/domains/{domain}/retry", "email.domains.retry", authenticated, a.emailRetryDomain)
+	rt.get("/email/domains/{domain}/accounts/create", "email.accounts.create", authenticated,
+		a.emailCreateAccount)
+	rt.post("/email/domains/{domain}/accounts", "email.accounts.store", authenticated,
+		a.emailStoreAccount)
+	rt.post("/email/accounts/{account}/repair", "email.accounts.repair", authenticated,
+		a.emailRepairAccount)
+	rt.delete("/email/accounts/{account}", "email.accounts.destroy", authenticated,
+		a.emailDestroyAccount)
+
+	// DNS credentials
+	rt.get("/dns", "dns.index", authenticated, a.dnsIndex)
+	rt.get("/dns/create", "dns.create", authenticated, a.dnsCreate)
+	rt.post("/dns-accounts", "dns.store", authenticated, a.dnsStore)
+	rt.patch("/dns-accounts/{account}", "dns.update", authenticated, a.dnsUpdate)
+	rt.delete("/dns-accounts/{account}", "dns.destroy", authenticated, a.dnsDestroy)
+	rt.post("/dns-accounts/{account}/verify", "dns.verify", authenticated, a.dnsVerify)
+	rt.get("/dns-accounts/{account}/zones", "dns.zones", authenticated, a.dnsZones)
+	rt.get("/dns-accounts/{account}/records", "dns.records", authenticated, a.dnsRecords)
+	rt.post("/dns-accounts/{account}/records", "dns.records.store", authenticated, a.dnsStoreRecord)
+	rt.delete("/dns-accounts/{account}/records", "dns.records.destroy", authenticated,
+		a.dnsDestroyRecord)
 
 	// Profile
 	rt.get("/profile", "profile.edit", authenticated, a.editProfile)
 	rt.patch("/profile", "profile.update", authenticated, a.updateProfile)
 	rt.patch("/password", "password.update", authenticated, a.updatePassword)
 
-	// Not ported from the C panel yet. They are registered so that the
-	// navigation renders and route() resolves — an unknown name makes the
-	// helper throw and takes the whole page with it — and each answers with a
+	// The browser terminal is not ported yet. The route is registered so that
+	// the navigation renders and route() resolves — an unknown name makes the
+	// helper throw and takes the whole page with it — and it answers with a
 	// page saying so rather than a broken one.
-	for _, pending := range []struct{ pattern, name, title string }{
-		{"/sites", "sites.index", "Sites"},
-		{"/databases", "databases.index", "Databases"},
-		{"/email", "email.index", "Email"},
-		{"/terminal", "terminal", "Terminal"},
-		{"/apps", "services.index", "Apps"},
-		{"/dns", "dns.index", "DNS"},
-		{"/logs", "logs.index", "Logs"},
-		{"/settings", "settings", "Settings"},
-	} {
-		rt.get(pending.pattern, pending.name, authenticated, a.notPorted(pending.title))
-	}
+	rt.get("/terminal", "terminal", authenticated, a.notPorted("Terminal"))
 
 	return rt
 }

@@ -1,3 +1,11 @@
+# Managed by the Ubuntu Panel installer.
+#
+# The panel runs as its own unregistered user with passwordless sudo, rather
+# than as root. That is not much of a boundary — sudo without a password is
+# root on request — but it means every privileged action goes through a sudo
+# invocation that lands in the audit log, and a stray command in a browser
+# shell does not.
+
 [Unit]
 Description=Ubuntu Panel
 Documentation=https://github.com/shusanto294/Ubuntu-Panel-Go
@@ -6,25 +14,49 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/ubuntu-panel/bin/ubuntu-panel --config /etc/ubuntu-panel/panel.conf
-Restart=always
-RestartSec=2
+User=ubuntupanel
+Group=ubuntupanel
 
-# The panel provisions services, so it runs as root. Everything below narrows
-# what that root can reach: it needs its own state, the sites it serves, and the
-# system tools it drives — not the rest of the filesystem.
-User=root
 WorkingDirectory=/opt/ubuntu-panel
+ExecStart=/opt/ubuntu-panel/bin/ubuntu-panel --config /etc/ubuntu-panel/panel.conf
+
+Restart=always
+RestartSec=3
+
+# The panel's own state.
+StateDirectory=ubuntu-panel
+LogsDirectory=ubuntu-panel
 
 NoNewPrivileges=no
-PrivateTmp=yes
-ProtectSystem=full
-ProtectHome=read-only
-ReadWritePaths=/var/lib/ubuntu-panel /var/log/ubuntu-panel /var/www /etc/ubuntu-panel
+PrivateTmp=no
 
-# Journal gets everything; the panel also writes its own log file.
-StandardOutput=journal
-StandardError=journal
+# ProtectSystem and ProtectHome are deliberately off.
+#
+# They were set to `full` and `read-only`, on the theory that the panel could
+# be confined to its own directories because the privileged work goes out
+# through sudo. That theory is wrong. ProtectSystem is a mount namespace on
+# the service, and every process the panel forks lives inside it — sudo and
+# root included, because the namespace is not a permission check that root can
+# pass. /usr, /boot and /etc would therefore be read-only to `apt-get` too,
+# which is why installing anything failed at the unpack step with
+#
+#   unable to clean up mess surrounding './usr/bin/zip': Read-only file system
+#
+# and why writing an nginx vhost or a certbot certificate under /etc would
+# have failed the same way.
+#
+# There is no setting here that both leaves /usr writable to apt and read-only
+# to the panel, because they are the same process tree. Confining it properly
+# means running the privileged commands outside the unit — `systemd-run` makes
+# a transient service with its own namespace — which is a real option and a
+# larger change than a unit file.
+#
+# ProtectSystem=no
+# ProtectHome=no
+
+# A deployment forks apt, npm and composer; the default is far too low for
+# what those open.
+LimitNOFILE=8192
 
 [Install]
 WantedBy=multi-user.target

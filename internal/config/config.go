@@ -36,6 +36,17 @@ type Config struct {
 	Repository   string
 	UpdateBranch string
 
+	// AppKey is 32 random bytes, base64, and every stored credential is
+	// encrypted with it. The installer writes it into panel.conf before the
+	// first start: the panel cannot mint one for itself, because the config
+	// file is not writable by the user the panel runs as, so a key it
+	// generated would be a different key on every restart and would orphan
+	// every encrypted column in the database.
+	AppKey string
+
+	// Workers is how many queue workers run deployments and installs.
+	Workers int
+
 	// Debug serves the frontend from disk and logs every request. Off in
 	// production, where the embedded build is both faster and immutable.
 	Debug bool
@@ -75,8 +86,18 @@ func Load(path string) (*Config, error) {
 		SystemUser:   get("PANEL_SYSTEM_USER", "ubuntupanel"),
 		Repository:   get("PANEL_REPOSITORY", "https://github.com/shusanto294/Ubuntu-Panel-Go"),
 		UpdateBranch: get("PANEL_UPDATE_BRANCH", "main"),
+		AppKey:       get("PANEL_APP_KEY", ""),
 		Debug:        truthy(get("PANEL_DEBUG", "")),
 	}
+
+	workers, err := strconv.Atoi(get("PANEL_WORKERS", "2"))
+	if err != nil || workers < 1 {
+		workers = 2
+	}
+	if workers > 8 {
+		workers = 8
+	}
+	config.Workers = workers
 
 	if config.PublicPath == "" {
 		config.PublicPath = filepath.Join(config.Root, "public")

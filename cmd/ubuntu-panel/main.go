@@ -21,8 +21,10 @@ import (
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/assets"
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 	"github.com/shusanto294/ubuntu-panel-go/internal/web"
 )
 
@@ -62,6 +64,23 @@ func run(configPath string) error {
 
 	log.Info("database ready", "path", cfg.DatabasePath)
 
+	// The application key encrypts every stored credential. A panel without one
+	// still serves every page that does not touch a credential, and says so
+	// where one is needed — which is a great deal more useful than refusing to
+	// start on a machine whose panel.conf is what you would use the panel to
+	// fix.
+	cipher, err := crypto.New(cfg.AppKey)
+	if err != nil {
+		log.Error("the application key could not be used", "error", err)
+	}
+
+	if !cipher.Ready() {
+		log.Warn("no application key: DNS tokens and stored passwords cannot be read or written",
+			"fix", "set PANEL_APP_KEY in /etc/ubuntu-panel/panel.conf and restart")
+	}
+
+	db.UseCipher(cipher)
+
 	app := web.New(cfg, db, assets.FS(cfg.PublicPath, cfg.Debug), log)
 
 	if cfg.Debug {
@@ -94,6 +113,12 @@ func run(configPath string) error {
 	defer stopBackground()
 
 	go prune(background, app.Sessions, log)
+	go sample(background, db)
+
+	// Deployments and installs run here, and anything left running when the
+	// panel stopped goes back on the queue.
+	app.Start(background)
+	defer app.Stop()
 
 	errs := make(chan error, 1)
 
@@ -122,6 +147,35 @@ func run(configPath string) error {
 	defer cancel()
 
 	return server.Shutdown(shutdown)
+}
+
+// sample records one metrics reading a minute for the dashboard graphs, and
+// prunes what has aged out of the longest window.
+func sample(ctx context.Context, db *store.Store) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	pruned := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		metrics := system.Read()
+
+		db.RecordMetrics(metrics.CPUPercent, metrics.MemoryPercent, metrics.DiskPercent,
+			metrics.SwapPercent, metrics.Load[0],
+			int64(metrics.MemoryUsed), int64(metrics.MemoryTotal),
+			int64(metrics.DiskUsed), int64(metrics.DiskTotal))
+
+		if time.Since(pruned) > 6*time.Hour {
+			db.PruneMetrics()
+			pruned = time.Now()
+		}
+	}
 }
 
 // prune clears out sessions nobody has used, hourly.

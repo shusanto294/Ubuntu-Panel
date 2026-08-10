@@ -27,10 +27,11 @@ build:
 	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/ubuntu-panel
 
 # The panel targets Linux servers; this is what a release is built with. No
-# cgo means no cross-compiler is needed for either architecture.
-release: frontend
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 ./cmd/ubuntu-panel
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64 ./cmd/ubuntu-panel
+# cgo means no cross-compiler is needed for either architecture. The script
+# also stages the installer and the unit file into each tarball, which is what
+# get.sh unpacks and runs.
+release:
+	./scripts/build-release.sh
 
 test:
 	go test ./...

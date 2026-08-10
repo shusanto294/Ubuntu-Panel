@@ -3,13 +3,19 @@
 package web
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
 
+	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
+	"github.com/shusanto294/ubuntu-panel-go/internal/mail"
+	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
+	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 )
 
@@ -20,6 +26,15 @@ type App struct {
 	Sessions *session.Manager
 	Render   *inertia.Renderer
 	Log      *slog.Logger
+
+	// The services a handler validates against and hands work to. Handlers do
+	// three things and no more: validate input, call a service, render or
+	// redirect. Anything that takes longer than a request goes on the queue.
+	Queue     *queue.Queue
+	Catalog   *catalog.Service
+	Sites     *sites.Service
+	Databases *databases.Service
+	Mail      *mail.Service
 
 	assets fs.FS
 	router *router
@@ -38,11 +53,34 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 		assets:   assets,
 	}
 
+	app.Queue = queue.New(st, log, cfg.Workers)
+	app.Catalog = catalog.New(st)
+	app.Databases = databases.New(st)
+	app.Sites = sites.New(st, app.Databases)
+	app.Mail = mail.New(st)
+
+	// Two services need each other and one of them would be an import cycle,
+	// so the connection is made here: the catalogue's nginx step writes the
+	// shared configuration the sites package owns, and its mail step
+	// configures the mail server once the packages are down.
+	catalog.SharedNginxConfig = app.Sites.WriteSharedConfig
+	catalog.ConfigureMail = app.Mail.Configure
+
+	app.registerJobs()
+
 	app.Render.SharedProps = app.sharedProps
 	app.router = app.routes()
 
 	return app
 }
+
+// Start brings up the background workers. Called after the server is wired but
+// before it listens, so a deployment interrupted by a restart resumes as soon
+// as the panel is back.
+func (a *App) Start(ctx context.Context) { a.Queue.Start(ctx) }
+
+// Stop lets the workers finish.
+func (a *App) Stop() { a.Queue.Stop() }
 
 // Handler is the whole server: the route table wrapped in the middleware every
 // request passes through, outermost first.

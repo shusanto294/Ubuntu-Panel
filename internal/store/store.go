@@ -15,12 +15,38 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+
 	_ "modernc.org/sqlite"
 )
 
 // Store is a handle on the panel's database.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *crypto.Cipher
+}
+
+// UseCipher gives the store the application key, which is what lets it decrypt
+// the credential columns on the way out and encrypt them on the way in. A
+// store without one still serves every page that does not touch a credential.
+func (s *Store) UseCipher(cipher *crypto.Cipher) { s.cipher = cipher }
+
+// encrypt and decrypt are the store's own view of the cipher: a missing key is
+// not a panic here, it is an empty column and an error the caller can report.
+func (s *Store) encrypt(value string) (string, error) {
+	if s.cipher == nil {
+		return "", crypto.ErrNoKey
+	}
+
+	return s.cipher.Encrypt(value)
+}
+
+func (s *Store) decrypt(value string) string {
+	if s.cipher == nil {
+		return ""
+	}
+
+	return s.cipher.MustDecrypt(value)
 }
 
 // Open prepares the database file and applies the schema. The directory is
