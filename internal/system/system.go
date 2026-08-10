@@ -68,30 +68,45 @@ func Read() Metrics {
 	return metrics
 }
 
-// Summary is the shape the dashboard reads.
+// Summary is the shape the dashboard's graphs read: one object per resource,
+// because CPU, memory and disk answer different questions and only share a unit
+// by accident.
+//
+// A CPU usage of null is a first reading with nothing to compare against — the
+// counters in /proc/stat are cumulative — and the page simply asks again a
+// second later. Sending a zero instead would draw a graph that says the machine
+// was idle when it was only just asked.
 func (m Metrics) Summary() map[string]any {
-	cpuPercent := any(nil)
+	usage := any(nil)
 	if m.CPUPercent >= 0 {
-		cpuPercent = round(m.CPUPercent)
+		usage = round(m.CPUPercent)
 	}
 
 	return map[string]any{
-		"cpu_percent":      cpuPercent,
-		"cores":            m.Cores,
-		"memory_total":     m.MemoryTotal,
-		"memory_used":      m.MemoryUsed,
-		"memory_available": m.MemoryAvailable,
-		"memory_percent":   round(m.MemoryPercent),
-		"swap_total":       m.SwapTotal,
-		"swap_used":        m.SwapUsed,
-		"swap_percent":     round(m.SwapPercent),
-		"disk_total":       m.DiskTotal,
-		"disk_used":        m.DiskUsed,
-		"disk_free":        m.DiskFree,
-		"disk_percent":     round(m.DiskPercent),
-		"load":             []float64{m.Load[0], m.Load[1], m.Load[2]},
-		"uptime_seconds":   m.UptimeSeconds,
-		"sampled_at":       m.SampledAt,
+		"cpu": map[string]any{
+			"usage": usage,
+			"cores": m.Cores,
+		},
+		"memory": map[string]any{
+			"total":     m.MemoryTotal,
+			"used":      m.MemoryUsed,
+			"available": m.MemoryAvailable,
+			"percent":   round(m.MemoryPercent),
+		},
+		"swap": map[string]any{
+			"total":   m.SwapTotal,
+			"used":    m.SwapUsed,
+			"percent": round(m.SwapPercent),
+		},
+		"disk": map[string]any{
+			"total":   m.DiskTotal,
+			"used":    m.DiskUsed,
+			"free":    m.DiskFree,
+			"percent": round(m.DiskPercent),
+		},
+		"load":           []float64{m.Load[0], m.Load[1], m.Load[2]},
+		"uptime_seconds": m.UptimeSeconds,
+		"sampled_at":     m.SampledAt,
 	}
 }
 

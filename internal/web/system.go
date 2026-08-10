@@ -640,24 +640,19 @@ var updateCache struct {
 	fetched time.Time
 }
 
-// updateStatus is whether a newer commit has been published on the update
-// branch.
+// updateStatus is everything the version card needs to say "you are up to
+// date" or otherwise: what is installed, what is published, and the one command
+// that closes the gap.
+//
+// The shape is the Laravel panel's, because the card that reads it came from
+// there — `current`, `latest`, `available`, `command` — and a flat object would
+// blank the whole Settings page on the first property it could not find.
 func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
-	installed := a.Store.Setting("installed_commit", "")
-
-	status := map[string]any{
-		"version":          config.Version,
-		"installed_commit": nullable(installed),
-		"available":        false,
-		"latest_commit":    nil,
-		"checked_at":       nil,
-		"repository":       a.Config.Repository,
-	}
-
-	if installed == "" {
-		// Nothing to compare against: the installer records this, and a panel
-		// built by hand has no commit to name.
-		return status
+	current := map[string]any{
+		"version":      config.Version,
+		"commit":       nullable(a.Store.Setting("installed_commit", "")),
+		"committed_at": nullable(a.Store.Setting("installed_at", "")),
+		"repository":   a.Config.Repository,
 	}
 
 	updateCache.Lock()
@@ -665,16 +660,33 @@ func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
 	updateCache.Unlock()
 
 	if !fresh && cached != nil && time.Since(fetchedAt) < 6*time.Hour {
-		return cached
+		// The installed half is read fresh every time: it changes when the
+		// panel is updated, and the cache is about GitHub, not about this
+		// machine.
+		refreshed := map[string]any{}
+		for key, value := range cached {
+			refreshed[key] = value
+		}
+
+		refreshed["current"] = current
+		refreshed["available"] = behind(current, refreshed["latest"])
+
+		return refreshed
 	}
 
-	latest := latestCommit(a.Config.Repository, a.Config.UpdateBranch)
+	latest := a.latestRelease()
 
-	if latest != "" {
-		status["latest_commit"] = latest
-		status["available"] = latest != installed
-		status["checked_at"] = time.Now().UTC().Format(time.RFC3339)
+	status := map[string]any{
+		"current":    current,
+		"latest":     latest,
+		"available":  behind(current, latest),
+		"command":    a.updateCommand(),
+		"checked_at": time.Now().UTC().Format(time.RFC3339),
+	}
 
+	// A failed check is not cached: the next page view should try again rather
+	// than repeat an error for six hours.
+	if latest["error"] == nil {
 		updateCache.Lock()
 		updateCache.value, updateCache.fetched = status, time.Now()
 		updateCache.Unlock()
@@ -683,48 +695,142 @@ func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
 	return status
 }
 
-// latestCommit asks GitHub for the tip of the update branch.
-func latestCommit(repository, branch string) string {
-	repository = strings.TrimSuffix(strings.TrimPrefix(repository, "https://github.com/"), ".git")
+// updateCommand is the exact line to paste. Built here rather than written into
+// the page because the panel knows which repository it came from.
+func (a *App) updateCommand() string {
+	repository := strings.TrimSuffix(strings.TrimSuffix(a.Config.Repository, "/"), ".git")
+	repository = strings.TrimPrefix(repository, "https://github.com/")
 
-	if repository == "" || strings.Contains(repository, "/") == false {
-		return ""
+	return fmt.Sprintf(
+		"curl -fsSL https://raw.githubusercontent.com/%s/%s/get.sh | sudo bash",
+		repository, a.Config.UpdateBranch)
+}
+
+// latestRelease is the newest published release, falling back to the tip of the
+// update branch on a repository that has never tagged one.
+func (a *App) latestRelease() map[string]any {
+	repository := strings.TrimSuffix(strings.TrimPrefix(a.Config.Repository, "https://github.com/"), ".git")
+
+	empty := func(reason string) map[string]any {
+		return map[string]any{
+			"version": nil, "commit": nil, "committed_at": nil, "url": nil,
+			"error": reason,
+		}
 	}
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", repository, branch)
+	if !strings.Contains(repository, "/") {
+		return empty("The configured repository is not a GitHub one.")
+	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	var release struct {
+		TagName     string `json:"tag_name"`
+		HTMLURL     string `json:"html_url"`
+		PublishedAt string `json:"published_at"`
+		TargetSHA   string `json:"target_commitish"`
+	}
 
+	status, err := fetchJSON("https://api.github.com/repos/"+repository+"/releases/latest", &release)
+
+	switch {
+	case err != nil:
+		return empty(err.Error())
+
+	case status == http.StatusOK && release.TagName != "":
+		return map[string]any{
+			"version":      strings.TrimPrefix(release.TagName, "v"),
+			"commit":       nullable(release.TargetSHA),
+			"committed_at": nullable(release.PublishedAt),
+			"url":          nullable(release.HTMLURL),
+			"error":        nil,
+		}
+
+	case status != http.StatusNotFound:
+		return empty(fmt.Sprintf("GitHub answered HTTP %d.", status))
+	}
+
+	// No release yet: the tip of the update branch is the only thing to
+	// compare against, and it is what an install from source recorded.
+	var commit struct {
+		SHA     string `json:"sha"`
+		HTMLURL string `json:"html_url"`
+		Commit  struct {
+			Committer struct {
+				Date string `json:"date"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+
+	status, err = fetchJSON(
+		"https://api.github.com/repos/"+repository+"/commits/"+a.Config.UpdateBranch, &commit)
+
+	if err != nil {
+		return empty(err.Error())
+	}
+
+	if status != http.StatusOK || commit.SHA == "" {
+		return empty(fmt.Sprintf("GitHub answered HTTP %d.", status))
+	}
+
+	return map[string]any{
+		"version":      nil,
+		"commit":       commit.SHA,
+		"committed_at": nullable(commit.Commit.Committer.Date),
+		"url":          nullable(commit.HTMLURL),
+		"error":        nil,
+	}
+}
+
+// behind compares what is installed against what is published. Versions decide
+// it when both have one; otherwise the commit does, and a machine that recorded
+// neither is left alone rather than told forever that it is out of date.
+func behind(current map[string]any, latest any) bool {
+	published, ok := latest.(map[string]any)
+	if !ok || published["error"] != nil {
+		return false
+	}
+
+	if version, ok := published["version"].(string); ok && version != "" {
+		installed, _ := current["version"].(string)
+
+		return installed != "" && strings.TrimPrefix(installed, "v") != strings.TrimPrefix(version, "v")
+	}
+
+	commit, ok := published["commit"].(string)
+	if !ok || commit == "" {
+		return false
+	}
+
+	installed, _ := current["commit"].(string)
+
+	return installed != "" && installed != commit
+}
+
+// fetchJSON is one GitHub call. The status code comes back with the body
+// because "nothing published yet" and "rate limited" are different answers to
+// the same question.
+func fetchJSON(url string, into any) (int, error) {
 	request, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return 0, err
 	}
 
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "Ubuntu-Panel")
 
-	response, err := client.Do(request)
+	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
 	if err != nil {
-		return ""
+		return 0, fmt.Errorf("could not reach GitHub: %w", err)
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusOK {
-		return ""
-	}
-
-	var body struct {
-		SHA string `json:"sha"`
-	}
-
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return ""
+		return response.StatusCode, err
 	}
 
-	json.Unmarshal(raw, &body)
+	json.Unmarshal(raw, into)
 
-	return body.SHA
+	return response.StatusCode, nil
 }
 
 func (a *App) checkUpdates(w http.ResponseWriter, r *http.Request) {
@@ -735,10 +841,12 @@ func (a *App) checkUpdates(w http.ResponseWriter, r *http.Request) {
 // replacing this binary and restarting this service does not kill the process
 // doing it.
 func (a *App) updatePanel(w http.ResponseWriter, r *http.Request) {
+	// The same line the card offers to copy, in a transient unit of its own —
+	// replacing this binary and restarting this service would otherwise kill
+	// the process doing it.
 	command := fmt.Sprintf(
 		"sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' "+
-			"/bin/bash -c \"curl -fsSL %s/raw/%s/get.sh | bash\"",
-		strings.TrimSuffix(a.Config.Repository, "/"), a.Config.UpdateBranch)
+			"/bin/bash -c %s", proc.Quote(a.updateCommand()))
 
 	if result := proc.Run(command, time.Minute); !result.OK() {
 		a.failBack(w, r, "Could not start the update: "+result.Output)

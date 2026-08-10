@@ -1133,9 +1133,15 @@ step "Finishing up"
 # The panel's update check compares this against the tip of the update branch.
 # Without it, an installed panel can never tell you an update exists.
 if [ -n "$SOURCE_COMMIT" ] && printf '%s' "$SOURCE_COMMIT" | grep -qE '^[0-9a-f]{40}$' && [ -f "$DB_FILE" ]; then
+    # The commit, and when it landed here: the version card shows "installed
+    # <date>" under what is running, and the update check compares the commit
+    # against what the repository has published.
     if sudo -u "$PANEL_USER" sqlite3 "$DB_FILE" \
         "INSERT INTO settings(key, value, secret, created_at, updated_at)
          VALUES('installed_commit', '$SOURCE_COMMIT', 0, datetime('now'), datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now');
+         INSERT INTO settings(key, value, secret, created_at, updated_at)
+         VALUES('installed_at', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 0, datetime('now'), datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now');" \
         >>"$INSTALL_LOG" 2>&1
     then

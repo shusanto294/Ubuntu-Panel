@@ -2,30 +2,41 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"time"
 )
 
 // DefaultMetricRange is what the graphs open on.
 const DefaultMetricRange = "1h"
 
-// metricRange is one option under the graphs.
-type metricRange struct {
+// MetricRange is one option under the graphs.
+//
+// The bucket is chosen so each range lands near a hundred points: reading a
+// month back a sample at a time would be 43,000 rows for a graph 300 pixels
+// wide, and anything denser than a hundred points is finer than the graph can
+// draw.
+type MetricRange struct {
 	Key    string `json:"key"`
 	Label  string `json:"label"`
-	Hours  int    `json:"-"`
-	Points int    `json:"-"`
+	Window int    `json:"-"` // seconds
+	Bucket int    `json:"-"` // seconds a point covers
+
+	// RefreshMS is how often a graph on this range is worth refetching. There
+	// is no point asking again before the next bucket can have moved.
+	RefreshMS int `json:"refresh_ms"`
 }
 
-// MetricRanges are the windows the dashboard offers. Every one of them is
-// averaged into the same number of points, so a month costs the same handful of
-// rows to render as an hour does.
-var MetricRanges = []metricRange{
-	{Key: "1h", Label: "Last hour", Hours: 1, Points: 60},
-	{Key: "6h", Label: "6 hours", Hours: 6, Points: 72},
-	{Key: "24h", Label: "24 hours", Hours: 24, Points: 96},
-	{Key: "7d", Label: "7 days", Hours: 24 * 7, Points: 84},
-	{Key: "30d", Label: "30 days", Hours: 24 * 30, Points: 90},
+// MetricRanges are the windows the dashboard offers, in the order it renders
+// them.
+var MetricRanges = []MetricRange{
+	{Key: "1h", Label: "1 hour", Window: 3600, Bucket: 60, RefreshMS: 60_000},
+	{Key: "24h", Label: "24 hours", Window: 86400, Bucket: 900, RefreshMS: 60_000},
+	{Key: "7d", Label: "7 days", Window: 604800, Bucket: 3600, RefreshMS: 60_000},
+	{Key: "30d", Label: "30 days", Window: 2592000, Bucket: 21600, RefreshMS: 60_000},
 }
+
+// retainDays is how long a sample is kept; the longest range is 30 days.
+const retainDays = 35
 
 // ValidMetricRange reports whether a range key is one of them.
 func ValidMetricRange(key string) bool {
@@ -38,7 +49,7 @@ func ValidMetricRange(key string) bool {
 	return false
 }
 
-func findMetricRange(key string) metricRange {
+func findMetricRange(key string) MetricRange {
 	for _, window := range MetricRanges {
 		if window.Key == key {
 			return window
@@ -49,8 +60,11 @@ func findMetricRange(key string) metricRange {
 }
 
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
-// housekeeper.
-func (s *Store) RecordMetrics(cpu, memory, disk, swap, load float64, memoryUsed, memoryTotal, diskUsed, diskTotal int64) {
+// housekeeper. A CPU percentage of below zero is the reading that had no
+// previous sample to compare against, and is stored as NULL rather than as a
+// zero the graph would draw a floor at.
+func (s *Store) RecordMetrics(cpu, memory, disk, swap, load float64,
+	memoryUsed, memoryTotal, diskUsed, diskTotal int64) {
 	cpuValue := any(nil)
 	if cpu >= 0 {
 		cpuValue = cpu
@@ -65,58 +79,71 @@ func (s *Store) RecordMetrics(cpu, memory, disk, swap, load float64, memoryUsed,
 		time.Now().UTC().Format("2006-01-02 15:04:05"))
 }
 
-// PruneMetrics deletes samples older than the longest window the graphs offer.
+// PruneMetrics deletes samples past the retention window.
 func (s *Store) PruneMetrics() {
-	s.db.Exec(`DELETE FROM metric_samples WHERE sampled_at < datetime('now', '-31 days')`)
+	s.db.Exec(`DELETE FROM metric_samples WHERE sampled_at < datetime('now', ?)`,
+		"-"+strconv.Itoa(retainDays)+" days")
 }
 
-// MetricHistory is the recorded history for the graphs, averaged into buckets.
+// MetricHistory is the recorded past of this machine's CPU, memory and disk,
+// averaged into buckets by the database.
+//
+// The shape is the one the graphs already read: points oldest first, each with
+// a unix timestamp and the three percentages, plus the byte figures the tooltip
+// puts under them.
 func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 	window := findMetricRange(key)
 
-	// One bucket per (range / points) minutes. The division happens in SQL so
-	// that a month of samples is grouped by the database rather than carried
-	// into Go a row at a time.
-	minutes := window.Hours * 60 / window.Points
-	if minutes < 1 {
-		minutes = 1
-	}
-
-	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
-		`SELECT strftime('%Y-%m-%dT%H:%M:00Z',
-		            datetime((strftime('%s', sampled_at) / (? * 60)) * (? * 60), 'unixepoch')) AS bucket,
-		        avg(cpu_percent), avg(memory_percent), avg(disk_percent), avg(swap_percent), avg(load_1)
-		   FROM metric_samples
-		  WHERE sampled_at >= datetime('now', ?)
-		  GROUP BY bucket
-		  ORDER BY bucket`,
-		minutes, minutes, "-"+itoa(int64(window.Hours))+" hours")
-	if err != nil {
-		return map[string]any{"range": window.Key, "points": []any{}}
-	}
-	defer rows.Close()
+	to := time.Now().UTC()
+	from := to.Add(-time.Duration(window.Window) * time.Second)
 
 	points := []map[string]any{}
 
-	for rows.Next() {
-		var bucket string
-		var cpu, memory, disk, swap, load nullFloat
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT (strftime('%s', sampled_at) / ?) AS bucket,
+		        avg(cpu_percent), avg(memory_percent), avg(disk_percent),
+		        avg(memory_used), max(memory_total), avg(disk_used), max(disk_total)
+		   FROM metric_samples
+		  WHERE sampled_at >= ?
+		  GROUP BY bucket
+		  ORDER BY bucket`,
+		window.Bucket, from.Format("2006-01-02 15:04:05"))
 
-		if err := rows.Scan(&bucket, &cpu, &memory, &disk, &swap, &load); err != nil {
-			continue
+	if err == nil {
+		defer rows.Close()
+
+		for rows.Next() {
+			var bucket int64
+			var cpu, memory, disk, memoryUsed, memoryTotal, diskUsed, diskTotal nullFloat
+
+			if err := rows.Scan(&bucket, &cpu, &memory, &disk,
+				&memoryUsed, &memoryTotal, &diskUsed, &diskTotal); err != nil {
+				continue
+			}
+
+			points = append(points, map[string]any{
+				// The start of the bucket, in unix seconds, which is what the
+				// graph plots against.
+				"t":            bucket * int64(window.Bucket),
+				"cpu":          rounded(cpu),
+				"memory":       rounded(memory),
+				"disk":         rounded(disk),
+				"memory_used":  whole(memoryUsed),
+				"memory_total": whole(memoryTotal),
+				"disk_used":    whole(diskUsed),
+				"disk_total":   whole(diskTotal),
+			})
 		}
-
-		points = append(points, map[string]any{
-			"sampled_at":     bucket,
-			"cpu_percent":    round(cpu),
-			"memory_percent": round(memory),
-			"disk_percent":   round(disk),
-			"swap_percent":   round(swap),
-			"load_1":         round(load),
-		})
 	}
 
-	return map[string]any{"range": window.Key, "points": points}
+	return map[string]any{
+		"range":          window.Key,
+		"label":          window.Label,
+		"bucket_seconds": window.Bucket,
+		"from":           from.Format(time.RFC3339),
+		"to":             to.Format(time.RFC3339),
+		"points":         points,
+	}
 }
 
 type nullFloat struct {
@@ -139,7 +166,9 @@ func (n *nullFloat) Scan(value any) error {
 	return nil
 }
 
-func round(value nullFloat) any {
+// rounded is a percentage to one decimal, or null where nothing was recorded.
+// A gap the graph can see is better than a zero it would draw a line through.
+func rounded(value nullFloat) any {
 	if !value.Valid {
 		return nil
 	}
@@ -147,26 +176,10 @@ func round(value nullFloat) any {
 	return float64(int(value.Value*10+0.5)) / 10
 }
 
-func itoa(value int64) string {
-	digits := ""
-	negative := value < 0
-
-	if negative {
-		value = -value
+func whole(value nullFloat) any {
+	if !value.Valid {
+		return nil
 	}
 
-	for {
-		digits = string(rune('0'+value%10)) + digits
-		value /= 10
-
-		if value == 0 {
-			break
-		}
-	}
-
-	if negative {
-		return "-" + digits
-	}
-
-	return digits
+	return int64(value.Value)
 }
