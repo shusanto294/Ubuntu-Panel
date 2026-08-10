@@ -17,6 +17,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/ubuntu-panel-go/internal/terminal"
 )
 
 // App holds what every handler needs.
@@ -35,6 +36,7 @@ type App struct {
 	Sites     *sites.Service
 	Databases *databases.Service
 	Mail      *mail.Service
+	Terminal  *terminal.Service
 
 	assets fs.FS
 	router *router
@@ -58,6 +60,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	app.Databases = databases.New(st)
 	app.Sites = sites.New(st, app.Databases)
 	app.Mail = mail.New(st)
+	app.Terminal = terminal.New(st, log, cfg.SystemUser)
 
 	// Two services need each other and one of them would be an import cycle,
 	// so the connection is made here: the catalogue's nginx step writes the

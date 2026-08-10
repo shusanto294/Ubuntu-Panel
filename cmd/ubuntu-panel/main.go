@@ -112,7 +112,7 @@ func run(configPath string) error {
 	background, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 
-	go prune(background, app.Sessions, log)
+	go prune(background, app.Sessions, db, log)
 	go sample(background, db)
 
 	// Deployments and installs run here, and anything left running when the
@@ -178,12 +178,14 @@ func sample(ctx context.Context, db *store.Store) {
 	}
 }
 
-// prune clears out sessions nobody has used, hourly.
-func prune(ctx context.Context, sessions *session.Manager, log *slog.Logger) {
+// prune clears out what nobody came back for, hourly: sessions, and the
+// one-shot websocket tickets whose minute ran out.
+func prune(ctx context.Context, sessions *session.Manager, db *store.Store, log *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 
 	sessions.Prune(ctx)
+	db.PruneTickets()
 
 	for {
 		select {
@@ -191,6 +193,7 @@ func prune(ctx context.Context, sessions *session.Manager, log *slog.Logger) {
 			return
 		case <-ticker.C:
 			sessions.Prune(ctx)
+			db.PruneTickets()
 		}
 	}
 }

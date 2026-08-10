@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -193,3 +195,24 @@ func (s *statusRecorder) WriteHeader(status int) {
 }
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Hijack and Flush pass through to the real writer. The websocket upgrade
+// asserts http.Hijacker on whatever it is handed, so every wrapper between the
+// server and the handler has to carry it or the handshake fails with a 500.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+
+	// A hijacked connection writes its own status line; 101 is what it will be.
+	s.status, s.written = http.StatusSwitchingProtocols, true
+
+	return hijacker.Hijack()
+}
+
+func (s *statusRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}

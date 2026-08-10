@@ -84,12 +84,10 @@ Everything the C panel does, from the same pages:
 - **DNS** — Cloudflare, DigitalOcean, Linode, Vultr, Hetzner and Porkbun, with
   a full zone editor
 - **Logs** — every deployment and install streams its console to the page
+- **Terminal** — a real shell in the browser, on a PTY over a websocket
 
 The database schema matches the C panel's, so the same `panel.db` can be served
 by either binary.
-
-Not ported: the browser terminal, which needs a PTY over a websocket. Its page
-says so rather than being a broken one.
 
 ## Why the rewrite
 
@@ -200,6 +198,7 @@ internal/databases    creating and dropping databases on the installed engines
 internal/dns          six DNS providers behind one interface
 internal/mail         Postfix, Dovecot, OpenDKIM and Roundcube
 internal/system       /proc, the public IP, the panel's own hostname
+internal/terminal     the browser shell, and the live stream sharing its socket
 internal/assets       the built frontend, embedded
 resources/js          the Vue frontend, unchanged from the C panel
 ```
@@ -215,6 +214,14 @@ does not stop at the first one that will not configure.
 
 A job left running when the panel stopped goes back on the queue at startup;
 every handler is written to be safe to run twice.
+
+One websocket carries the rest. The dashboard subscribes to `metrics` and a
+running task subscribes to `task:<id>`, so a reading a second costs a read of
+/proc rather than a request; the pages fall back to polling when the socket
+cannot be reached. The same socket carries the terminal, which is a PTY rather
+than a subscription. It authenticates with a one-shot ticket minted by an
+authenticated request, because a cross-scheme upgrade does not reliably carry
+the session cookie.
 
 Two rules hold everywhere a command is built: the command string is always a
 literal in this codebase and user input reaches it only through `proc.Quote`,

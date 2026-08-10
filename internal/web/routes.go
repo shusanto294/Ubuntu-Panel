@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
+	"github.com/shusanto294/ubuntu-panel-go/internal/terminal"
 )
 
 // routes is the whole route table.
@@ -121,11 +122,12 @@ func (a *App) routes() *router {
 	rt.patch("/profile", "profile.update", authenticated, a.updateProfile)
 	rt.patch("/password", "password.update", authenticated, a.updatePassword)
 
-	// The browser terminal is not ported yet. The route is registered so that
-	// the navigation renders and route() resolves — an unknown name makes the
-	// helper throw and takes the whole page with it — and it answers with a
-	// page saying so rather than a broken one.
-	rt.get("/terminal", "terminal", authenticated, a.notPorted("Terminal"))
+	// Terminal. The websocket carries its own one-shot ticket, so it is a
+	// public route: the session cookie cannot be relied on for a cross-scheme
+	// upgrade, and the ticket grants nothing on its own.
+	rt.get("/terminal", "terminal", authenticated, a.terminalPage)
+	rt.post("/terminal/ticket", "terminal.ticket", authenticated, a.terminalTicket)
+	rt.get(terminal.Path, "", public, a.Terminal.Handle)
 
 	return rt
 }

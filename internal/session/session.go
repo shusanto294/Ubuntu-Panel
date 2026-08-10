@@ -11,6 +11,7 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -479,9 +480,42 @@ func (w *committingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Unwrap lets http.ResponseController reach the real writer, which is what the
-// terminal's streaming endpoints need for Flush and Hijack.
+// Unwrap lets http.ResponseController reach the real writer.
 func (w *committingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Hijack hands the connection over for the websocket upgrade.
+//
+// Unwrap is not enough for that: the websocket library type-asserts the writer
+// to http.Hijacker directly, and a wrapper without this method fails the
+// handshake with a 500 the browser reports as "terminal server unreachable".
+//
+// The session is committed first. From here the response is written to the
+// connection by hand, so a Set-Cookie added afterwards would go nowhere.
+func (w *committingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+
+	if !w.written {
+		w.written = true
+		w.commit()
+	}
+
+	return hijacker.Hijack()
+}
+
+// Flush is the same arrangement for a response that streams.
+func (w *committingWriter) Flush() {
+	if !w.written {
+		w.written = true
+		w.commit()
+	}
+
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
 
 func token() string {
 	buffer := make([]byte, 32)

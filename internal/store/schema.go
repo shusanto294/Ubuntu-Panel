@@ -199,6 +199,18 @@ var schema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS metric_samples_sampled ON metric_samples(sampled_at)`,
 
+	// One-shot tickets for the websocket. The socket cannot rely on the
+	// session cookie — a cross-scheme upgrade does not always carry it — so an
+	// authenticated request mints a token that is worth one connection for one
+	// minute.
+	`CREATE TABLE IF NOT EXISTS terminal_tickets (
+		token      TEXT PRIMARY KEY,
+		user_id    INTEGER NOT NULL,
+		mode       TEXT NOT NULL DEFAULT 'shell',
+		expires_at INTEGER NOT NULL,
+		used_at    INTEGER
+	)`,
+
 	// The background work queue, so a restart does not lose a deployment.
 	`CREATE TABLE IF NOT EXISTS jobs (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
