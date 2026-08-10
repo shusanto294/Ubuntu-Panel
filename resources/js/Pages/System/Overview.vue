@@ -34,14 +34,6 @@ useLiveRefresh(busy, [
     'activeTask',
     'recentActivity',
 ]);
-
-const installProgress = computed(() =>
-    props.counts.services_total
-        ? Math.round(
-              (props.counts.services_installed / props.counts.services_total) * 100,
-          )
-        : 0,
-);
 </script>
 
 <template>
@@ -67,37 +59,17 @@ const installProgress = computed(() =>
             </div>
         </template>
 
-        <!-- Something is installing right now -->
-        <div
-            v-if="system.preparing"
-            class="mb-6 rounded-xl border border-brand-200 bg-brand-50 px-5 py-4"
-        >
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <p class="text-sm font-medium text-brand-900">
-                        Installing software
-                    </p>
-                    <p class="text-xs text-brand-800">
-                        {{ counts.services_installed }} of
-                        {{ counts.services_total }} in place ·
-                        {{ system.services_pending_count }} in this batch.
-                        <Link :href="route('services.index')" class="underline"
-                            >See the apps</Link
-                        >
-                    </p>
-                </div>
-                <span class="text-sm font-medium text-brand-900">
-                    {{ installProgress }}%
-                </span>
-            </div>
-            <div class="mt-2 h-1.5 w-full rounded bg-brand-200">
-                <div
-                    class="h-1.5 rounded bg-brand-500 transition-all duration-500"
-                    :style="{ width: installProgress + '%' }"
-                />
-            </div>
+        <!--
+            One place on every page says what is running, and it is here: the
+            same component, directly under the header. There used to be a
+            second thing above it counting installed apps, which moved when a
+            row changed rather than when the work did — so an install spent its
+            first minutes reading 0% beside a step list that was plainly
+            getting on with it.
+        -->
+        <div v-if="activeTask" class="mb-6">
+            <TaskStatus :task="activeTask" />
         </div>
-
 
         <!--
             The lead tile is filled and the rest are white, which is how the
@@ -250,10 +222,6 @@ const installProgress = computed(() =>
             :ranges="historyRanges"
             class="mt-6"
         />
-
-        <div v-if="activeTask" class="mt-6">
-            <TaskStatus :task="activeTask" />
-        </div>
 
         <div class="mt-6 grid gap-6 lg:grid-cols-2">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">

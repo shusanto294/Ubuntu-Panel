@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link } from '@inertiajs/vue3';
 
@@ -37,6 +38,15 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                 </Link>
             </div>
         </template>
+
+        <!--
+            The same line every other page carries, in the same place. This one
+            already refreshed itself while a deployment ran and said nothing
+            about what was running.
+        -->
+        <div v-if="activeTask" class="mb-6">
+            <TaskStatus :task="activeTask" />
+        </div>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <table class="min-w-full divide-y divide-slate-200">
