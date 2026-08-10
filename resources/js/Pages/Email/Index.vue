@@ -37,9 +37,6 @@ const busy = computed(
 
 useLiveRefresh(busy, ['domains', 'activeTask']);
 
-// Rewrites the schema, the mail store, the Postfix maps and the Dovecot
-// config. Every statement in that task is idempotent, so it is the same run
-// whether the server has never been configured or has lost a piece of it.
 // Holds the conversation a mail client holds — submission on 587, a real
 // login, a real message — and writes every reply the server gives to the log.
 // "Connection to server failed" in a webmail is not a diagnosis; a 535 or a 554
@@ -57,18 +54,7 @@ const test = () => {
     );
 };
 
-const repair = () => {
-    awaiting.value = true;
 
-    router.post(
-        route('email.repair'),
-        {},
-        {
-            preserveScroll: true,
-            onFinish: () => setTimeout(() => (awaiting.value = false), 8000),
-        },
-    );
-};
 </script>
 
 <template>
@@ -86,13 +72,6 @@ const repair = () => {
                     </p>
                 </div>
                 <div v-if="mailConfigured" class="flex flex-wrap items-center gap-2">
-                    <button
-                        @click="repair"
-                        class="rounded-xl px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                        title="Rewrite the mail schema, store and server configuration"
-                    >
-                        Repair mail server
-                    </button>
                     <button
                         @click="test"
                         class="rounded-xl px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"

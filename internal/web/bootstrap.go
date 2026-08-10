@@ -13,6 +13,30 @@ import (
 // restart.
 const bootstrapSetting = "apps_bootstrapped"
 
+// EnsureMailConfigured sets the mail server up when it needs it, without
+// anybody asking.
+//
+// Two occasions: its packages are on the machine but nothing has configured
+// them, and the panel has been updated since the configuration was written. The
+// second is the one that used to need a button — an update that changes what
+// Postfix or Dovecot expects leaves the files on disk describing the old
+// arrangement, and the symptom is a webmail that cannot send with a server that
+// is working perfectly.
+func (a *App) EnsureMailConfigured() {
+	if !a.Mail.NeedsConfiguring() {
+		return
+	}
+
+	if _, err := a.Queue.PushID(queue.MailConfigure, "user", 0); err != nil {
+		a.Log.Error("could not queue the mail configuration", "error", err)
+
+		return
+	}
+
+	a.Log.Info("configuring the mail server", "reason",
+		"its configuration was written by a different version of the panel, or not at all")
+}
+
 // BootstrapApps installs the software a server needs, on a panel that has never
 // installed any.
 //

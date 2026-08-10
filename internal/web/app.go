@@ -83,10 +83,14 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 func (a *App) Start(ctx context.Context) {
 	a.Queue.Start(ctx)
 
-	// A fresh machine installs what a server needs without being asked. The
-	// work goes on the queue that has just started, so the panel is answering
-	// while it runs.
-	go a.BootstrapApps(ctx)
+	// A fresh machine installs what a server needs without being asked, and a
+	// machine whose mail server was configured by an older panel has it written
+	// again. Both go on the queue that has just started, so the panel is
+	// answering while they run.
+	go func() {
+		a.BootstrapApps(ctx)
+		a.EnsureMailConfigured()
+	}()
 }
 
 // Stop lets the workers finish.

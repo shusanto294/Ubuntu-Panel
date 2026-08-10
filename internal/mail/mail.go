@@ -694,5 +694,30 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 
 	s.Store.SetSetting("mail_configured", "1")
 
+	// What the configuration on disk was written by. A panel that changes how
+	// the mail server expects to be spoken to — as making submission demand
+	// STARTTLS did — leaves every machine it updates one version behind until
+	// something rewrites it. This is what NeedsConfiguring compares against.
+	s.Store.SetSetting("mail_configured_version", config.Version)
+
 	return nil
+}
+
+// NeedsConfiguring reports whether the mail server has to be set up, or set up
+// again.
+//
+// Nobody should have to press a repair button after installing a panel or
+// updating one. Mail is configured when its packages land, and again after an
+// update that could have changed what the server expects — every statement in
+// that task is idempotent, so the second run is only a restart of two daemons.
+func (s *Service) NeedsConfiguring() bool {
+	if !s.Store.ServiceInstalled("mail") {
+		return false
+	}
+
+	if !s.Store.SettingBool("mail_configured", false) {
+		return true
+	}
+
+	return s.Store.Setting("mail_configured_version", "") != config.Version
 }

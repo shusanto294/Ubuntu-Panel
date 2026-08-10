@@ -153,14 +153,16 @@ const deleteDomain = () => {
                             class="text-sm text-brand-600 hover:underline"
                             >Open webmail</a
                         >
-                        <!-- Sets the mailbox up again from the password the
-                             panel already holds, and finishes by asking Dovecot
-                             whether it can log in. -->
+                        <!-- Only when there is something to recover from. A
+                             mailbox that worked needs no button offering to fix
+                             it, and one that failed needs the panel to set it
+                             up again from the password it already holds. -->
                         <button
+                            v-if="account.status === 'failed'"
                             @click="repairAccount(account)"
-                            class="text-sm text-slate-500 hover:underline"
+                            class="text-sm text-brand-600 hover:underline"
                         >
-                            Repair
+                            Retry
                         </button>
                         <button
                             @click="deleteAccount(account)"
