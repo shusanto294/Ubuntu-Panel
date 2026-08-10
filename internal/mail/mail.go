@@ -195,6 +195,42 @@ func (s *Service) writeDKIMConfig() error {
 	return proc.PutFile("/etc/opendkim.conf", contents, true)
 }
 
+// resyncWebmail writes Roundcube's configuration again for every mail domain,
+// so it always speaks to the server the way the server currently expects.
+func (s *Service) resyncWebmail(runner *tasks.Runner) (string, error) {
+	if !s.Store.ServiceInstalled("roundcube") {
+		return "Roundcube is not installed, so there is no webmail configuration to write.", nil
+	}
+
+	domains, err := s.Store.EmailDomains(context.Background())
+	if err != nil {
+		return "", err
+	}
+
+	if len(domains) == 0 {
+		return "No mail domains yet, so there is no webmail to configure.", nil
+	}
+
+	// One Roundcube serves every domain, so the last domain's name is only used
+	// for the default it suggests on the login form.
+	if err := s.webmailConfig(domains[len(domains)-1].Domain); err != nil {
+		return "", err
+	}
+
+	// PHP-FPM holds the old file in its opcode cache, so a webmail that was
+	// just reconfigured would go on using the configuration it started with.
+	for _, version := range []string{"8.3", "8.2", "8.1"} {
+		if proc.Ok("test -S /run/php/php" + version + "-fpm.sock") {
+			runner.Exec("sudo systemctl reload php"+version+"-fpm || true", time.Minute)
+
+			break
+		}
+	}
+
+	return "Roundcube now points at submission on 587 over TLS, which is what the server " +
+		"expects.", nil
+}
+
 // resyncMailboxes writes every mailbox the panel knows about into the mail
 // server's tables again, hashed correctly.
 func (s *Service) resyncMailboxes(runner *tasks.Runner) (string, error) {
@@ -622,6 +658,17 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 		"sudo systemctl restart opendkim")
 
 	list.Add("Restart Postfix", "sudo systemctl restart postfix")
+
+	// The webmail's own configuration, for every domain that has one.
+	//
+	// Repairing the mail server used to mean Postfix and Dovecot and nothing
+	// else, and the webmail's settings are written by the domain setup — so a
+	// change to how the server expects to be spoken to left Roundcube speaking
+	// the old way until somebody set a domain up again. Making submission
+	// demand STARTTLS while Roundcube still had a plaintext `localhost:587` is
+	// exactly that: the server was right, the test passed, and the webmail said
+	// "Connection to server failed".
+	list.AddFn("Rewrite the webmail configuration", s.resyncWebmail).Optional()
 
 	// Every mailbox rewritten from the panel's own copy of its password.
 	//

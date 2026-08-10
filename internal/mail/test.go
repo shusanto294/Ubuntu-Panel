@@ -52,6 +52,11 @@ func (s *Service) TestDelivery(ctx context.Context, userID int64) error {
 		fmt.Sprintf("sleep 2; sudo ls -l %s/Maildir/new 2>/dev/null | tail -n 5 || "+
 			"echo 'no Maildir for this mailbox yet'", proc.Quote(maildir(address))))
 
+	list.Add("What the webmail is configured to use",
+		"grep -hE \"imap_host|smtp_host|smtp_conn_options\" "+
+			"/usr/share/ubuntu-panel/roundcube/config/config.inc.php 2>/dev/null "+
+			"| sed 's/^/  /' || echo '  Roundcube is not installed.'")
+
 	list.Add("The mail log",
 		"sudo tail -n 40 /var/log/mail.log 2>/dev/null || "+
 			"sudo journalctl -u postfix -u dovecot --no-pager -n 40 || true")
