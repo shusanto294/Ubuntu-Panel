@@ -258,10 +258,14 @@ const destroy = async () => {
             Nothing below the step list while the site is being built. Half of
             it is not true yet — the port, the certificate, the login the
             deployment has not generated — and a Danger zone under a running
-            build invites deleting a site mid-deployment. It arrives when the
-            build does.
+            build invites deleting a site mid-deployment.
+            
+            `busy`, not `showProgress`: a deployment that failed leaves its
+            steps on screen with a ✕ against one of them, and that is precisely
+            when the Danger zone has to be reachable. Hiding it there left a
+            half-built site with no way to remove it.
         -->
-        <div v-if="!showProgress" class="grid gap-6 lg:grid-cols-3">
+        <div v-if="!busy" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Site</h3>
                 <dl class="mt-4 space-y-3 text-sm">
@@ -445,7 +449,7 @@ const destroy = async () => {
         </div>
 
         <div
-            v-if="!showProgress"
+            v-if="!busy"
             class="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
         >
             <div class="border-b border-slate-200 px-5 py-4">

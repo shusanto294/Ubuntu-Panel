@@ -275,3 +275,20 @@ func TestOpenClawIsAuthenticatedByNginx(t *testing.T) {
 		t.Error("an n8n site was put behind HTTP basic authentication")
 	}
 }
+
+// trusted-proxy auth and a shared token are mutually exclusive: a gateway told
+// about both refuses to start, once every ten seconds, saying so. The panel
+// puts the secret in nginx's password file and must not also hand it to the
+// gateway.
+func TestOpenClawIsNeverGivenATokenAsWellAsTrustedProxy(t *testing.T) {
+	site := &store.Site{
+		ID: 9, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 3013,
+	}
+
+	for _, pair := range openClawEnvironment(site) {
+		if strings.Contains(pair[0], "TOKEN") || strings.Contains(pair[0], "PASSWORD") {
+			t.Errorf("the gateway environment carries %s, which trusted-proxy mode refuses", pair[0])
+		}
+	}
+}

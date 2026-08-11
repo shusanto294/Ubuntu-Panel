@@ -702,7 +702,7 @@ func (s *Service) restartOnFinalURL(ctx context.Context, siteID int64) func(*tas
 			err = writeAppEnv(site, n8nEnvironment(site))
 
 		case "openclaw":
-			if err = writeAppEnv(site, openClawEnvironment(site, s.appSecret(site, 32))); err == nil {
+			if err = writeAppEnv(site, openClawEnvironment(site)); err == nil {
 				// The allowed origins carry the scheme, and whether the site
 				// ended up on HTTPS was only decided by the step above. A
 				// gateway still allowing the http:// origin refuses the
@@ -757,17 +757,17 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", errors.New("npm reported success but there is no openclaw on PATH afterwards")
 		}
 
-		// One secret, used twice: nginx checks it as the site's password, and
-		// the gateway keeps it as its token for anything that talks to it
-		// directly. The operator only ever sees the login.
-		token := s.appSecret(site, 32)
+		// The site's password, checked by nginx. The gateway is never told
+		// it: in trusted-proxy mode a shared token is not a second way in, it
+		// is a configuration the gateway refuses to start with.
+		password := s.appSecret(site, 32)
 
 		user := site.WPAdminUser
 		if user == "" {
 			user = "admin"
 		}
 
-		if err := writePasswordFile(site, user, token); err != nil {
+		if err := writePasswordFile(site, user, password); err != nil {
 			return "", err
 		}
 
@@ -780,7 +780,7 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", err
 		}
 
-		if err := writeAppEnv(site, openClawEnvironment(site, token)); err != nil {
+		if err := writeAppEnv(site, openClawEnvironment(site)); err != nil {
 			return "", err
 		}
 
@@ -813,12 +813,7 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 // whose CLI cannot do it. `local` is the mode for a gateway that runs its own
 // agent on this machine, which is what a site on this panel is.
 func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) error {
-	home := proc.Quote(site.RootPath)
-	config := site.RootPath + "/.openclaw/openclaw.json"
-
-	// The token stays in the environment file and off this command line: an
-	// argument is readable by anyone who can run `ps` while it runs.
-	command := fmt.Sprintf("sudo -u www-data HOME=%s openclaw", home)
+	command := fmt.Sprintf("sudo -u www-data HOME=%s openclaw", proc.Quote(site.RootPath))
 
 	// The dashboard is served from the site's own hostname, and the gateway
 	// refuses a Control UI connection from an origin it was not told about —
@@ -848,69 +843,19 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 		"%[1]s config set gateway.auth.mode trusted-proxy; "+
 			"%[1]s config set gateway.auth.trustedProxy.userHeader x-auth-request-email; "+
 			"%[1]s config set gateway.trustedProxies '[\"127.0.0.1\",\"::1\"]' || "+
-			"%[1]s config set gateway.trustedProxies 127.0.0.1",
+			"%[1]s config set gateway.trustedProxies 127.0.0.1; "+
+			"%[1]s config unset gateway.auth.token; "+
+			"%[1]s config unset gateway.auth.password",
 		command), 5*time.Minute)
 
-	modeSet := proc.Ok(fmt.Sprintf("%s config get gateway.mode 2>/dev/null | grep -qi local", command))
-	originSet := proc.Ok(fmt.Sprintf("%s config get gateway.controlUi.allowedOrigins 2>/dev/null | grep -qF %s",
-		command, proc.Quote(origins[0])))
-
-	if modeSet && originSet {
-		return nil
-	}
-
-	// The CLI took the mode but not the origins, which is the shape of a
-	// version whose `config set` cannot write a list. Merging into the file
-	// keeps everything else in it — providers, channels, pairings — which a
-	// rewrite would lose.
-	if modeSet && !originSet {
-		if err := mergeOpenClawOrigins(site, runner, origins); err != nil {
-			return err
-		}
-
-		return nil
-	}
-
-	runner.Write("OpenClaw's own CLI did not record the gateway mode; " +
-		"writing the configuration file instead.\n")
-
-	// Only when there is nothing there: a config this panel did not write may
-	// hold an operator's providers and channels, and replacing it to fix a
-	// missing key would be a poor trade.
-	if proc.Ok("sudo test -s " + proc.Quote(config)) {
-		return fmt.Errorf(
-			"%s exists but does not set gateway.mode, and OpenClaw would not set it. "+
-				"Add \"gateway\": {\"mode\": \"local\"} to it, or delete the file and redeploy.",
-			config)
-	}
-
-	contents := fmt.Sprintf(`{
-  "gateway": {
-    "mode": "local",
-    "bind": "loopback",
-    "port": %d,
-    "trustedProxies": ["127.0.0.1", "::1"],
-    "auth": {
-      "mode": "trusted-proxy",
-      "trustedProxy": {
-        "userHeader": "x-auth-request-email"
-      }
-    },
-    "controlUi": {
-      "allowedOrigins": %s
-    }
-  }
-}
-`, site.AppPort, originsJSON(origins))
-
-	if err := proc.PutFile(config, contents, true); err != nil {
-		return err
-	}
-
-	proc.Ok(fmt.Sprintf("sudo chown -R www-data:www-data %s && sudo chmod 600 %s",
-		proc.Quote(site.RootPath+"/.openclaw"), proc.Quote(config)))
-
-	return nil
+	// Then written properly, whatever the CLI made of it.
+	//
+	// `config set` is handed a list on the command line for the origins and the
+	// trusted proxies, and a version that stores those as a string produces a
+	// configuration the gateway rejects. This writes the keys as JSON, removes
+	// any shared token — which a gateway in trusted-proxy mode refuses to start
+	// alongside — and leaves the rest of the file alone.
+	return mergeOpenClawConfig(site, runner, origins)
 }
 
 // writePasswordFile puts the site's login into the htpasswd file nginx checks
@@ -1011,14 +956,14 @@ func originsJSON(origins []string) string {
 	return string(encoded)
 }
 
-// mergeOpenClawOrigins puts the origins into an existing configuration file
-// without touching anything else in it.
+// mergeOpenClawConfig writes the keys the gateway needs into its configuration
+// file without touching anything else in it.
 //
 // A rewrite would take the operator's providers, channels and pairings with
 // it, so the file is read, one key is set, and it is written back — by Python,
 // which is on every Ubuntu the panel supports and can be trusted with JSON in
 // a way that a shell one-liner cannot.
-func mergeOpenClawOrigins(site *store.Site, runner *tasks.Runner, origins []string) error {
+func mergeOpenClawConfig(site *store.Site, runner *tasks.Runner, origins []string) error {
 	script := `
 import json, os, sys
 
@@ -1034,6 +979,21 @@ except ValueError as error:
     sys.exit("the existing configuration is not valid JSON: %s" % error)
 
 gateway = config.setdefault("gateway", {})
+
+gateway["mode"] = "local"
+gateway["bind"] = "loopback"
+gateway["port"] = int(os.environ["PORT"])
+gateway["trustedProxies"] = ["127.0.0.1", "::1"]
+
+auth = gateway.setdefault("auth", {})
+auth["mode"] = "trusted-proxy"
+auth.setdefault("trustedProxy", {})["userHeader"] = "x-auth-request-email"
+
+# Mutually exclusive with trusted-proxy. A gateway configured with both says
+# so and exits, once every ten seconds, for ever.
+auth.pop("token", None)
+auth.pop("password", None)
+
 control = gateway.setdefault("controlUi", {})
 
 existing = control.get("allowedOrigins") or []
@@ -1050,31 +1010,41 @@ with open(path, "w") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
 
-print("allowedOrigins: %s" % ", ".join(existing))
+print("gateway: local, trusted-proxy auth, origins %s" % ", ".join(existing))
 `
 
 	command := fmt.Sprintf(
-		"CONFIG=%s ORIGINS=%s sudo -u www-data --preserve-env=CONFIG,ORIGINS python3 - <<'PYTHON'\n%s\nPYTHON",
+		"sudo mkdir -p %[1]s && sudo chown www-data:www-data %[1]s && "+
+			"CONFIG=%[2]s ORIGINS=%[3]s PORT=%[4]d "+
+			"sudo -u www-data --preserve-env=CONFIG,ORIGINS,PORT python3 - <<'PYTHON'\n%[5]s\nPYTHON",
+		proc.Quote(site.RootPath+"/.openclaw"),
 		proc.Quote(site.RootPath+"/.openclaw/openclaw.json"),
-		proc.Quote(originsJSON(origins)), script)
+		proc.Quote(originsJSON(origins)), site.AppPort, script)
 
 	if err := runner.Must(command, 2*time.Minute); err != nil {
-		return fmt.Errorf("could not add %s to OpenClaw's allowed origins: %w",
-			strings.Join(origins, ", "), err)
+		return fmt.Errorf("could not write OpenClaw's gateway configuration: %w", err)
 	}
 
 	return nil
 }
 
 // openClawEnvironment is the gateway's configuration.
-func openClawEnvironment(site *store.Site, token string) [][2]string {
+func openClawEnvironment(site *store.Site) [][2]string {
 	return [][2]string{
 		// Everything OpenClaw keeps — config, state, credentials — lives under
 		// $HOME, so pointing HOME at the site directory keeps one site's agent
 		// out of another's.
 		{"HOME", site.RootPath},
 		{"OPENCLAW_GATEWAY_PORT", strconv.Itoa(site.AppPort)},
-		{"OPENCLAW_GATEWAY_TOKEN", token},
+		// No OPENCLAW_GATEWAY_TOKEN, deliberately. nginx authenticates and the
+		// gateway is in trusted-proxy mode; the two are mutually exclusive, and
+		// a token alongside that mode is refused at startup:
+		//
+		//   Gateway failed to start: gateway auth mode is trusted-proxy, but a
+		//   shared token is also configured
+		//
+		// The same secret is still the site's password — it is nginx that
+		// checks it now, so the gateway must not be told about it.
 		// Loopback is its default and what the nginx proxy in front of it
 		// needs; named rather than assumed, because the default changes inside
 		// containers.
