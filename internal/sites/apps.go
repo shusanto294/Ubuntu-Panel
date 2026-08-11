@@ -121,6 +121,47 @@ func nodeMajor() int {
 	return value
 }
 
+// installGlobally installs an npm package for the whole machine, and copes
+// with the cache npm keeps under root's home.
+//
+// npm answers from that cache's copy of the registry index, and a copy written
+// before a dependency published its newest version reports that version as one
+// that does not exist:
+//
+//	npm error notarget No matching version found for @ai-sdk/openai@4.0.38
+//
+// on a machine where it exists and is the current release. --prefer-online
+// makes npm revalidate rather than trust what it has; a second attempt after
+// emptying the cache covers the case where the cache is not stale but damaged.
+func installGlobally(runner *tasks.Runner, spec string, flags ...string) error {
+	extra := ""
+	if len(flags) > 0 {
+		extra = " " + strings.Join(flags, " ")
+	}
+
+	install := "sudo npm install -g " + proc.Quote(spec) +
+		" --no-audit --no-fund --prefer-online" + extra
+
+	first := runner.Must(install, 25*time.Minute)
+	if first == nil {
+		return nil
+	}
+
+	runner.Write("npm refused that. Emptying its cache and trying once more, " +
+		"which is what an index it wrote before the package was published needs.\n")
+
+	if err := runner.Must("sudo npm cache clean --force", 5*time.Minute); err != nil {
+		// Not fatal on its own: the install below is the thing being asked for.
+		runner.Write("npm would not clean its cache; trying the install anyway.\n")
+	}
+
+	if err := runner.Must(install, 25*time.Minute); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // writeAppEnv writes the systemd EnvironmentFile a managed proxied app is
 // configured through.
 //
@@ -506,8 +547,7 @@ func (s *Service) installN8N(ctx context.Context, siteID int64) func(*tasks.Runn
 			return "", errors.New("site vanished")
 		}
 
-		if err := runner.Must("sudo npm install -g n8n@latest --no-audit --no-fund",
-			20*time.Minute); err != nil {
+		if err := installGlobally(runner, "n8n@latest"); err != nil {
 			return "", err
 		}
 
@@ -617,11 +657,10 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 		// An npm too old to know the flag is not a reason to stop — it is also
 		// too old to be blocking the scripts — so the plain form is the
 		// fallback.
-		if err := runner.Must(
-			"sudo npm install -g openclaw@latest --allow-scripts openclaw --no-audit --no-fund || "+
-				"sudo npm install -g openclaw@latest --no-audit --no-fund",
-			20*time.Minute); err != nil {
-			return "", err
+		if err := installGlobally(runner, "openclaw@latest", "--allow-scripts", "openclaw"); err != nil {
+			if plain := installGlobally(runner, "openclaw@latest"); plain != nil {
+				return "", plain
+			}
 		}
 
 		if !proc.Ok("command -v openclaw >/dev/null 2>&1") {
