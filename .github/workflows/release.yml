@@ -71,8 +71,14 @@ jobs:
               exit 1
           fi
 
-          if git rev-parse "refs/tags/$version" >/dev/null 2>&1; then
-              echo "$version is already tagged; nothing to release."
+          # An existing tag only means "already released" when this run was
+          # started by a branch push. A run started by the tag itself is the
+          # release — the tag is what triggered it, so of course it exists, and
+          # treating that as "nothing to do" published nothing at all while
+          # reporting success.
+          if [ "${{ github.ref_type }}" != "tag" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ] \
+                  && git rev-parse "refs/tags/$version" >/dev/null 2>&1; then
+              echo "$version is already tagged; the tag's own run published it."
               echo "release=false" >> "$GITHUB_OUTPUT"
           else
               echo "release=true" >> "$GITHUB_OUTPUT"
