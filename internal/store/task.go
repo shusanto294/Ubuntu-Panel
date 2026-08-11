@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // maxTaskOutput is where a console is truncated. Kept from the front, so what
@@ -105,14 +107,69 @@ func (s *Store) LatestTaskID(ctx context.Context, kind string, runningOnly bool)
 // LatestTaskByAction narrows that to one action — several things share a type,
 // and a page that only drives one of them should not show another's console.
 func (s *Store) LatestTaskByAction(ctx context.Context, kind, action string, runningOnly bool) int64 {
-	query := `SELECT id FROM activity_logs WHERE type = ? AND action = ?`
+	return s.LatestTaskByActions(ctx, kind, []string{action}, runningOnly)
+}
+
+// LatestTaskByActions is the same for a page that drives more than one action —
+// the Apps page installs and uninstalls, and wants either.
+func (s *Store) LatestTaskByActions(ctx context.Context, kind string, actions []string, runningOnly bool) int64 {
+	if len(actions) == 0 {
+		return s.LatestTaskID(ctx, kind, runningOnly)
+	}
+
+	query := `SELECT id FROM activity_logs WHERE type = ?` +
+		` AND action IN (?` + strings.Repeat(", ?", len(actions)-1) + `)`
+
+	args := []any{kind}
+	for _, action := range actions {
+		args = append(args, action)
+	}
+
 	if runningOnly {
 		query += ` AND status = 'running'`
 	}
 	query += ` ORDER BY id DESC LIMIT 1`
 
 	var id int64
-	s.db.QueryRowContext(ctxOrBackground(ctx), query, kind, action).Scan(&id)
+	s.db.QueryRowContext(ctxOrBackground(ctx), query, args...).Scan(&id)
+
+	return id
+}
+
+// RecentTaskWindow is how long a finished task stays on the page that started
+// it.
+//
+// A console that disappears the instant the last step lands takes the result
+// with it, and one that never disappears is furniture: the Apps page was
+// opening with a nineteen-hour-old "completed 4 steps" card above the
+// catalogue, on every visit, for ever.
+const RecentTaskWindow = 10 * time.Minute
+
+// RecentTaskID is the task a page should be showing: the one that is running,
+// or the one that finished within the window. Zero when there is neither.
+//
+// Actions narrow it to the page's own work — several unrelated things share
+// the `provision` type, and the Apps page has no business showing the console
+// of a panel domain change made from Settings.
+func (s *Store) RecentTaskID(ctx context.Context, kind string, actions []string, within time.Duration) int64 {
+	query := `SELECT id FROM activity_logs WHERE type = ?`
+	args := []any{kind}
+
+	if len(actions) > 0 {
+		query += ` AND action IN (?` + strings.Repeat(", ?", len(actions)-1) + `)`
+
+		for _, action := range actions {
+			args = append(args, action)
+		}
+	}
+
+	// finished_at is UTC, written by SQLite's own clock, so the comparison is
+	// made by the same clock rather than by the panel's idea of the time.
+	query += ` AND (status = 'running' OR finished_at >= datetime('now', ?)) ORDER BY id DESC LIMIT 1`
+	args = append(args, fmt.Sprintf("-%d seconds", int(within.Seconds())))
+
+	var id int64
+	s.db.QueryRowContext(ctxOrBackground(ctx), query, args...).Scan(&id)
 
 	return id
 }

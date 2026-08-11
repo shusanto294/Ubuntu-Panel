@@ -130,15 +130,24 @@ func (a *App) firstActiveTask(r *http.Request, kinds ...string) map[string]any {
 	return nil
 }
 
+// appTaskActions are the provision tasks this page drives. The type also
+// carries the panel's own domain change, which belongs to Settings.
+var appTaskActions = []string{"services.install", "services.uninstall"}
+
 // apps is the Apps page.
 func (a *App) apps(w http.ResponseWriter, r *http.Request) {
 	a.Catalog.SyncRows()
 
 	a.Render.Render(w, r, "System/Apps", inertia.Props{
-		"system":     a.systemSummary(r.Context()),
-		"services":   a.Catalog.Summary(r.Context()),
-		"activeTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskID(r.Context(), "provision", true), 0),
-		"latestTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskID(r.Context(), "provision", false), 0),
+		"system":   a.systemSummary(r.Context()),
+		"services": a.Catalog.Summary(r.Context()),
+		"activeTask": a.Store.TaskConsole(r.Context(),
+			a.Store.LatestTaskByActions(r.Context(), "provision", appTaskActions, true), 0),
+		// The console of an install that has just finished, and only just: a
+		// finished task stops being news, and the page should look like a
+		// catalogue again rather than like something is happening.
+		"latestTask": a.Store.TaskConsole(r.Context(),
+			a.Store.RecentTaskID(r.Context(), "provision", appTaskActions, store.RecentTaskWindow), 0),
 	})
 }
 
@@ -183,7 +192,8 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		"activeTask": a.Store.TaskConsole(r.Context(),
 			a.Store.LatestTaskByAction(r.Context(), "provision", "panel.domain", true), 0),
 		"latestTask": a.Store.TaskConsole(r.Context(),
-			a.Store.LatestTaskByAction(r.Context(), "provision", "panel.domain", false), 0),
+			a.Store.RecentTaskID(r.Context(), "provision", []string{"panel.domain"},
+				store.RecentTaskWindow), 0),
 	})
 }
 
