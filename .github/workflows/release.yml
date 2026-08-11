@@ -15,6 +15,11 @@
 # Pushing a tag by hand still works, and so does a manual run.
 name: Release
 
+# The run's own title, which is what the Actions list shows in bold. Without
+# it a tag push is titled "Release" and the version is only readable from the
+# small ref chip beside it.
+run-name: Release ${{ github.ref_type == 'tag' && github.ref_name || 'from main' }}
+
 on:
   push:
     branches:
@@ -85,6 +90,7 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "number=${version#v}" >> "$GITHUB_OUTPUT"
           echo "Version: $version"
 
       - uses: actions/setup-go@v5
@@ -142,6 +148,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
+          # Titled rather than left to inherit the tag's name: a release is a
+          # version of the panel, and that is what the title should say.
+          name: Ubuntu Panel ${{ steps.version.outputs.number }}
           files: |
             dist/*.tar.gz
             dist/*.sha256
