@@ -405,9 +405,11 @@ const destroy = async () => {
                         <span class="font-mono">{{ site.app.websocket }}</span>
                     </p>
                     <p v-if="site.app.websocket" class="mt-2 text-xs text-slate-500">
-                        The dashboard asks for both. Open it over HTTPS — the
-                        browser will not create the device identity the gateway
-                        expects on a plain HTTP page, whatever the token says.
+                        Open the site, sign in with these, and the dashboard
+                        connects on its own — nginx does the authenticating and
+                        tells the gateway who you are, so there is no token to
+                        paste. The WebSocket URL above is only needed if you
+                        point some other client at the gateway.
                     </p>
                 </div>
             </div>

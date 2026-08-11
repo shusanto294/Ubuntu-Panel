@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -756,9 +757,19 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", errors.New("npm reported success but there is no openclaw on PATH afterwards")
 		}
 
-		// The gateway requires authentication and has no login of its own, so
-		// the panel generates the shared secret and shows it on the site page.
+		// One secret, used twice: nginx checks it as the site's password, and
+		// the gateway keeps it as its token for anything that talks to it
+		// directly. The operator only ever sees the login.
 		token := s.appSecret(site, 32)
+
+		user := site.WPAdminUser
+		if user == "" {
+			user = "admin"
+		}
+
+		if err := writePasswordFile(site, user, token); err != nil {
+			return "", err
+		}
 
 		if err := runner.Must(fmt.Sprintf(
 			"sudo mkdir -p %[1]s/.openclaw && sudo chown -R www-data:www-data %[1]s && "+
@@ -826,6 +837,20 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 		command, site.AppPort,
 		proc.Quote(originsJSON(origins)), proc.Quote(origins[0])), 5*time.Minute)
 
+	// nginx has already authenticated whoever reached the gateway, and says so
+	// in a header it sets rather than forwards. Trusting that — from the
+	// loopback address the proxy sits on, and nowhere else — is what lets the
+	// dashboard open without a token and without pairing a device.
+	//
+	// The gateway only listens on loopback, so nothing can reach it except
+	// through the nginx that requires the login.
+	runner.Exec(fmt.Sprintf(
+		"%[1]s config set gateway.auth.mode trusted-proxy; "+
+			"%[1]s config set gateway.auth.trustedProxy.userHeader x-auth-request-email; "+
+			"%[1]s config set gateway.trustedProxies '[\"127.0.0.1\",\"::1\"]' || "+
+			"%[1]s config set gateway.trustedProxies 127.0.0.1",
+		command), 5*time.Minute)
+
 	modeSet := proc.Ok(fmt.Sprintf("%s config get gateway.mode 2>/dev/null | grep -qi local", command))
 	originSet := proc.Ok(fmt.Sprintf("%s config get gateway.controlUi.allowedOrigins 2>/dev/null | grep -qF %s",
 		command, proc.Quote(origins[0])))
@@ -864,6 +889,13 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
     "mode": "local",
     "bind": "loopback",
     "port": %d,
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "userHeader": "x-auth-request-email"
+      }
+    },
     "controlUi": {
       "allowedOrigins": %s
     }
@@ -879,6 +911,71 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 		proc.Quote(site.RootPath+"/.openclaw"), proc.Quote(config)))
 
 	return nil
+}
+
+// writePasswordFile puts the site's login into the htpasswd file nginx checks
+// before it lets anybody near the application.
+//
+// The password never reaches a command line: `openssl passwd` is given a file
+// to read it from, because an argument is readable by anyone who can run `ps`
+// at the moment it runs — and this one is the whole of the site's security.
+func writePasswordFile(site *store.Site, user, password string) error {
+	staged, cleanup, err := stagePassword(password)
+	if err != nil {
+		return err
+	}
+
+	defer cleanup()
+
+	// apr1 rather than bcrypt: nginx hashes with the system's crypt() for
+	// bcrypt, which not every Ubuntu builds support for, and apr1 is
+	// understood by nginx itself everywhere.
+	result := proc.Run("openssl passwd -apr1 -in "+proc.Quote(staged), time.Minute)
+	if !result.OK() {
+		return fmt.Errorf("could not hash the site password: %s", result.Output)
+	}
+
+	hash := strings.TrimSpace(result.Output)
+	if hash == "" || strings.Contains(hash, " ") {
+		return errors.New("openssl did not produce a password hash")
+	}
+
+	path := PasswordFilePath(site)
+
+	if err := proc.PutFile(path, user+":"+hash+"\n", true); err != nil {
+		return err
+	}
+
+	// Readable by nginx, by nobody else on the machine.
+	proc.Ok(fmt.Sprintf("sudo chown root:www-data %s && sudo chmod 640 %s",
+		proc.Quote(path), proc.Quote(path)))
+
+	return nil
+}
+
+// stagePassword writes a password to a file only this user can read, for a
+// command that would otherwise take it as an argument.
+func stagePassword(password string) (string, func(), error) {
+	file, err := os.CreateTemp("", "ubuntu-panel-secret-*")
+	if err != nil {
+		return "", func() {}, errors.New("could not stage the password")
+	}
+
+	name := file.Name()
+	cleanup := func() { os.Remove(name) }
+
+	file.Chmod(0o600)
+
+	if _, err := file.WriteString(password + "\n"); err != nil {
+		file.Close()
+		cleanup()
+
+		return "", func() {}, errors.New("could not stage the password")
+	}
+
+	file.Close()
+
+	return name, cleanup, nil
 }
 
 // openClawOrigins are the browser origins the dashboard is served from: the

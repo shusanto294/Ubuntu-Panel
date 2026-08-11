@@ -384,7 +384,7 @@ func (site *Site) AdminURL() string {
 func (site *Site) AdminLabel() string {
 	switch site.Type {
 	case "openclaw":
-		return "OpenClaw gateway token"
+		return "OpenClaw login"
 	default:
 		return site.TypeLabel() + " administrator"
 	}
@@ -477,7 +477,7 @@ func (site *Site) Summary(detailed bool) map[string]any {
 				"url":      site.AdminURL(),
 				"user":     site.WPAdminUser,
 				"password": site.WPAdminPassword,
-				"token":    site.Type == "openclaw",
+				"token":    false,
 			}
 
 			// OpenClaw's dashboard asks for the gateway's WebSocket address as

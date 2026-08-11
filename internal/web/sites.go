@@ -243,16 +243,14 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The application's own administrator, for the types where the panel
-	// creates one. OpenClaw has no username — its gateway takes a shared
-	// secret — so only the password half is used there, and it is generated.
+	// creates one. OpenClaw's gateway has no login of its own, so the panel
+	// puts one in front of it: same username, and a password it generates.
 	if meta.AdminAccount {
 		site.WPTitle = stringInput(input, "wp_title", store.DefaultWPTitle)
 		site.WPAdminEmail = stringInput(input, "wp_admin_email", user.Email)
 		site.WPAdminPassword = strings.TrimSpace(input["wp_admin_password"])
 
-		if kind != "openclaw" {
-			site.WPAdminUser = stringInput(input, "wp_admin_user", "admin")
-		}
+		site.WPAdminUser = stringInput(input, "wp_admin_user", "admin")
 	}
 
 	id, err := a.Store.CreateSite(r.Context(), site)

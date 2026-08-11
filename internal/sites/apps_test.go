@@ -238,3 +238,40 @@ func TestManagedTypesAreTheOnesThePanelInstalls(t *testing.T) {
 		}
 	}
 }
+
+// The gateway has no login of its own and its dashboard asks for a token, so
+// nginx authenticates instead and tells the gateway who it let through. The
+// header is set rather than forwarded: a visitor must not be able to name
+// themselves.
+func TestOpenClawIsAuthenticatedByNginx(t *testing.T) {
+	site := &store.Site{
+		ID: 8, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 3011, SSL: true,
+	}
+
+	vhost := RenderVhost(site, true, true)
+
+	for _, needed := range []string{
+		"auth_basic \"agent.example.com\";",
+		"auth_basic_user_file /etc/nginx/panel-auth/agent.example.com;",
+		"proxy_set_header X-Auth-Request-Email $remote_user;",
+	} {
+		if !strings.Contains(vhost, needed) {
+			t.Errorf("the OpenClaw vhost is missing %q", needed)
+		}
+	}
+
+	// The challenge has to stay reachable or the certificate can never be
+	// renewed.
+	if strings.Contains(vhost, "auth_basic") &&
+		!strings.Contains(vhost, "location ^~ /.well-known/acme-challenge/") {
+		t.Error("the ACME challenge is behind the login")
+	}
+
+	// Nothing else gets a password prompt it was never told about.
+	site.Type = "n8n"
+
+	if strings.Contains(RenderVhost(site, true, true), "auth_basic") {
+		t.Error("an n8n site was put behind HTTP basic authentication")
+	}
+}
