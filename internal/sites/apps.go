@@ -6,6 +6,7 @@ package sites
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -698,8 +699,16 @@ func (s *Service) restartOnFinalURL(ctx context.Context, siteID int64) func(*tas
 		switch site.Type {
 		case "n8n":
 			err = writeAppEnv(site, n8nEnvironment(site))
+
 		case "openclaw":
-			err = writeAppEnv(site, openClawEnvironment(site, s.appSecret(site, 32)))
+			if err = writeAppEnv(site, openClawEnvironment(site, s.appSecret(site, 32))); err == nil {
+				// The allowed origins carry the scheme, and whether the site
+				// ended up on HTTPS was only decided by the step above. A
+				// gateway still allowing the http:// origin refuses the
+				// dashboard on the https:// page it is now served from.
+				err = s.configureOpenClaw(site, runner)
+			}
+
 		default:
 			return "Nothing to rewrite for this type.", nil
 		}
@@ -800,13 +809,40 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 	// argument is readable by anyone who can run `ps` while it runs.
 	command := fmt.Sprintf("sudo -u www-data HOME=%s openclaw", home)
 
+	// The dashboard is served from the site's own hostname, and the gateway
+	// refuses a Control UI connection from an origin it was not told about —
+	// "Browser origin not allowed", with the login form still on screen. It
+	// ships knowing about localhost and nothing else, so the site's own origin
+	// has to be added or the dashboard can never be used from the domain it is
+	// published on.
+	origins := openClawOrigins(site)
+
 	runner.Exec(fmt.Sprintf(
 		"%[1]s config set gateway.mode local; "+
 			"%[1]s config set gateway.bind loopback; "+
-			"%[1]s config set gateway.port %[2]d",
-		command, site.AppPort), 5*time.Minute)
+			"%[1]s config set gateway.port %[2]d; "+
+			"%[1]s config set gateway.controlUi.allowedOrigins %[3]s || "+
+			"%[1]s config set gateway.controlUi.allowedOrigins %[4]s",
+		command, site.AppPort,
+		proc.Quote(originsJSON(origins)), proc.Quote(origins[0])), 5*time.Minute)
 
-	if proc.Ok(fmt.Sprintf("%s config get gateway.mode 2>/dev/null | grep -qi local", command)) {
+	modeSet := proc.Ok(fmt.Sprintf("%s config get gateway.mode 2>/dev/null | grep -qi local", command))
+	originSet := proc.Ok(fmt.Sprintf("%s config get gateway.controlUi.allowedOrigins 2>/dev/null | grep -qF %s",
+		command, proc.Quote(origins[0])))
+
+	if modeSet && originSet {
+		return nil
+	}
+
+	// The CLI took the mode but not the origins, which is the shape of a
+	// version whose `config set` cannot write a list. Merging into the file
+	// keeps everything else in it — providers, channels, pairings — which a
+	// rewrite would lose.
+	if modeSet && !originSet {
+		if err := mergeOpenClawOrigins(site, runner, origins); err != nil {
+			return err
+		}
+
 		return nil
 	}
 
@@ -827,10 +863,13 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
   "gateway": {
     "mode": "local",
     "bind": "loopback",
-    "port": %d
+    "port": %d,
+    "controlUi": {
+      "allowedOrigins": %s
+    }
   }
 }
-`, site.AppPort)
+`, site.AppPort, originsJSON(origins))
 
 	if err := proc.PutFile(config, contents, true); err != nil {
 		return err
@@ -838,6 +877,94 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 
 	proc.Ok(fmt.Sprintf("sudo chown -R www-data:www-data %s && sudo chmod 600 %s",
 		proc.Quote(site.RootPath+"/.openclaw"), proc.Quote(config)))
+
+	return nil
+}
+
+// openClawOrigins are the browser origins the dashboard is served from: the
+// site itself and its aliases, on the scheme the site ended up on.
+//
+// Full origins, never wildcards — the gateway compares them literally, and a
+// pattern is simply an origin nothing matches.
+func openClawOrigins(site *store.Site) []string {
+	scheme := "http://"
+	if site.SSL {
+		scheme = "https://"
+	}
+
+	origins := make([]string, 0, len(site.Hostnames()))
+	for _, hostname := range site.Hostnames() {
+		origins = append(origins, scheme+hostname)
+	}
+
+	if len(origins) == 0 {
+		origins = append(origins, scheme+site.Domain)
+	}
+
+	return origins
+}
+
+// originsJSON is the list as OpenClaw's config wants it.
+func originsJSON(origins []string) string {
+	encoded, err := json.Marshal(origins)
+	if err != nil {
+		return "[]"
+	}
+
+	return string(encoded)
+}
+
+// mergeOpenClawOrigins puts the origins into an existing configuration file
+// without touching anything else in it.
+//
+// A rewrite would take the operator's providers, channels and pairings with
+// it, so the file is read, one key is set, and it is written back — by Python,
+// which is on every Ubuntu the panel supports and can be trusted with JSON in
+// a way that a shell one-liner cannot.
+func mergeOpenClawOrigins(site *store.Site, runner *tasks.Runner, origins []string) error {
+	script := `
+import json, os, sys
+
+path = os.environ["CONFIG"]
+origins = json.loads(os.environ["ORIGINS"])
+
+try:
+    with open(path) as handle:
+        config = json.load(handle)
+except FileNotFoundError:
+    config = {}
+except ValueError as error:
+    sys.exit("the existing configuration is not valid JSON: %s" % error)
+
+gateway = config.setdefault("gateway", {})
+control = gateway.setdefault("controlUi", {})
+
+existing = control.get("allowedOrigins") or []
+if not isinstance(existing, list):
+    existing = []
+
+for origin in origins:
+    if origin not in existing:
+        existing.append(origin)
+
+control["allowedOrigins"] = existing
+
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+
+print("allowedOrigins: %s" % ", ".join(existing))
+`
+
+	command := fmt.Sprintf(
+		"CONFIG=%s ORIGINS=%s sudo -u www-data --preserve-env=CONFIG,ORIGINS python3 - <<'PYTHON'\n%s\nPYTHON",
+		proc.Quote(site.RootPath+"/.openclaw/openclaw.json"),
+		proc.Quote(originsJSON(origins)), script)
+
+	if err := runner.Must(command, 2*time.Minute); err != nil {
+		return fmt.Errorf("could not add %s to OpenClaw's allowed origins: %w",
+			strings.Join(origins, ", "), err)
+	}
 
 	return nil
 }

@@ -142,6 +142,37 @@ LISTEN 0 511 127.0.0.1:9229  0.0.0.0:* users:(("node",pid=1234,fd=22))`
 	}
 }
 
+// The gateway compares browser origins literally and ships knowing about
+// localhost only, so the dashboard is refused on the domain it is published on
+// until the site's own origin is in the list — scheme included, aliases too.
+func TestOpenClawAllowsTheOriginsItsDashboardIsServedFrom(t *testing.T) {
+	site := &store.Site{
+		ID: 7, Domain: "agent.example.com", Type: "openclaw",
+		Aliases: []string{"www.agent.example.com"},
+		SSL:     true,
+	}
+
+	origins := openClawOrigins(site)
+
+	if len(origins) != 2 || origins[0] != "https://agent.example.com" ||
+		origins[1] != "https://www.agent.example.com" {
+		t.Fatalf("origins = %v", origins)
+	}
+
+	if got := originsJSON(origins); got !=
+		`["https://agent.example.com","https://www.agent.example.com"]` {
+		t.Errorf("originsJSON = %s", got)
+	}
+
+	// Before the certificate is issued the dashboard really is on http, and an
+	// https origin would be the one thing that does not match.
+	site.SSL = false
+
+	if got := openClawOrigins(site)[0]; got != "http://agent.example.com" {
+		t.Errorf("origin without a certificate = %s, want http://agent.example.com", got)
+	}
+}
+
 // A configuration OpenClaw objects to is not something restarting fixes: it
 // exits 78 ten seconds after every start, and the unit that relaunches it
 // anyway burned a core for three minutes on the first site that hit this.
