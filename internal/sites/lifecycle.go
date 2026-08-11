@@ -118,19 +118,9 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 
 		list.AddFn("Create the systemd service", s.createSystemdUnit(ctx, site.ID))
 
-		service := site.ServiceName()
-
-		// Given a minute to come up before it is called dead: a Next.js server
-		// starts in a second, n8n migrates its database first.
-		list.Add("Start the application",
-			fmt.Sprintf(
-				"sudo systemctl restart %[1]s; "+
-					"for attempt in $(seq 1 30); do "+
-					"curl -s -o /dev/null http://127.0.0.1:%[2]d/ && break; sleep 2; done; "+
-					"sudo systemctl is-active %[1]s; "+
-					"curl -sS -o /dev/null -w \"app responded with HTTP %%{http_code}\\n\" "+
-					"http://127.0.0.1:%[2]d/ || echo \"app not answering yet — check the service log\"",
-				service, site.AppPort))
+		// Ninety seconds before it is called dead: a Next.js server starts in
+		// one, n8n migrates its database first.
+		list.AddFn("Start the application", s.startAndWait(ctx, site.ID))
 
 	default:
 		// PHP and static, with or without a repository.
@@ -170,6 +160,11 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 		list.AddFn("Restart the application on its final URL",
 			s.restartOnFinalURL(ctx, site.ID)).Optional()
 	}
+
+	// The last word on whether the site actually serves anything. A deployment
+	// that reports success on a site answering 502 is the panel telling the
+	// operator to go and find out for themselves.
+	list.AddFn("Check the site answers", s.checkThroughNginx(ctx, site.ID))
 
 	return list
 }

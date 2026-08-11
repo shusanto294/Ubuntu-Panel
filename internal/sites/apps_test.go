@@ -90,6 +90,30 @@ func TestManagedNodeAppsAreProxiedWithUpgradeHeaders(t *testing.T) {
 	}
 }
 
+// OpenClaw takes its port from --port before it looks at the environment, and
+// falls back to 18789 — which nginx does not proxy to. A gateway on the wrong
+// port is a 502 on a service that is running perfectly.
+func TestOpenClawUnitCarriesThePortOnTheCommandLine(t *testing.T) {
+	site := &store.Site{
+		ID: 5, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 3007,
+		StartCommand: "openclaw gateway",
+	}
+
+	unit := RenderUnit(site)
+
+	if !strings.Contains(unit, "openclaw gateway --port 3007") {
+		t.Errorf("the unit does not pass the port on the command line:\n%s", unit)
+	}
+
+	// An operator who put the flag there themselves does not get a second one.
+	site.StartCommand = "openclaw gateway --port 4000"
+
+	if strings.Count(RenderUnit(site), "--port") != 1 {
+		t.Error("the panel added a second --port to a command that already had one")
+	}
+}
+
 // Every proxied type needs something to run, and every managed type needs the
 // deployment to know what to install. A new entry that forgets one of those
 // fails here rather than halfway through a deployment.

@@ -433,6 +433,17 @@ func RenderUnit(site *store.Site) string {
 		start = "npm run start"
 	}
 
+	// The port on the command line, not only in the environment.
+	//
+	// OpenClaw takes it from `--port`, then OPENCLAW_GATEWAY_PORT, then its
+	// config, then 18789 — and a gateway that falls through to 18789 while
+	// nginx proxies to the port the panel assigned is a 502 on a service that
+	// is running perfectly. The flag is the one place in that list the panel
+	// can be sure of.
+	if site.Type == "openclaw" && site.AppPort > 0 && !strings.Contains(start, "--port") {
+		start = fmt.Sprintf("%s --port %d", start, site.AppPort)
+	}
+
 	service := site.ServiceName()
 
 	return fmt.Sprintf(

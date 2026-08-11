@@ -164,6 +164,126 @@ func (s *Service) appSecret(site *store.Site, length int) string {
 	return password
 }
 
+// startAndWait restarts a proxied site's service and waits for it to answer,
+// and says what went wrong when it does not.
+//
+// The step this replaces printed "app not answering yet" and carried on, so a
+// service that never came up was a successful deployment in the panel and a
+// 502 in the browser — with the reason sitting in a journal nobody had been
+// told to read. A unit that is not running is now a failed deployment with the
+// log in the console.
+func (s *Service) startAndWait(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", errors.New("site vanished")
+		}
+
+		service := site.ServiceName()
+		address := fmt.Sprintf("http://127.0.0.1:%d/", site.AppPort)
+
+		if err := runner.Must("sudo systemctl daemon-reload && sudo systemctl restart "+service,
+			2*time.Minute); err != nil {
+			return "", err
+		}
+
+		// Plain curl rather than `curl -f`: an application that answers 401 or
+		// 404 is an application that is up, which is all this is asking.
+		answering := false
+
+		for attempt := 0; attempt < 45; attempt++ {
+			if proc.Ok("curl -s -o /dev/null --max-time 5 " + proc.Quote(address)) {
+				answering = true
+				break
+			}
+
+			time.Sleep(2 * time.Second)
+		}
+
+		if answering {
+			code := proc.Run("curl -s -o /dev/null -w '%{http_code}' --max-time 10 "+
+				proc.Quote(address), 30*time.Second).Output
+
+			return fmt.Sprintf("%s answered on port %d with HTTP %s.",
+				site.TypeLabel(), site.AppPort, code), nil
+		}
+
+		log := proc.Run("sudo journalctl -u "+service+" -n 40 --no-pager 2>&1", time.Minute).Output
+		if log == "" {
+			log = proc.Run("sudo tail -n 40 /var/log/"+service+".log 2>&1", time.Minute).Output
+		}
+
+		// Which ports the process actually opened, not only whether it opened
+		// the one the panel expected: an application that ignored the port it
+		// was given and took its own default is the difference between a
+		// puzzling 502 and a one-line fix.
+		listening := proc.Run(fmt.Sprintf(
+			"pid=$(sudo systemctl show -p MainPID --value %s 2>/dev/null); "+
+				"if [ -n \"$pid\" ] && [ \"$pid\" != 0 ]; then "+
+				"sudo ss -ltnp 2>/dev/null | grep -E \"pid=$pid,|pid=$pid\\\"\" || "+
+				"echo 'the process has no listening socket at all'; "+
+				"else echo 'the service has no running process'; fi", service), time.Minute).Output
+
+		// A dead unit is a failure. A running one that is not answering where
+		// the panel put nginx is worth saying out loud, but the deployment did
+		// its part — the application may simply be slow, or listening
+		// somewhere else, and stopping here would undo a working vhost.
+		if !proc.Ok("sudo systemctl is-active --quiet " + service) {
+			return "", fmt.Errorf(
+				"%s is not running, so nginx has nothing to proxy to and the site answers 502.\n"+
+					"The last of its log:\n%s", service, log)
+		}
+
+		runner.Writef("%s is running but did not answer on port %d within 90 seconds.\n"+
+			"Listening sockets for that port:\n%s\nThe last of its log:\n%s\n",
+			service, site.AppPort, listening, log)
+
+		return fmt.Sprintf("%s is running but has not answered on port %d yet.",
+			site.TypeLabel(), site.AppPort), nil
+	}
+}
+
+// checkThroughNginx asks the site for its own front page the way a visitor
+// would, so a 502 turns up in the deployment console rather than in a browser
+// an hour later.
+func (s *Service) checkThroughNginx(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", errors.New("site vanished")
+		}
+
+		// Asked of nginx on this machine, with the site's own Host header:
+		// this has to work whether or not the domain resolves yet, and whether
+		// or not a CDN sits in front of it.
+		scheme, port, flags := "http", 80, ""
+		if site.SSL {
+			scheme, port, flags = "https", 443, " --insecure"
+		}
+
+		command := fmt.Sprintf(
+			"curl -s -o /dev/null -w '%%{http_code}' --max-time 15%s --resolve %s %s",
+			flags,
+			proc.Quote(fmt.Sprintf("%s:%d:127.0.0.1", site.Domain, port)),
+			proc.Quote(scheme+"://"+site.Domain+"/"))
+
+		code := strings.TrimSpace(proc.Run(command, time.Minute).Output)
+
+		switch {
+		case code == "502" || code == "503" || code == "504":
+			return "", fmt.Errorf(
+				"nginx answered %s for %s, which means it could not reach the application "+
+					"behind it. The step above has the application's log.", code, site.URL())
+
+		case code == "" || code == "000":
+			return "nginx could not be asked for the site from this machine; check it yourself.", nil
+
+		default:
+			return fmt.Sprintf("nginx answered HTTP %s for %s.", code, site.URL()), nil
+		}
+	}
+}
+
 // ---------------------------------------------------------------- Nextcloud
 
 // installNextcloudPHP installs the extensions and the php.ini Nextcloud needs.
@@ -468,23 +588,16 @@ func (s *Service) restartOnFinalURL(ctx context.Context, siteID int64) func(*tas
 			return "", err
 		}
 
-		service := site.ServiceName()
+		// The unit itself may need rewriting too: its start command carries the
+		// port, and nothing else would put a repaired one on disk for a site
+		// deployed by an older panel.
+		if _, err := s.createSystemdUnit(ctx, siteID)(runner); err != nil {
+			return "", err
+		}
 
-		// Waited for rather than slept past: n8n runs its database migrations
-		// on the first boot, and a fixed three-second pause reports "not
-		// answering" for an application that is simply still starting.
-		//
-		// Plain curl, not `curl -f`: the OpenClaw gateway answers 401 until it
-		// is given its token, and 401 means it is up.
-		runner.Exec(fmt.Sprintf(
-			"sudo systemctl restart %[1]s; "+
-				"for attempt in $(seq 1 30); do "+
-				"curl -s -o /dev/null http://127.0.0.1:%[2]d/ && break; sleep 2; done; "+
-				"sudo systemctl is-active %[1]s; "+
-				"curl -sS -o /dev/null -w \"%[3]s answered with HTTP %%{http_code}\\n\" "+
-				"http://127.0.0.1:%[2]d/ || echo \"the app is not answering — "+
-				"journalctl -u %[1]s -n 50 says why\"",
-			service, site.AppPort, site.TypeLabel()), 5*time.Minute)
+		if _, err := s.startAndWait(ctx, siteID)(runner); err != nil {
+			return "", err
+		}
 
 		return site.TypeLabel() + " restarted on " + site.URL(), nil
 	}
