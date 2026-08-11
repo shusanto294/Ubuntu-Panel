@@ -92,17 +92,31 @@ func mongoAnswering() bool {
 // Also true, harmlessly, on a server with no authorization enabled yet, where
 // auth() against a user that exists succeeds anyway.
 func mongoAuthWorks(password string) bool {
-	// A refused login is an exception in mongosh and a zero return in the shell
-	// it replaced; either has to come out of here as false rather than as a
-	// task that stops.
-	script := fmt.Sprintf(`try {
-  if (db.getSiblingDB("admin").auth("%s", %s) != 1) { quit(1); }
+	return mongoRun(mongoAuthScript(MongoAdmin, password), 30*time.Second).OK()
+}
+
+// mongoAuthScript is a login that reports the answer through the exit code.
+//
+// The success value differs by client: mongosh returns `{ok: 1}` and the shell
+// it replaced returned the number 1. Comparing the object to 1 is false in
+// JavaScript — `{ok:1} != 1` — so a version of this that only understood the
+// old shell called every correct password wrong, went on to create an
+// administrator that already existed, and reported the failure as "the panel's
+// password is not accepted" on a server where it was.
+//
+// A refused login is an exception in mongosh and a zero return in the old
+// shell; either has to come out of here as a non-zero exit rather than as a
+// task that stops.
+func mongoAuthScript(user, password string) string {
+	return fmt.Sprintf(`try {
+  const result = db.getSiblingDB("admin").auth("%s", %s);
+  const accepted = result === 1 || result === true ||
+    (result !== null && typeof result === "object" && result.ok === 1);
+  if (!accepted) { quit(1); }
 } catch (error) {
   quit(1);
 }
-`, MongoAdmin, jsQuote(password))
-
-	return mongoRun(script, 30*time.Second).OK()
+`, user, jsQuote(password))
 }
 
 // mongoConfigureFile is the edit to /etc/mongod.conf: authorization on, and a
@@ -195,9 +209,14 @@ if (admin.getUser("%[1]s")) {
 		if result := mongoRun(script, time.Minute); !result.OK() {
 			if strings.Contains(result.Output, "requires authentication") {
 				return errors.New("MongoDB has authentication enabled and the password the panel " +
-					"has for " + MongoAdmin + " is not accepted. Someone changed it outside the " +
-					"panel, or the panel's application key was replaced. Reset it from a mongosh " +
-					"session on the server, or reinstall MongoDB from the Apps page.")
+					"has for " + MongoAdmin + " is not accepted, so it cannot create anything. " +
+					"Someone changed that password outside the panel, or the panel's application " +
+					"key was replaced. Take MongoDB's own credentials from Apps → show " +
+					"credentials, then on the server:\n" +
+					"  sudo mongosh admin --eval 'db.updateUser(\"" + MongoAdmin + "\", " +
+					"{pwd: \"THE PASSWORD THE PANEL SHOWS\"})'\n" +
+					"and redeploy. If nothing can log in at all, reinstall MongoDB from the " +
+					"Apps page.")
 			}
 
 			return fmt.Errorf("could not create the MongoDB administrator: %s", result.Output)
