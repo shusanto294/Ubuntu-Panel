@@ -17,16 +17,25 @@ import Swal from 'sweetalert2';
 // Tailwind classes rather than SweetAlert's stylesheet, so a dialog is made of
 // the same buttons and cards as the page behind it. `brand` is the accent from
 // tailwind.config.js: recolour the panel and the dialogs follow.
+// SweetAlert gives the popup no padding of its own and spaces its parts with
+// large margins instead — the icon alone carries 2.5em above it — so the box
+// ends up with more air at the top than at the bottom. The margins are zeroed
+// and the popup gets even padding on all four sides, with the rhythm between
+// the parts set here rather than inherited.
+//
+// `!` on every one of them: SweetAlert injects its stylesheet at runtime,
+// after this page's CSS, so a plain utility of the same specificity loses.
 const base = {
     buttonsStyling: false,
     reverseButtons: true,
     focusCancel: true,
     heightAuto: false,
     customClass: {
-        popup: 'rounded-2xl px-2 py-1 text-left',
-        title: 'text-lg font-semibold text-slate-900',
-        htmlContainer: 'text-sm text-slate-600',
-        actions: 'gap-2',
+        popup: 'rounded-2xl !p-6',
+        icon: '!mx-auto !mt-0 !mb-5',
+        title: '!p-0 !mb-2 text-lg font-semibold text-slate-900',
+        htmlContainer: '!m-0 !px-0 text-sm text-slate-600',
+        actions: '!mt-6 !mb-0 gap-2',
         confirmButton:
             'rounded-xl px-4 py-2.5 text-sm font-medium text-white shadow-sm transition',
         cancelButton:
