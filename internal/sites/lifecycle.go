@@ -23,6 +23,17 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 		fmt.Sprintf("sudo mkdir -p %s && sudo chown -R www-data:www-data %s && sudo chmod -R 755 %s",
 			docroot, root, root))
 
+	// The hostname first, before anything that can fail.
+	//
+	// It depends on nothing else, it takes minutes to spread, and the
+	// certificate later needs it to have spread already. Published last, a
+	// deployment that stopped anywhere earlier left a site with no name at all
+	// — and on a site being rebuilt, the record its own deletion had removed —
+	// so the operator got NXDOMAIN and no idea which of the two it was.
+	if site.ManageDNS {
+		list.AddFn("Publish DNS records", s.publishDNS(ctx, site.ID))
+	}
+
 	// Before anything is written: nginx will happily load a vhost pointing at
 	// a socket that does not exist, `nginx -t` passes, the deployment reports
 	// success, and every request to the site is a 502 from an origin where, as
@@ -134,10 +145,6 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 
 	list.AddFn("Write the nginx vhost", s.writeVhost(ctx, site.ID))
 	list.Add("Reload nginx", "sudo nginx -t", "sudo systemctl reload nginx")
-
-	if site.ManageDNS {
-		list.AddFn("Publish DNS records", s.publishDNS(ctx, site.ID))
-	}
 
 	if site.SSL {
 		list.AddFn("Request the TLS certificate", s.requestCertificate(ctx, site.ID)).Optional()
