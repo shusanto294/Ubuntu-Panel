@@ -5,6 +5,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link, router } from '@inertiajs/vue3';
+import { confirmDanger } from '@/dialog';
 
 const props = defineProps({
     databases: Array,
@@ -27,12 +28,18 @@ useLiveRefresh(busy, ['databases', 'activeTask']);
 
 const revealed = ref({});
 
-const destroy = (database) => {
-    if (confirm(`Drop ${database.name}? All data in it is lost.`)) {
-        router.delete(route('databases.destroy', database.id), {
-            preserveScroll: true,
-        });
-    }
+const destroy = async (database) => {
+    const go = await confirmDanger(
+        `Drop ${database.name}?`,
+        'All data in it is lost, and the database user is removed with it.',
+        'Drop',
+    );
+
+    if (!go) return;
+
+    router.delete(route('databases.destroy', database.id), {
+        preserveScroll: true,
+    });
 };
 
 const reveal = async (database) => {

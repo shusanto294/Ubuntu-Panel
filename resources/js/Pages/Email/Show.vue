@@ -5,6 +5,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { Head, Link, router } from '@inertiajs/vue3';
+import { confirmDanger } from '@/dialog';
 
 const props = defineProps({
     domain: Object,
@@ -37,22 +38,29 @@ const repairAccount = (account) =>
         { preserveScroll: true },
     );
 
-const deleteAccount = (account) => {
-    if (confirm(`Delete ${account.address} and all of its mail?`)) {
-        router.delete(route('email.accounts.destroy', account.id), {
-            preserveScroll: true,
-        });
-    }
+const deleteAccount = async (account) => {
+    const go = await confirmDanger(
+        `Delete ${account.address}?`,
+        'The mailbox and every message stored in it are removed.',
+    );
+
+    if (!go) return;
+
+    router.delete(route('email.accounts.destroy', account.id), {
+        preserveScroll: true,
+    });
 };
 
-const deleteDomain = () => {
-    if (
-        confirm(
-            `Remove ${props.domain.domain}? Every mailbox on it and all stored mail are deleted.`,
-        )
-    ) {
-        router.delete(route('email.domains.destroy', props.domain.id));
-    }
+const deleteDomain = async () => {
+    const go = await confirmDanger(
+        `Remove ${props.domain.domain}?`,
+        'Every mailbox on it and all stored mail are deleted.',
+        'Remove',
+    );
+
+    if (!go) return;
+
+    router.delete(route('email.domains.destroy', props.domain.id));
 };
 </script>
 

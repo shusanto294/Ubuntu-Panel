@@ -9,6 +9,11 @@ export default {
         './storage/framework/views/*.php',
         './resources/views/**/*.blade.php',
         './resources/js/**/*.vue',
+        // The dialogs name their classes in JavaScript, because SweetAlert
+        // takes them as strings rather than as markup. A file Tailwind does
+        // not read is a set of classes it never emits, and the dialog would
+        // render unstyled.
+        './resources/js/**/*.js',
     ],
 
     theme: {

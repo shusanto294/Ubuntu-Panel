@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import DangerButton from '@/Components/DangerButton.vue';
 import SecondaryButton from '@/Components/SecondaryButton.vue';
 import { Link, router } from '@inertiajs/vue3';
+import { confirmDanger } from '@/dialog';
 
 /**
  * The credentials the panel writes DNS records with — one row each.
@@ -27,14 +28,15 @@ const verify = (account) => {
     );
 };
 
-const remove = (account) => {
-    const warning = account.sites_count
-        ? `${account.label} is used by ${account.sites_count} site(s). Their DNS records stay where they are, but the panel will stop managing them. Remove it?`
-        : `Remove ${account.label}?`;
+const remove = async (account) => {
+    const detail = account.sites_count
+        ? `It is used by ${account.sites_count} site(s). Their DNS records stay where ` +
+          'they are, but the panel stops managing them.'
+        : 'The panel will no longer be able to publish records with this credential.';
 
-    if (window.confirm(warning)) {
-        router.delete(route('dns.destroy', account.id), { preserveScroll: true });
-    }
+    if (!(await confirmDanger(`Remove ${account.label}?`, detail, 'Remove'))) return;
+
+    router.delete(route('dns.destroy', account.id), { preserveScroll: true });
 };
 </script>
 

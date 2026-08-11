@@ -10,6 +10,7 @@
 import { computed, ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import AppIcon from '@/Components/AppIcon.vue';
+import { confirmAction, confirmDanger } from '@/dialog';
 
 const props = defineProps({
     services: { type: Array, default: () => [] },
@@ -179,21 +180,29 @@ const post = (url, data = {}, options = {}) => {
 const install = (service) => post(route('services.install', service.key));
 const retry = (service) => post(route('services.retry', service.key));
 
-const reinstall = (service) => {
-    if (!confirm(`Reinstall ${service.label}? Existing packages are left in place.`)) return;
+const reinstall = async (service) => {
+    const go = await confirmAction(
+        `Reinstall ${service.label}?`,
+        'Existing packages are left in place.',
+        'Reinstall',
+    );
+
+    if (!go) return;
 
     post(route('services.install', service.key), { force: true });
 };
 
-const uninstall = (service) => {
+const uninstall = async (service) => {
     if (service.remove_blocked_by) return;
 
-    const warning =
-        `Remove ${service.label}?\n\n` +
+    const go = await confirmDanger(
+        `Remove ${service.label}?`,
         'The packages are removed with apt. Configuration and data are left on ' +
-        'disk, so installing it again brings it back.';
+            'disk, so installing it again brings it back.',
+        'Remove',
+    );
 
-    if (!confirm(warning)) return;
+    if (!go) return;
 
     post(route('services.uninstall', service.key));
 };

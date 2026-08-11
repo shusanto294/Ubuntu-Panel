@@ -5,6 +5,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskProgress from '@/Components/TaskProgress.vue';
 import { formatRelative } from '@/time';
 import { Head, Link, router } from '@inertiajs/vue3';
+import { confirmDanger } from '@/dialog';
 
 const props = defineProps({
     site: Object,
@@ -77,24 +78,25 @@ watch(busy, (value) => (value ? startPolling() : stopPolling()));
 const post = (name, extra = {}) =>
     router.post(route(name, props.site.id), extra, { preserveScroll: true });
 
-const destroy = () => {
+const destroy = async () => {
     const parts = ['its nginx vhost'];
     if (props.site.manage_dns)
         parts.push(`${props.site.dns_provider ?? 'DNS'} records`);
     if (props.site.database) parts.push('the site database');
     if (props.site.is_proxied) parts.push('the systemd service');
 
-    if (
-        confirm(
-            `Delete ${props.site.domain}? This removes ${parts.join(', ')}${
-                deleteFiles.value ? ' and all site files' : ''
-            }.`,
-        )
-    ) {
-        router.delete(route('sites.destroy', props.site.id), {
-            data: { delete_files: deleteFiles.value },
-        });
-    }
+    const go = await confirmDanger(
+        `Delete ${props.site.domain}?`,
+        `This removes ${parts.join(', ')}${
+            deleteFiles.value ? ' and all site files' : ''
+        }.`,
+    );
+
+    if (!go) return;
+
+    router.delete(route('sites.destroy', props.site.id), {
+        data: { delete_files: deleteFiles.value },
+    });
 };
 </script>
 

@@ -6,6 +6,7 @@ import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import Checkbox from '@/Components/Checkbox.vue';
 import { router, useForm } from '@inertiajs/vue3';
+import { confirmDanger } from '@/dialog';
 
 /**
  * The records in one zone, read from the provider rather than from the panel.
@@ -105,14 +106,13 @@ const submit = () => {
     });
 };
 
-const remove = (record) => {
-    if (
-        !window.confirm(
-            `Delete the ${record.type} record for ${record.name}? Anything relying on it stops resolving.`,
-        )
-    ) {
-        return;
-    }
+const remove = async (record) => {
+    const go = await confirmDanger(
+        `Delete the ${record.type} record for ${record.name}?`,
+        'Anything relying on it stops resolving.',
+    );
+
+    if (!go) return;
 
     router.delete(route('dns.records.destroy', props.account.id), {
         data: {

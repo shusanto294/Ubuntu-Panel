@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { router } from '@inertiajs/vue3';
+import { confirmAction } from '@/dialog';
 
 /**
  * What version is installed, and whether a newer one has been published.
@@ -65,16 +66,16 @@ const command = computed(
 const copied = ref(false);
 const updating = ref(false);
 
-const update = () => {
-    if (
-        !confirm(
-            'Update the panel now?\n\n' +
-                'The newest release is downloaded and installed. The panel restarts, ' +
-                'so this page will be unreachable for a minute. The database, your ' +
-                'settings and the nginx vhost are kept.',
-        )
-    )
-        return;
+const update = async () => {
+    const go = await confirmAction(
+        'Update the panel now?',
+        'The newest release is downloaded and installed. The panel restarts, so ' +
+            'this page will be unreachable for a minute. The database, your settings ' +
+            'and the nginx vhost are kept.',
+        'Update',
+    );
+
+    if (!go) return;
 
     updating.value = true;
     router.post(route('system.update'), {}, { preserveScroll: true });
