@@ -248,13 +248,20 @@ const destroy = async () => {
         </div>
 
         <div
-            v-if="site.last_error"
+            v-if="site.last_error && !busy"
             class="mb-6 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
         >
             <span class="font-medium">Last error:</span> {{ site.last_error }}
         </div>
 
-        <div class="grid gap-6 lg:grid-cols-3">
+        <!--
+            Nothing below the step list while the site is being built. Half of
+            it is not true yet — the port, the certificate, the login the
+            deployment has not generated — and a Danger zone under a running
+            build invites deleting a site mid-deployment. It arrives when the
+            build does.
+        -->
+        <div v-if="!showProgress" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Site</h3>
                 <dl class="mt-4 space-y-3 text-sm">
@@ -437,7 +444,10 @@ const destroy = async () => {
             </div>
         </div>
 
-        <div class="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+        <div
+            v-if="!showProgress"
+            class="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+        >
             <div class="border-b border-slate-200 px-5 py-4">
                 <h3 class="font-semibold text-slate-800">Activity log</h3>
             </div>
