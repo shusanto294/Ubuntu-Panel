@@ -12,6 +12,7 @@ import (
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
@@ -257,12 +258,17 @@ func (a *App) metricHistory(w http.ResponseWriter, r *http.Request) {
 func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{}
 
-	if mongo := a.Store.SecretSetting("mongo_root_password"); mongo != "" {
+	if mongo := a.Store.SecretSetting(databases.MongoSecret); mongo != "" {
+		host := orDefault(system.PublicIP(), "127.0.0.1")
+
 		body["mongodb"] = map[string]any{
-			"username": "panelAdmin",
+			"username": databases.MongoAdmin,
 			"password": mongo,
 			"auth_db":  "admin",
-			"port":     27017,
+			"port":     databases.MongoPort,
+			"host":     host,
+			"uri": mongoURI(host, databases.MongoPort, "admin",
+				databases.MongoAdmin, mongo),
 		}
 	}
 

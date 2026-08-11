@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
@@ -404,18 +405,16 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 		}
 
 	case "mongodb":
-		password, _ := s.Store.RememberSecret("mongo_root_password", 28)
+		// The whole of it — the administrator, authorization, the listener and
+		// the firewall — is one routine shared with the database pages, which
+		// run it again before every create. See databases.EnsureMongoServer.
+		list.AddFn("Configure MongoDB", func(runner *tasks.Runner) (string, error) {
+			if err := databases.EnsureMongoServer(s.Store, runner); err != nil {
+				return "", err
+			}
 
-		list.Add("Start MongoDB", "sudo systemctl enable --now mongod", "sleep 5").Group(key)
-
-		// Appending the auth block twice would break the config file.
-		list.Add("Create the admin user",
-			fmt.Sprintf("mongosh --quiet --eval 'db.getSiblingDB(\"admin\").getUser(\"panelAdmin\") || "+
-				"db.getSiblingDB(\"admin\").createUser({user:\"panelAdmin\",pwd:\"%s\","+
-				"roles:[{role:\"root\",db:\"admin\"}]})'", password),
-			"grep -q \"authorization: enabled\" /etc/mongod.conf || "+
-				"printf \"\\nsecurity:\\n  authorization: enabled\\n\" | sudo tee -a /etc/mongod.conf > /dev/null",
-			"sudo systemctl restart mongod").Group(key)
+			return "MongoDB is ready.", nil
+		}).Group(key)
 
 	case "node":
 		list.Add("Check Node.js", "node -v && npm -v").Group(key)

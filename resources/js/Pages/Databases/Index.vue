@@ -132,8 +132,28 @@ const reveal = async (database) => {
 port: {{ revealed[database.id].port }}
 database: {{ revealed[database.id].database }}
 username: {{ revealed[database.id].username }}
-password: {{ revealed[database.id].password }}</pre
+password: {{ revealed[database.id].password }}<template
+                                            v-if="revealed[database.id].auth_db"
+                                        >
+auth database: {{ revealed[database.id].auth_db }}</template
+                                        ><template v-if="revealed[database.id].uri">
+connection string: {{ revealed[database.id].uri }}</template
+                                        ><template
+                                            v-if="revealed[database.id].remote_uri"
+                                        >
+from your desktop: {{ revealed[database.id].remote_uri }}</template
+                                        ></pre
                                     >
+                                    <p
+                                        v-if="revealed[database.id].remote_uri"
+                                        class="mt-2 text-xs text-slate-400"
+                                    >
+                                        Paste the second string into MongoDB
+                                        Compass to browse this database. It
+                                        reaches the server from anywhere, so the
+                                        password is the only thing keeping other
+                                        people out — keep it.
+                                    </p>
                                 </td>
                             </tr>
                             <tr v-if="database.last_error">

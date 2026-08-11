@@ -1,7 +1,9 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 )
 
 // databaseEngines is what the Databases pages probe for.
@@ -181,13 +184,35 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 		port = engine.Port
 	}
 
-	a.writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"host":     "127.0.0.1",
 		"port":     port,
 		"database": database.Name,
 		"username": database.Username,
 		"password": database.Password,
-	})
+	}
+
+	// MongoDB clients take a URI rather than five fields, and the reason to
+	// hand one over is that assembling it by hand goes wrong in the same two
+	// places every time: the authentication database is the one the user was
+	// created in, not `admin`, and the password has to be escaped.
+	if database.Engine == "mongodb" {
+		body["auth_db"] = database.Name
+		body["uri"] = mongoURI("127.0.0.1", port, database.Name, database.Username, database.Password)
+
+		if ip := system.PublicIP(); ip != "" {
+			body["remote_host"] = ip
+			body["remote_uri"] = mongoURI(ip, port, database.Name, database.Username, database.Password)
+		}
+	}
+
+	a.writeJSON(w, http.StatusOK, body)
+}
+
+// mongoURI is the connection string a driver or MongoDB Compass is given.
+func mongoURI(host string, port int, name, username, password string) string {
+	return fmt.Sprintf("mongodb://%s@%s:%d/%s?authSource=%s",
+		url.UserPassword(username, password).String(), host, port, name, name)
 }
 
 func truncate(text string, length int) string {

@@ -60,25 +60,40 @@ func sqlQuote(text string) string {
 	return "'" + text + "'"
 }
 
-// runSQL feeds a script to the engine's client with the script staged in a
-// file rather than passed on the command line.
-func runSQL(runner *tasks.Runner, engine, script string) error {
+// stage writes a script to a file only this user can read, and returns its
+// path with the function that removes it.
+func stage(script string) (string, func(), error) {
 	staged, err := os.CreateTemp("", "ubuntu-panel-sql-*")
 	if err != nil {
-		return errors.New("could not stage the SQL statement")
+		return "", func() {}, errors.New("could not stage the SQL statement")
 	}
 
 	name := staged.Name()
-	defer os.Remove(name)
+	cleanup := func() { os.Remove(name) }
 
 	staged.Chmod(0o600)
 
 	if _, err := staged.WriteString(script); err != nil {
 		staged.Close()
-		return errors.New("could not stage the SQL statement")
+		cleanup()
+
+		return "", func() {}, errors.New("could not stage the SQL statement")
 	}
 
 	staged.Close()
+
+	return name, cleanup, nil
+}
+
+// runSQL feeds a script to the engine's client with the script staged in a
+// file rather than passed on the command line.
+func runSQL(runner *tasks.Runner, engine, script string) error {
+	name, cleanup, err := stage(script)
+	if err != nil {
+		return err
+	}
+
+	defer cleanup()
 
 	var command, client, label string
 
@@ -167,10 +182,31 @@ func (s *Service) Provision(ctx context.Context, databaseID int64, runner *tasks
 			database.Username, password, database.Name, database.Username)
 
 	case "mongodb":
-		// Mongo creates the database lazily; the user is what has to exist.
-		script = fmt.Sprintf(
-			"db.getSiblingDB(\"%s\").createUser({user:\"%s\",pwd:%s,roles:[{role:\"readWrite\",db:\"%s\"}]});\n",
-			database.Name, database.Username, password, database.Name)
+		// The server has to be ready before anything can be created on it: a
+		// MongoDB with authorization enabled and nobody holding the password
+		// rejects every statement below with "requires authentication".
+		if err := EnsureMongoServer(s.Store, runner); err != nil {
+			return fail(err)
+		}
+
+		// Mongo creates the database lazily, so a database with nothing in it
+		// does not exist — it would not appear in Compass, and the operator who
+		// just created it would be looking at an empty server. One collection
+		// makes it real; the application is free to drop it.
+		//
+		// dbOwner rather than readWrite: this user is the owner of its own
+		// database, and managing it visually means creating collections and
+		// indexes, which readWrite alone does not allow.
+		script = mongoPrelude(s.Store) + fmt.Sprintf(`const target = db.getSiblingDB("%[1]s");
+if (target.getUser("%[2]s")) {
+  target.updateUser("%[2]s", {pwd: %[3]s, roles: [{role: "dbOwner", db: "%[1]s"}]});
+} else {
+  target.createUser({user: "%[2]s", pwd: %[3]s, roles: [{role: "dbOwner", db: "%[1]s"}]});
+}
+if (target.getCollectionNames().length === 0) {
+  target.createCollection("panel_placeholder");
+}
+`, database.Name, database.Username, jsQuote(database.Password))
 
 	default:
 		script = fmt.Sprintf(
@@ -222,8 +258,15 @@ func (s *Service) Drop(ctx context.Context, databaseID int64, runner *tasks.Runn
 		script = fmt.Sprintf("DROP DATABASE IF EXISTS %s;\nDROP ROLE IF EXISTS %s;\n",
 			database.Name, database.Username)
 	case "mongodb":
-		script = fmt.Sprintf("db.getSiblingDB(\"%s\").dropUser(\"%s\");\ndb.getSiblingDB(\"%s\").dropDatabase();\n",
-			database.Name, database.Username, database.Name)
+		// The user may already be gone — a half-finished create, or a drop that
+		// failed after it. Losing the database over that would leave a row the
+		// panel can never remove.
+		script = mongoPrelude(s.Store) + fmt.Sprintf(`const target = db.getSiblingDB("%[1]s");
+if (target.getUser("%[2]s")) {
+  target.dropUser("%[2]s");
+}
+target.dropDatabase();
+`, database.Name, database.Username)
 	default:
 		script = fmt.Sprintf(
 			"DROP DATABASE IF EXISTS `%s`;\n"+
