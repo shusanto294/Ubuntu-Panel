@@ -210,6 +210,17 @@ func (s *Store) SetSiteDNS(id int64, zoneID, recordIDs string) {
 	           WHERE id = ?`, nullText(zoneID), nullText(recordIDs), id)
 }
 
+// SetSiteAppPort records the port the application is actually listening on.
+//
+// The panel hands a proxied app a port and expects it to be used. An app that
+// takes its own default instead is not going to be argued out of it, and the
+// vhost is written after the app has started — so the honest thing is to
+// follow it rather than to serve a 502 with the port the panel preferred.
+func (s *Store) SetSiteAppPort(id int64, port int) {
+	s.db.Exec(`UPDATE sites SET app_port = ?, updated_at = datetime('now') WHERE id = ?`,
+		nullID(int64(port)), id)
+}
+
 // SetSiteWPPassword stores a generated WordPress password.
 func (s *Store) SetSiteWPPassword(id int64, password string) error {
 	encrypted, err := s.encrypt(password)

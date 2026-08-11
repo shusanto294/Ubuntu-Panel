@@ -114,6 +114,34 @@ func TestOpenClawUnitCarriesThePortOnTheCommandLine(t *testing.T) {
 	}
 }
 
+// An application that took a port of its own is followed rather than argued
+// with — but only when there is one port to follow.
+func TestTheAnsweringPortIsReadFromTheListeningSockets(t *testing.T) {
+	// The same port on both address families is one port.
+	both := `LISTEN 0 511 127.0.0.1:18789 0.0.0.0:* users:(("node",pid=1234,fd=21))
+LISTEN 0 511    [::1]:18789     [::]:* users:(("node",pid=1234,fd=22))`
+
+	if got := answeringPort(both); got != 18789 {
+		t.Errorf("answeringPort = %d, want 18789", got)
+	}
+
+	// Two different ports is not a choice the panel should make silently.
+	two := `LISTEN 0 511 127.0.0.1:18789 0.0.0.0:* users:(("node",pid=1234,fd=21))
+LISTEN 0 511 127.0.0.1:9229  0.0.0.0:* users:(("node",pid=1234,fd=22))`
+
+	if got := answeringPort(two); got != 0 {
+		t.Errorf("answeringPort picked %d out of two candidates", got)
+	}
+
+	for _, nothing := range []string{
+		"", "the process has no listening socket at all", "the service has no running process",
+	} {
+		if got := answeringPort(nothing); got != 0 {
+			t.Errorf("answeringPort(%q) = %d, want 0", nothing, got)
+		}
+	}
+}
+
 // A configuration OpenClaw objects to is not something restarting fixes: it
 // exits 78 ten seconds after every start, and the unit that relaunches it
 // anyway burned a core for three minutes on the first site that hit this.

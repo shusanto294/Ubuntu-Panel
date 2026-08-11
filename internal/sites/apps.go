@@ -272,6 +272,20 @@ func (s *Service) startAndWait(ctx context.Context, siteID int64) func(*tasks.Ru
 				"echo 'the process has no listening socket at all'; "+
 				"else echo 'the service has no running process'; fi", service), time.Minute).Output
 
+		// An application that took a port of its own is followed rather than
+		// argued with. The vhost has not been written yet at this point in the
+		// deployment, so recording the real port here is all it takes for
+		// nginx to be pointed at it.
+		if port := answeringPort(listening); port > 0 && port != site.AppPort {
+			runner.Writef("%s is listening on port %d rather than the %d it was given. "+
+				"Pointing nginx at %d.\n", site.TypeLabel(), port, site.AppPort, port)
+
+			s.Store.SetSiteAppPort(site.ID, port)
+
+			return fmt.Sprintf("%s answered on port %d, which is where nginx will be pointed.",
+				site.TypeLabel(), port), nil
+		}
+
 		// A dead unit is a failure. A running one that is not answering where
 		// the panel put nginx is worth saying out loud, but the deployment did
 		// its part — the application may simply be slow, or listening
@@ -289,6 +303,54 @@ func (s *Service) startAndWait(ctx context.Context, siteID int64) func(*tasks.Ru
 		return fmt.Sprintf("%s is running but has not answered on port %d yet.",
 			site.TypeLabel(), site.AppPort), nil
 	}
+}
+
+// answeringPort reads a listening TCP port out of `ss -ltnp` output and
+// reports it when the process opened exactly one, so there is no guessing
+// about which of several the proxy should be pointed at.
+//
+// Lines look like:
+//
+//	LISTEN 0 511 127.0.0.1:18789 0.0.0.0:* users:(("node",pid=1234,fd=21))
+//	LISTEN 0 511    [::1]:18789     [::]:* users:(("node",pid=1234,fd=22))
+//
+// The same port on both address families is one port, not two.
+func answeringPort(listening string) int {
+	found := map[int]bool{}
+
+	for _, line := range strings.Split(listening, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		// The local address is the fourth column, and the port is whatever
+		// follows its last colon — which is the only part of an IPv6 address
+		// that can be read without parsing it.
+		address := fields[3]
+
+		index := strings.LastIndex(address, ":")
+		if index < 0 {
+			continue
+		}
+
+		port, err := strconv.Atoi(address[index+1:])
+		if err != nil || port <= 0 || port > 65535 {
+			continue
+		}
+
+		found[port] = true
+	}
+
+	if len(found) != 1 {
+		return 0
+	}
+
+	for port := range found {
+		return port
+	}
+
+	return 0
 }
 
 // checkThroughNginx asks the site for its own front page the way a visitor
@@ -316,6 +378,17 @@ func (s *Service) checkThroughNginx(ctx context.Context, siteID int64) func(*tas
 			proc.Quote(scheme+"://"+site.Domain+"/"))
 
 		code := strings.TrimSpace(proc.Run(command, time.Minute).Output)
+
+		// A proxied application may still be finishing its first boot while
+		// nginx is already answering for it. Given another minute before the
+		// deployment calls it broken, because "it needed longer" and "it is
+		// never coming up" look identical for the first few seconds.
+		for attempt := 0; site.IsProxied() && attempt < 20 &&
+			(code == "502" || code == "503" || code == "504"); attempt++ {
+			time.Sleep(3 * time.Second)
+
+			code = strings.TrimSpace(proc.Run(command, time.Minute).Output)
+		}
 
 		switch {
 		case code == "502" || code == "503" || code == "504":
