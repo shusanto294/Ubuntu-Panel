@@ -249,9 +249,16 @@ func (s *Service) startAndWait(ctx context.Context, siteID int64) func(*tasks.Ru
 				site.TypeLabel(), site.AppPort, code), nil
 		}
 
-		log := proc.Run("sudo journalctl -u "+service+" -n 40 --no-pager 2>&1", time.Minute).Output
-		if log == "" {
-			log = proc.Run("sudo tail -n 40 /var/log/"+service+".log 2>&1", time.Minute).Output
+		// Both logs, always. The unit sends the application's own output to a
+		// file of its own, so the journal holds systemd's account — started,
+		// exited, restarting — and not one word of what the application said
+		// about why. The first failure of an OpenClaw site was diagnosed from
+		// an exit code because of this.
+		log := proc.Run("sudo journalctl -u "+service+" -n 25 --no-pager 2>&1", time.Minute).Output
+
+		if own := proc.Run("sudo tail -n 40 "+proc.Quote("/var/log/"+service+".log")+" 2>&1",
+			time.Minute).Output; own != "" {
+			log += "\n\nWhat " + site.TypeLabel() + " itself wrote:\n" + own
 		}
 
 		// Which ports the process actually opened, not only whether it opened
@@ -684,15 +691,82 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", err
 		}
 
-		// Non-fatal: it writes the default configuration and reports what is
-		// missing, and a first run with no model provider configured is not a
-		// failed deployment — that part is the operator's to fill in.
+		if err := s.configureOpenClaw(site, runner); err != nil {
+			return "", err
+		}
+
+		// Non-fatal: it reports what is missing, and a first run with no model
+		// provider configured is not a failed deployment — that part is the
+		// operator's to fill in.
 		runner.Exec(fmt.Sprintf(
 			"sudo -u www-data HOME=%s openclaw doctor 2>&1 | tail -40 || true",
 			proc.Quote(site.RootPath)), 5*time.Minute)
 
 		return "OpenClaw installed. The gateway token is on this site's page.", nil
 	}
+}
+
+// configureOpenClaw writes the configuration the gateway refuses to start
+// without.
+//
+// A gateway whose config does not say what mode it is in exits 78 — EX_CONFIG,
+// "Gateway start blocked: set gateway.mode=local" — about ten seconds after
+// every start, for ever, which systemd faithfully repeats. The interactive
+// `openclaw onboard` is what normally writes this, and there is no operator
+// sitting in front of a deployment to answer it.
+//
+// Written through OpenClaw's own CLI so it lands in whatever shape this
+// version expects, with a hand-written config as the fallback for a version
+// whose CLI cannot do it. `local` is the mode for a gateway that runs its own
+// agent on this machine, which is what a site on this panel is.
+func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) error {
+	home := proc.Quote(site.RootPath)
+	config := site.RootPath + "/.openclaw/openclaw.json"
+
+	// The token stays in the environment file and off this command line: an
+	// argument is readable by anyone who can run `ps` while it runs.
+	command := fmt.Sprintf("sudo -u www-data HOME=%s openclaw", home)
+
+	runner.Exec(fmt.Sprintf(
+		"%[1]s config set gateway.mode local; "+
+			"%[1]s config set gateway.bind loopback; "+
+			"%[1]s config set gateway.port %[2]d",
+		command, site.AppPort), 5*time.Minute)
+
+	if proc.Ok(fmt.Sprintf("%s config get gateway.mode 2>/dev/null | grep -qi local", command)) {
+		return nil
+	}
+
+	runner.Write("OpenClaw's own CLI did not record the gateway mode; " +
+		"writing the configuration file instead.\n")
+
+	// Only when there is nothing there: a config this panel did not write may
+	// hold an operator's providers and channels, and replacing it to fix a
+	// missing key would be a poor trade.
+	if proc.Ok("sudo test -s " + proc.Quote(config)) {
+		return fmt.Errorf(
+			"%s exists but does not set gateway.mode, and OpenClaw would not set it. "+
+				"Add \"gateway\": {\"mode\": \"local\"} to it, or delete the file and redeploy.",
+			config)
+	}
+
+	contents := fmt.Sprintf(`{
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback",
+    "port": %d
+  }
+}
+`, site.AppPort)
+
+	if err := proc.PutFile(config, contents, true); err != nil {
+		return err
+	}
+
+	proc.Ok(fmt.Sprintf("sudo chown -R www-data:www-data %s && sudo chmod 600 %s",
+		proc.Quote(site.RootPath+"/.openclaw"), proc.Quote(config)))
+
+	return nil
 }
 
 // openClawEnvironment is the gateway's configuration.

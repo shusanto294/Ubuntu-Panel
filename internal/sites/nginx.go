@@ -446,6 +446,15 @@ func RenderUnit(site *store.Site) string {
 
 	service := site.ServiceName()
 
+	// A configuration the process objects to is not something restarting fixes.
+	// OpenClaw exits 78 — the conventional EX_CONFIG — and without this the
+	// unit relaunches it every five seconds for ever, burning a CPU core and
+	// writing the same complaint into the log a thousand times.
+	restart := "Restart=always\nRestartSec=5\n"
+	if site.Type == "openclaw" {
+		restart += "RestartPreventExitStatus=78\n"
+	}
+
 	return fmt.Sprintf(
 		"# Managed by %s\n"+
 			"[Unit]\n"+
@@ -462,15 +471,14 @@ func RenderUnit(site *store.Site) string {
 			"Environment=HOST=127.0.0.1\n"+
 			"EnvironmentFile=-%s/.env\n"+
 			"ExecStart=/bin/bash -lc '%s'\n"+
-			"Restart=always\n"+
-			"RestartSec=5\n"+
+			"%s"+
 			"StandardOutput=append:/var/log/%s.log\n"+
 			"StandardError=append:/var/log/%s.log\n"+
 			"\n"+
 			"[Install]\n"+
 			"WantedBy=multi-user.target\n",
 		config.Name, site.Domain, site.TypeLabel(),
-		site.RootPath, site.AppPort, site.RootPath, start,
+		site.RootPath, site.AppPort, site.RootPath, start, restart,
 		service, service)
 }
 

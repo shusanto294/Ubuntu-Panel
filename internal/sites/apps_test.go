@@ -114,6 +114,29 @@ func TestOpenClawUnitCarriesThePortOnTheCommandLine(t *testing.T) {
 	}
 }
 
+// A configuration OpenClaw objects to is not something restarting fixes: it
+// exits 78 ten seconds after every start, and the unit that relaunches it
+// anyway burned a core for three minutes on the first site that hit this.
+func TestOpenClawUnitStopsRestartingOnAConfigurationError(t *testing.T) {
+	site := &store.Site{
+		ID: 6, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 3009,
+		StartCommand: "openclaw gateway",
+	}
+
+	if !strings.Contains(RenderUnit(site), "RestartPreventExitStatus=78") {
+		t.Error("the OpenClaw unit restarts for ever on a configuration error")
+	}
+
+	// Everything else still restarts on anything: a Node app that exits 78 is
+	// exiting for its own reasons, not sysexits' ones.
+	site.Type = "nodejs"
+
+	if strings.Contains(RenderUnit(site), "RestartPreventExitStatus") {
+		t.Error("a plain Node app was given OpenClaw's exit-code rule")
+	}
+}
+
 // Every proxied type needs something to run, and every managed type needs the
 // deployment to know what to install. A new entry that forgets one of those
 // fails here rather than halfway through a deployment.
