@@ -1,18 +1,24 @@
 # Build the release tarballs and publish them, so nothing is ever compiled on
 # the server the panel is installed on.
 #
-# Push a tag and this runs:
-#
-#     git tag v2.0.0 && git push origin v2.0.0
+# This runs on every push to main. It reads the version out of
+# internal/config/config.go, and if no release is tagged with it yet, it tags
+# the commit and publishes one. A push that did not move the version is built
+# and checked and then stops — which is what makes "bump the last digit before
+# every push" the whole of the release process.
 #
 # It builds the frontend once, cross-compiles the binary for amd64 and arm64
 # (CGO is off and the SQLite driver is pure Go, so no cross-toolchain is
 # involved), and attaches both tarballs and their SHA-256 files to the release
 # get.sh downloads from.
+#
+# Pushing a tag by hand still works, and so does a manual run.
 name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -37,29 +43,81 @@ jobs:
           # the tags a shallow clone does not fetch.
           fetch-depth: 0
 
+      # What is being released, and whether it already has been.
+      #
+      # A tag push releases that tag. A push to main releases the version the
+      # code claims — the one the panel reports and the updater compares
+      # against — so the number in config.go is the single thing that decides
+      # what a server is offered.
+      - name: Work out the version
+        id: version
+        run: |
+          case "${{ github.event_name }}" in
+              workflow_dispatch)
+                  version="${{ github.event.inputs.version }}"
+                  ;;
+              *)
+                  if [ "${{ github.ref_type }}" = "tag" ]; then
+                      version="${{ github.ref_name }}"
+                  else
+                      version="v$(sed -n 's/.*Version = "\(.*\)".*/\1/p' \
+                          internal/config/config.go | head -1)"
+                  fi
+                  ;;
+          esac
+
+          if [ -z "$version" ] || [ "$version" = "v" ]; then
+              echo "Could not read a version out of internal/config/config.go"
+              exit 1
+          fi
+
+          if git rev-parse "refs/tags/$version" >/dev/null 2>&1; then
+              echo "$version is already tagged; nothing to release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+              echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
       - uses: actions/setup-go@v5
+        if: steps.version.outputs.release == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - uses: actions/setup-node@v4
+        if: steps.version.outputs.release == 'true'
         with:
           node-version: 22
           cache: npm
 
       - name: Check
+        if: steps.version.outputs.release == 'true'
         run: |
           go vet ./...
           go test ./...
 
+      # Tagged before the tarballs are built, so the release and the commit it
+      # was built from can never disagree. A tag push has one already.
+      - name: Tag the commit
+        if: steps.version.outputs.release == 'true' && github.ref_type != 'tag'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" \
+              -m "Ubuntu Panel ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
       - name: Build the release tarballs
+        if: steps.version.outputs.release == 'true'
         env:
-          # A tag build takes its version from the tag; a manual run takes the
-          # one that was typed.
-          PANEL_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          PANEL_VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/build-release.sh amd64 arm64
 
       - name: Prove the binaries are static
+        if: steps.version.outputs.release == 'true'
         run: |
           for binary in $(find dist -name '*.tar.gz'); do
               tar -xzf "$binary" -C /tmp
@@ -74,9 +132,10 @@ jobs:
           done
 
       - name: Publish
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          tag_name: ${{ steps.version.outputs.version }}
           files: |
             dist/*.tar.gz
             dist/*.sha256
