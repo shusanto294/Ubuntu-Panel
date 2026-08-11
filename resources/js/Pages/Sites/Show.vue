@@ -197,13 +197,13 @@ const destroy = () => {
                 </div>
 
                 <a
-                    v-if="site.wordpress"
-                    :href="site.wordpress.admin_url"
+                    v-if="site.app"
+                    :href="site.app.url"
                     target="_blank"
                     rel="noopener"
                     class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
                 >
-                    Open wp-admin
+                    Open {{ site.type_label }}
                 </a>
             </div>
 
@@ -231,12 +231,17 @@ const destroy = () => {
                 </template>
             </p>
 
-            <p v-if="site.wordpress" class="mt-4 text-xs text-slate-500">
-                WordPress admin user
-                <span class="font-mono text-slate-700">{{
-                    site.wordpress.admin_user
-                }}</span>
-                — the password is below.
+            <p v-if="site.app" class="mt-4 text-xs text-slate-500">
+                <template v-if="site.app.token">
+                    {{ site.app.label }} — it is below.
+                </template>
+                <template v-else>
+                    {{ site.app.label }}
+                    <span class="font-mono text-slate-700">{{
+                        site.app.user
+                    }}</span>
+                    — the password is below.
+                </template>
             </p>
         </div>
 
@@ -360,30 +365,27 @@ const destroy = () => {
                     this machine yourself.
                 </p>
 
-                <!-- WordPress admin credentials -->
-                <div
-                    v-if="site.wordpress"
-                    class="mt-6 border-t border-slate-200 pt-4"
-                >
+                <!-- The application's own credentials -->
+                <div v-if="site.app" class="mt-6 border-t border-slate-200 pt-4">
                     <p class="text-sm font-medium text-slate-800">
-                        WordPress admin
+                        {{ site.app.label }}
                     </p>
                     <p class="mt-1 text-sm text-slate-600">
                         <a
-                            :href="site.wordpress.admin_url"
+                            :href="site.app.url"
                             target="_blank"
                             rel="noopener"
                             class="text-brand-600 hover:underline"
-                            >{{ site.wordpress.admin_url }}</a
+                            >{{ site.app.url }}</a
                         >
                     </p>
-                    <p class="mt-1 text-sm text-slate-600">
-                        user: {{ site.wordpress.admin_user }}
+                    <p v-if="!site.app.token" class="mt-1 text-sm text-slate-600">
+                        user: {{ site.app.user }}
                     </p>
-                    <p class="mt-1 text-sm text-slate-600">
-                        password:
+                    <p class="mt-1 break-all text-sm text-slate-600">
+                        {{ site.app.token ? 'token' : 'password' }}:
                         <span v-if="showSecrets" class="font-mono">{{
-                            site.wordpress.admin_password
+                            site.app.password
                         }}</span>
                         <button
                             v-else

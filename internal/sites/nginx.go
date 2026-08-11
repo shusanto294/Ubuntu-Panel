@@ -114,6 +114,12 @@ func body(out *strings.Builder, site *store.Site) {
 		return
 	}
 
+	if site.Type == "nextcloud" {
+		nextcloudBody(out, site)
+
+		return
+	}
+
 	if site.Type == "static" {
 		fmt.Fprintf(out,
 			"    root %s;\n"+
@@ -190,6 +196,98 @@ func body(out *strings.Builder, site *store.Site) {
 			"    location ~ /\\.(?!well-known).* {\n"+
 			"        deny all;\n"+
 			"    }\n", php)
+}
+
+// nextcloudBody is Nextcloud's own configuration, which is not a variation on
+// the generic PHP one.
+//
+// Nextcloud routes everything through index.php with PATH_INFO, refuses to
+// serve if `/config` or `/data` are reachable, and its desktop and mobile
+// clients discover the server through /.well-known redirects that have to
+// exist before a login is possible. A generic `try_files $uri /index.php`
+// vhost gets a Nextcloud that appears to work and then fails at sync, so this
+// follows the configuration in Nextcloud's own administration manual.
+func nextcloudBody(out *strings.Builder, site *store.Site) {
+	php := site.PHPVersion
+	if php == "" {
+		php = "8.3"
+	}
+
+	fmt.Fprintf(out,
+		"    root %s;\n"+
+			"\n"+
+			"    index index.php index.html /index.php$request_uri;\n"+
+			"    charset utf-8;\n"+
+			"\n"+
+			"    # Big enough for the desktop client's uploads; Nextcloud chunks\n"+
+			"    # anything larger than this itself.\n"+
+			"    client_max_body_size 512M;\n"+
+			"    client_body_timeout 300s;\n"+
+			"    fastcgi_buffers 64 4K;\n"+
+			"\n"+
+			"    add_header Referrer-Policy \"no-referrer\" always;\n"+
+			"    add_header X-Content-Type-Options \"nosniff\" always;\n"+
+			"    add_header X-Frame-Options \"SAMEORIGIN\" always;\n"+
+			"    add_header X-Permitted-Cross-Domain-Policies \"none\" always;\n"+
+			"    add_header X-Robots-Tag \"noindex, nofollow\" always;\n"+
+			"    fastcgi_hide_header X-Powered-By;\n"+
+			"\n"+
+			"    location = /robots.txt { allow all; log_not_found off; access_log off; }\n"+
+			"\n"+
+			"    # How the desktop and mobile clients find the server.\n"+
+			"    location ^~ /.well-known {\n"+
+			"        location = /.well-known/carddav { return 301 /remote.php/dav/; }\n"+
+			"        location = /.well-known/caldav  { return 301 /remote.php/dav/; }\n"+
+			"        location /.well-known/acme-challenge    { try_files $uri $uri/ =404; }\n"+
+			"        location /.well-known/pki-validation    { try_files $uri $uri/ =404; }\n"+
+			"        return 301 /index.php$request_uri;\n"+
+			"    }\n"+
+			"\n"+
+			"    # Nothing below these is ever served directly.\n"+
+			"    location ~ ^/(?:build|tests|config|lib|3rdparty|templates|data)(?:$|/) { return 404; }\n"+
+			"    location ~ ^/(?:\\.|autotest|occ|issue|indie|db_|console)              { return 404; }\n"+
+			"\n"+
+			"    location ~ \\.php(?:$|/) {\n"+
+			"        rewrite ^/(?!index|remote|public|cron|core\\/ajax\\/update|status|ocs\\/v[12]|"+
+			"updater\\/.+|oc[ms]-provider\\/.+|.+\\/richdocumentscode(_arm64)?\\/proxy) "+
+			"/index.php$request_uri;\n"+
+			"\n"+
+			"        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;\n"+
+			"        set $path_info $fastcgi_path_info;\n"+
+			"        try_files $fastcgi_script_name =404;\n"+
+			"\n"+
+			"        include fastcgi_params;\n"+
+			"        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"+
+			"        fastcgi_param PATH_INFO $path_info;\n"+
+			"        fastcgi_param HTTPS $panel_https;\n"+
+			"        fastcgi_param modHeadersAvailable true;\n"+
+			"        fastcgi_param front_controller_active true;\n"+
+			"\n"+
+			"        fastcgi_pass unix:/run/php/php%s-fpm.sock;\n"+
+			"        fastcgi_intercept_errors on;\n"+
+			"        fastcgi_request_buffering off;\n"+
+			"        fastcgi_read_timeout 3600;\n"+
+			"        fastcgi_max_temp_file_size 0;\n"+
+			"    }\n"+
+			"\n"+
+			"    location ~ \\.(?:css|js|mjs|svg|gif|ico|jpg|jpeg|png|webp|wasm|tflite|map|ogg|flac)$ {\n"+
+			"        try_files $uri /index.php$request_uri;\n"+
+			"        expires 6M;\n"+
+			"        access_log off;\n"+
+			"    }\n"+
+			"\n"+
+			"    location ~ \\.woff2?$ {\n"+
+			"        try_files $uri /index.php$request_uri;\n"+
+			"        expires 7d;\n"+
+			"        access_log off;\n"+
+			"    }\n"+
+			"\n"+
+			"    location /remote { return 301 /remote.php$request_uri; }\n"+
+			"\n"+
+			"    location / {\n"+
+			"        try_files $uri $uri/ /index.php$request_uri;\n"+
+			"    }\n",
+		site.DocumentRoot(), php)
 }
 
 func acme(out *strings.Builder) {
@@ -322,6 +420,15 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 // RenderUnit is the systemd unit a node-family app runs as.
 func RenderUnit(site *store.Site) string {
 	start := site.StartCommand
+
+	// A managed application has a command of its own, and `npm run start` in a
+	// directory with no package.json is a service that restarts for ever.
+	if start == "" {
+		if kind := config.FindSiteType(site.Type); kind != nil && kind.Start != "" {
+			start = kind.Start
+		}
+	}
+
 	if start == "" {
 		start = "npm run start"
 	}

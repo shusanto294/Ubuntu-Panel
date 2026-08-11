@@ -46,22 +46,84 @@ var Engines = []Engine{
 type SiteType struct {
 	Key          string `json:"key"`
 	Label        string `json:"label"`
-	WebDirectory string `json:"web_directory"` // relative, no leading slash
-	Runtime      string `json:"runtime"`       // php | node | static
-	Database     bool   `json:"database"`      // gets an application database
-	Proxied      bool   `json:"proxied"`       // served through nginx to a long-running process
+	Description  string `json:"description"` // one line, shown on the create form
+	WebDirectory string `json:"web_directory"`
+	Runtime      string `json:"runtime"`  // php | node | static
+	Database     bool   `json:"database"` // gets an application database
+	Proxied      bool   `json:"proxied"`  // served through nginx to a long-running process
 	Build        string `json:"build"`
 	Start        string `json:"start"`
+
+	// Managed is an application the panel installs and configures itself, so
+	// the create form has no repository to ask for and the deployment has an
+	// admin account to hand back. WordPress was the only one; Nextcloud, n8n
+	// and OpenClaw are the same arrangement.
+	Managed bool `json:"managed"`
+
+	// AdminAccount is whether that application has a login the panel creates —
+	// which decides whether the form asks for a username and password, and
+	// whether the site page has credentials to show.
+	AdminAccount bool `json:"admin_account"`
+
+	// NodeMinimum is the Node.js major this type refuses to run below. The
+	// deployment upgrades Node rather than failing halfway through an install
+	// that was never going to work.
+	NodeMinimum int `json:"node_minimum"`
 }
 
 // SiteTypes is the list, in the order the create form shows them.
 var SiteTypes = []SiteType{
-	{"wordpress", "WordPress", "", "php", true, false, "", ""},
-	{"laravel", "Laravel", "public", "php", true, false, "", ""},
-	{"php", "PHP", "public", "php", false, false, "", ""},
-	{"nodejs", "Node.js", "", "node", false, true, "", "npm run start"},
-	{"nextjs", "Next.js", "", "node", false, true, "npm run build", "npm run start"},
-	{"static", "Static HTML", "", "static", false, false, "", ""},
+	{
+		Key: "wordpress", Label: "WordPress",
+		Description: "PHP-FPM via nginx · MariaDB · installed and configured",
+		Runtime:     "php", Database: true, Managed: true, AdminAccount: true,
+	},
+	{
+		Key: "laravel", Label: "Laravel", WebDirectory: "public",
+		Description: "PHP-FPM via nginx · MariaDB · Composer",
+		Runtime:     "php", Database: true,
+	},
+	{
+		Key: "nextcloud", Label: "Nextcloud", WebDirectory: "public",
+		Description: "PHP-FPM via nginx · MariaDB · files, calendar and contacts",
+		Runtime:     "php", Database: true, Managed: true, AdminAccount: true,
+	},
+	{
+		Key: "n8n", Label: "n8n",
+		Description: "Workflow automation · systemd service behind nginx",
+		Runtime:     "node", Proxied: true, Managed: true,
+		Start: "n8n start", NodeMinimum: 20,
+	},
+	{
+		Key: "openclaw", Label: "OpenClaw",
+		Description: "Self-hosted AI agent gateway · systemd service behind nginx",
+		Runtime:     "node", Proxied: true, Managed: true, AdminAccount: true,
+		// 24 rather than the 22.22.3 OpenClaw's own notes allow: the panel
+		// checks the major version only, and a machine on 22.5 would pass a
+		// check for 22 and then be refused by OpenClaw itself.
+		Start: "openclaw gateway", NodeMinimum: 24,
+	},
+	{
+		Key: "php", Label: "PHP", WebDirectory: "public",
+		Description: "PHP-FPM via nginx",
+		Runtime:     "php",
+	},
+	{
+		Key: "nodejs", Label: "Node.js",
+		Description: "systemd service behind nginx",
+		Runtime:     "node", Proxied: true, Start: "npm run start",
+	},
+	{
+		Key: "nextjs", Label: "Next.js",
+		Description: "systemd service behind nginx · built on deploy",
+		Runtime:     "node", Proxied: true,
+		Build: "npm run build", Start: "npm run start",
+	},
+	{
+		Key: "static", Label: "Static HTML",
+		Description: "served straight from disk",
+		Runtime:     "static",
+	},
 }
 
 // FindSiteType returns the type with this key, or nil.

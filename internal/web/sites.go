@@ -66,12 +66,15 @@ func (a *App) sitesCreate(w http.ResponseWriter, r *http.Request) {
 		siteTypes = append(siteTypes, map[string]any{
 			"key":           kind.Key,
 			"label":         kind.Label,
+			"description":   kind.Description,
 			"web_directory": kind.WebDirectory,
 			"runtime":       kind.Runtime,
 			"database":      kind.Database,
 			"proxied":       kind.Proxied,
 			"build":         kind.Build,
 			"start":         kind.Start,
+			"managed":       kind.Managed,
+			"admin_account": kind.AdminAccount,
 		})
 	}
 
@@ -112,8 +115,12 @@ func (a *App) missingRequirement(kind string) string {
 		}
 	}
 
-	if kind == "laravel" && !a.Store.ServiceInstalled("mysql") {
-		return "Laravel sites need MariaDB for their database. Install it from the Apps page first."
+	if meta.Database && !a.Store.ServiceInstalled("mysql") {
+		return meta.Label + " needs MariaDB for its database. Install it from the Apps page first."
+	}
+
+	if meta.Runtime == "php" && !a.Store.ServiceInstalled("php") {
+		return meta.Label + " needs PHP. Install it from the Apps page first."
 	}
 
 	return ""
@@ -235,11 +242,17 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		site.BuildCommand = stringInput(input, "build_command", meta.Build)
 	}
 
-	if kind == "wordpress" {
+	// The application's own administrator, for the types where the panel
+	// creates one. OpenClaw has no username — its gateway takes a shared
+	// secret — so only the password half is used there, and it is generated.
+	if meta.AdminAccount {
 		site.WPTitle = stringInput(input, "wp_title", store.DefaultWPTitle)
-		site.WPAdminUser = stringInput(input, "wp_admin_user", "admin")
 		site.WPAdminEmail = stringInput(input, "wp_admin_email", user.Email)
 		site.WPAdminPassword = strings.TrimSpace(input["wp_admin_password"])
+
+		if kind != "openclaw" {
+			site.WPAdminUser = stringInput(input, "wp_admin_user", "admin")
+		}
 	}
 
 	id, err := a.Store.CreateSite(r.Context(), site)

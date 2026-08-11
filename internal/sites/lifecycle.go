@@ -83,31 +83,54 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	case site.Type == "wordpress":
 		list.AddFn("Install WordPress", s.installWordPress(ctx, site.ID))
 
+	case site.Type == "nextcloud":
+		list.AddFn("Prepare PHP for Nextcloud", s.installNextcloudPHP(ctx, site.ID))
+		list.AddFn("Install Nextcloud", s.installNextcloud(ctx, site.ID))
+
 	case site.IsProxied():
-		if site.Repository != "" {
-			clone()
-		} else {
-			list.AddFn("Scaffold a starter app", s.scaffoldNodeApp(ctx, site.ID))
+		if site.NodeMinimum() > 0 {
+			list.AddFn("Make sure Node.js is new enough", s.ensureNodeRuntime(ctx, site.ID))
 		}
 
-		list.Add("Install dependencies",
-			fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install --omit=dev --no-audit --no-fund", root))
+		switch {
+		case site.Type == "n8n":
+			list.AddFn("Install n8n", s.installN8N(ctx, site.ID))
 
-		if site.BuildCommand != "" {
-			list.Add("Build the application",
-				fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, site.BuildCommand))
+		case site.Type == "openclaw":
+			list.AddFn("Install OpenClaw", s.installOpenClaw(ctx, site.ID))
+
+		default:
+			if site.Repository != "" {
+				clone()
+			} else {
+				list.AddFn("Scaffold a starter app", s.scaffoldNodeApp(ctx, site.ID))
+			}
+
+			list.Add("Install dependencies",
+				fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install --omit=dev --no-audit --no-fund",
+					root))
+
+			if site.BuildCommand != "" {
+				list.Add("Build the application",
+					fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, site.BuildCommand))
+			}
 		}
 
 		list.AddFn("Create the systemd service", s.createSystemdUnit(ctx, site.ID))
 
 		service := site.ServiceName()
 
+		// Given a minute to come up before it is called dead: a Next.js server
+		// starts in a second, n8n migrates its database first.
 		list.Add("Start the application",
 			fmt.Sprintf(
-				"sudo systemctl restart %s; sleep 3; sudo systemctl is-active %s; "+
+				"sudo systemctl restart %[1]s; "+
+					"for attempt in $(seq 1 30); do "+
+					"curl -s -o /dev/null http://127.0.0.1:%[2]d/ && break; sleep 2; done; "+
+					"sudo systemctl is-active %[1]s; "+
 					"curl -sS -o /dev/null -w \"app responded with HTTP %%{http_code}\\n\" "+
-					"http://127.0.0.1:%d/ || echo \"app not answering yet — check the service log\"",
-				service, service, site.AppPort))
+					"http://127.0.0.1:%[2]d/ || echo \"app not answering yet — check the service log\"",
+				service, site.AppPort))
 
 	default:
 		// PHP and static, with or without a repository.
@@ -131,8 +154,21 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 		list.AddFn("Serve the site over HTTPS", s.enableHTTPS(ctx, site.ID)).Optional()
 	}
 
-	if site.Type == "wordpress" {
+	// Both applications store absolute URLs, so they can only be told which
+	// scheme won once the certificate step has run.
+	switch site.Type {
+	case "wordpress":
 		list.AddFn("Point WordPress at the final URL", s.pointWordPressAtURL(ctx, site.ID)).Optional()
+
+	case "nextcloud":
+		list.AddFn("Point Nextcloud at the final URL", s.pointNextcloudAtURL(ctx, site.ID))
+
+	case "n8n", "openclaw":
+		// The environment file names the URL and whether the cookie may be
+		// marked secure, and both are only settled now. Rewritten, then the
+		// service restarted onto it.
+		list.AddFn("Restart the application on its final URL",
+			s.restartOnFinalURL(ctx, site.ID)).Optional()
 	}
 
 	return list
@@ -194,6 +230,12 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 			fmt.Sprintf("sudo systemctl disable --now %s || true; sudo rm -f %s; sudo rm -f %s; "+
 				"sudo systemctl daemon-reload",
 				service, proc.Quote(UnitPath(site)), proc.Quote("/var/log/"+service+".log"))).Optional()
+	}
+
+	if site.Type == "nextcloud" {
+		list.Add("Remove the Nextcloud cron job",
+			"sudo rm -f "+proc.Quote("/etc/cron.d/ubuntu-panel-nextcloud-"+
+				strings.ReplaceAll(site.Domain, ".", "-"))).Optional()
 	}
 
 	list.Add("Remove the nginx vhost",

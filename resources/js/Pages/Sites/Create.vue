@@ -6,6 +6,7 @@ import InputLabel from '@/Components/InputLabel.vue';
 import TextInput from '@/Components/TextInput.vue';
 import Checkbox from '@/Components/Checkbox.vue';
 import RequiredApps from '@/Components/RequiredApps.vue';
+import AppIcon from '@/Components/AppIcon.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -68,6 +69,39 @@ const typeConfig = computed(() =>
 const isProxied = computed(() => !!typeConfig.value?.proxied);
 const isPhp = computed(() => typeConfig.value?.runtime === 'php');
 
+// An application the panel installs itself: no repository to ask for, and for
+// most of them a login to hand back afterwards.
+const isManaged = computed(() => !!typeConfig.value?.managed);
+const hasAdminAccount = computed(() => !!typeConfig.value?.admin_account);
+
+// OpenClaw's gateway authenticates with a shared secret rather than a login,
+// so asking for a username and an email would be asking for two things it has
+// nowhere to put.
+const wantsAdminUser = computed(
+    () => hasAdminAccount.value && form.type !== 'openclaw',
+);
+
+// What is written where, per type, said before the deployment rather than in
+// the console afterwards.
+const starterNote = computed(() => {
+    switch (form.type) {
+        case 'wordpress':
+            return 'WordPress is downloaded and installed for you';
+        case 'nextcloud':
+            return 'Nextcloud is downloaded, installed and pointed at its database';
+        case 'n8n':
+            return 'n8n is installed and run as a service, with its data under the site directory';
+        case 'openclaw':
+            return 'OpenClaw is installed and its gateway run as a service';
+        case 'laravel':
+            return 'a fresh Laravel application is created';
+        default:
+            return isProxied.value
+                ? 'a minimal Node server is scaffolded'
+                : 'a placeholder page is written';
+    }
+});
+
 // What the selected site type needs on the machine. nginx and Certbot are on
 // every one of them: there is no site without a vhost, and `ssl` is on by
 // default.
@@ -77,8 +111,9 @@ const needed = computed(() => {
     if (form.ssl) keys.push('certbot');
     if (isProxied.value) keys.push('node');
     if (isPhp.value) keys.push('php');
-    if (form.type === 'laravel') keys.push('composer', 'mysql');
-    if (form.type === 'wordpress') keys.push('mysql', 'wpcli');
+    if (typeConfig.value?.database) keys.push('mysql');
+    if (form.type === 'laravel') keys.push('composer');
+    if (form.type === 'wordpress') keys.push('wpcli');
 
     return keys;
 });
@@ -141,25 +176,21 @@ const submit = () => form.post(route('sites.store'));
                         :key="type.key"
                         type="button"
                         @click="form.type = type.key"
-                        class="rounded-lg border p-4 text-left transition"
+                        class="flex items-start gap-3 rounded-lg border p-4 text-left transition"
                         :class="
                             form.type === type.key
                                 ? 'border-brand-400 bg-brand-50 ring-1 ring-brand-300'
                                 : 'border-slate-200 hover:border-slate-300'
                         "
                     >
-                        <span class="block font-medium text-slate-800">{{
-                            type.label
-                        }}</span>
-                        <span class="mt-1 block text-xs text-slate-500">
-                            {{
-                                type.proxied
-                                    ? 'systemd service behind nginx'
-                                    : type.runtime === 'php'
-                                      ? 'PHP-FPM via nginx'
-                                      : 'served straight from disk'
-                            }}
-                            <template v-if="type.database"> · database</template>
+                        <AppIcon :app-key="type.key" :label="type.label" size="sm" />
+                        <span class="min-w-0">
+                            <span class="block font-medium text-slate-800">{{
+                                type.label
+                            }}</span>
+                            <span class="mt-1 block text-xs text-slate-500">
+                                {{ type.description }}
+                            </span>
                         </span>
                     </button>
                 </div>
@@ -282,22 +313,17 @@ const submit = () => form.post(route('sites.store'));
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Source code</h3>
                 <p class="mt-1 text-sm text-slate-500">
-                    Leave the repository blank to get a working starter:
-                    {{
-                        form.type === 'wordpress'
-                            ? 'WordPress is downloaded and installed for you'
-                            : form.type === 'laravel'
-                              ? 'a fresh Laravel application is created'
-                              : isProxied
-                                ? 'a minimal Node server is scaffolded'
-                                : 'a placeholder page is written'
-                    }}.
+                    <template v-if="isManaged">
+                        The panel installs this one:
+                        {{ starterNote }}.
+                    </template>
+                    <template v-else>
+                        Leave the repository blank to get a working starter:
+                        {{ starterNote }}.
+                    </template>
                 </p>
 
-                <div
-                    v-if="form.type !== 'wordpress'"
-                    class="mt-4 grid gap-6 sm:grid-cols-2"
-                >
+                <div v-if="!isManaged" class="mt-4 grid gap-6 sm:grid-cols-2">
                     <div>
                         <InputLabel for="repository" value="Git repository" />
                         <TextInput
@@ -326,7 +352,10 @@ const submit = () => form.post(route('sites.store'));
                     </div>
                 </div>
 
-                <div v-if="isProxied" class="mt-4 grid gap-6 sm:grid-cols-2">
+                <div
+                    v-if="isProxied && !isManaged"
+                    class="mt-4 grid gap-6 sm:grid-cols-2"
+                >
                     <div>
                         <InputLabel for="build_command" value="Build command" />
                         <TextInput
@@ -352,10 +381,10 @@ const submit = () => form.post(route('sites.store'));
                 </div>
 
                 <div
-                    v-if="form.type === 'wordpress'"
+                    v-if="hasAdminAccount"
                     class="mt-4 grid gap-6 sm:grid-cols-2"
                 >
-                    <div>
+                    <div v-if="form.type === 'wordpress'">
                         <InputLabel for="wp_title" value="Site title" />
                         <TextInput
                             id="wp_title"
@@ -364,7 +393,15 @@ const submit = () => form.post(route('sites.store'));
                             placeholder="WordPress Site"
                         />
                     </div>
-                    <div>
+                    <div v-if="form.type === 'openclaw'" class="sm:col-span-2">
+                        <p class="text-sm text-slate-600">
+                            The OpenClaw gateway authenticates with a shared
+                            token rather than a login. The panel generates one
+                            and shows it on the site's page after the
+                            deployment.
+                        </p>
+                    </div>
+                    <div v-if="wantsAdminUser">
                         <InputLabel for="wp_admin_user" value="Admin username" />
                         <TextInput
                             id="wp_admin_user"
@@ -372,7 +409,7 @@ const submit = () => form.post(route('sites.store'));
                             class="mt-1 block w-full"
                         />
                     </div>
-                    <div>
+                    <div v-if="wantsAdminUser">
                         <InputLabel for="wp_admin_email" value="Admin email" />
                         <TextInput
                             id="wp_admin_email"
@@ -386,7 +423,7 @@ const submit = () => form.post(route('sites.store'));
                             :message="form.errors.wp_admin_email"
                         />
                     </div>
-                    <div>
+                    <div v-if="form.type !== 'openclaw'">
                         <InputLabel
                             for="wp_admin_password"
                             value="Admin password"
@@ -404,9 +441,12 @@ const submit = () => form.post(route('sites.store'));
                             :message="form.errors.wp_admin_password"
                         />
                     </div>
-                    <p class="text-xs text-slate-500 sm:col-span-2">
+                    <p
+                        v-if="typeConfig?.database"
+                        class="text-xs text-slate-500 sm:col-span-2"
+                    >
                         A MariaDB database and user are created automatically
-                        and written into wp-config.php.
+                        and written into the application's own configuration.
                     </p>
                 </div>
 

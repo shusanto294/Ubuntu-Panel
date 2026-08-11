@@ -11,25 +11,29 @@ import (
 // Site is one hosted site: a vhost, a directory, and whatever runtime its type
 // needs.
 type Site struct {
-	ID              int64
-	UserID          int64
-	DNSAccountID    int64
-	DatabaseID      int64
-	Domain          string
-	Type            string
-	Aliases         []string
-	RootPath        string
-	WebDirectory    string
-	PHPVersion      string
-	NodeVersion     string
-	Status          string
-	SSL             bool
-	LastError       string
-	AppPort         int
-	StartCommand    string
-	BuildCommand    string
-	Repository      string
-	Branch          string
+	ID           int64
+	UserID       int64
+	DNSAccountID int64
+	DatabaseID   int64
+	Domain       string
+	Type         string
+	Aliases      []string
+	RootPath     string
+	WebDirectory string
+	PHPVersion   string
+	NodeVersion  string
+	Status       string
+	SSL          bool
+	LastError    string
+	AppPort      int
+	StartCommand string
+	BuildCommand string
+	Repository   string
+	Branch       string
+	// The application admin account. Named for WordPress, which was the only
+	// application the panel installed when the columns were added; Nextcloud's
+	// administrator and OpenClaw's gateway token live in the same three
+	// columns rather than in three more of their own.
 	WPAdminUser     string
 	WPAdminPassword string // decrypted
 	WPAdminEmail    string
@@ -325,6 +329,56 @@ func (site *Site) NeedsDatabase() bool {
 	return kind != nil && kind.Database
 }
 
+// IsManaged reports whether the panel installs the application itself, rather
+// than deploying whatever the operator's repository contains.
+func (site *Site) IsManaged() bool {
+	kind := config.FindSiteType(site.Type)
+
+	return kind != nil && kind.Managed
+}
+
+// HasAdminAccount reports whether the deployment creates a login for the
+// application, which the site page then has to show.
+func (site *Site) HasAdminAccount() bool {
+	kind := config.FindSiteType(site.Type)
+
+	return kind != nil && kind.AdminAccount
+}
+
+// NodeMinimum is the Node.js major this site's type refuses to run below.
+func (site *Site) NodeMinimum() int {
+	kind := config.FindSiteType(site.Type)
+	if kind == nil {
+		return 0
+	}
+
+	return kind.NodeMinimum
+}
+
+// AdminURL is where the application's own administration lives.
+func (site *Site) AdminURL() string {
+	switch site.Type {
+	case "wordpress":
+		return site.URL() + "/wp-admin"
+	case "nextcloud":
+		return site.URL() + "/settings/admin"
+	default:
+		return site.URL()
+	}
+}
+
+// AdminLabel names the credentials on the site page. OpenClaw's gateway takes
+// a shared secret rather than a username, so calling it a password would be
+// telling the operator to look for a login form that is not there.
+func (site *Site) AdminLabel() string {
+	switch site.Type {
+	case "openclaw":
+		return "OpenClaw gateway token"
+	default:
+		return site.TypeLabel() + " administrator"
+	}
+}
+
 // Hostnames is every name the site answers on, space-separated, for the nginx
 // server_name line and for the certificate request.
 //
@@ -402,6 +456,19 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		summary["web_directory"] = site.WebDirectory
 		summary["wp_admin_user"] = site.WPAdminUser
 		summary["wp_admin_email"] = site.WPAdminEmail
+		summary["managed"] = site.IsManaged()
+
+		// The application's own credentials, which the panel generated and
+		// nobody else has. The site page is the only place they exist.
+		if site.HasAdminAccount() && site.WPAdminPassword != "" {
+			summary["app"] = map[string]any{
+				"label":    site.AdminLabel(),
+				"url":      site.AdminURL(),
+				"user":     site.WPAdminUser,
+				"password": site.WPAdminPassword,
+				"token":    site.Type == "openclaw",
+			}
+		}
 	}
 
 	return summary
