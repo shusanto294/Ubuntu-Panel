@@ -472,13 +472,30 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		// The application's own credentials, which the panel generated and
 		// nobody else has. The site page is the only place they exist.
 		if site.HasAdminAccount() && site.WPAdminPassword != "" {
-			summary["app"] = map[string]any{
+			app := map[string]any{
 				"label":    site.AdminLabel(),
 				"url":      site.AdminURL(),
 				"user":     site.WPAdminUser,
 				"password": site.WPAdminPassword,
 				"token":    site.Type == "openclaw",
 			}
+
+			// OpenClaw's dashboard asks for the gateway's WebSocket address as
+			// well as the token, and gets it wrong on its own: it offers `ws://`
+			// even on a page served over HTTPS, which the browser then refuses
+			// to open as mixed content. Handing over the right one is the
+			// difference between a dashboard that connects and a token that
+			// looks like it was rejected.
+			if site.Type == "openclaw" {
+				scheme := "ws"
+				if site.SSL {
+					scheme = "wss"
+				}
+
+				app["websocket"] = scheme + "://" + site.Domain
+			}
+
+			summary["app"] = app
 		}
 	}
 

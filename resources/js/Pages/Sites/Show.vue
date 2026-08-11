@@ -397,6 +397,18 @@ const destroy = async () => {
                             reveal
                         </button>
                     </p>
+                    <p
+                        v-if="site.app.websocket"
+                        class="mt-1 break-all text-sm text-slate-600"
+                    >
+                        WebSocket URL:
+                        <span class="font-mono">{{ site.app.websocket }}</span>
+                    </p>
+                    <p v-if="site.app.websocket" class="mt-2 text-xs text-slate-500">
+                        The dashboard asks for both. Open it over HTTPS — the
+                        browser will not create the device identity the gateway
+                        expects on a plain HTTP page, whatever the token says.
+                    </p>
                 </div>
             </div>
 
