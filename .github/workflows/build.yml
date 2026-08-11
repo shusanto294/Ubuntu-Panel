@@ -1,0 +1,81 @@
+# Compile and check the project on every push.
+#
+# The release workflow only runs for tags, so for a long time a push to main
+# was never built by anything but the machine it was written on. This is the
+# other half: every push and every pull request gets the frontend built, the
+# binary compiled for both architectures the panel ships for, and the tests
+# run — so a commit that does not build is a red mark on the commit rather
+# than a discovery made during a release.
+name: Build
+
+on:
+  push:
+    branches:
+      - "**"
+    # Tags are the release workflow's job, and it runs the same checks.
+    tags-ignore:
+      - "**"
+
+  pull_request:
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Check the Go code
+        run: |
+          go vet ./...
+          go test ./...
+
+      # gofmt is not style policing here: an unformatted file is a file that
+      # was edited by something that did not run the toolchain, which is worth
+      # knowing before it reaches a release.
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+              echo "These files are not gofmt'd:"
+              echo "$unformatted"
+              exit 1
+          fi
+
+      # Both architectures a release ships for, so a build that only breaks on
+      # arm64 breaks here rather than during the release.
+      - name: Compile for both architectures
+        run: |
+          for arch in amd64 arm64; do
+              echo "==> linux/$arch"
+              CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+                  go build -trimpath -ldflags "-s -w" \
+                  -o "/tmp/ubuntu-panel-$arch" ./cmd/ubuntu-panel
+          done
+
+      # The version constant is what the panel reports and what the updater
+      # compares against, so a push that forgot to move it is a release that
+      # claims to be the previous one.
+      - name: Report the version this commit claims
+        run: grep -n 'Version = ' internal/config/config.go
