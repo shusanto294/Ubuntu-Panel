@@ -219,10 +219,18 @@ URL="$(printf '%s' "$RELEASE_JSON" \
        | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
        | grep -E "linux-${ARCH}\.tar\.gz$" | head -1 || true)"
 
+# Whether the release actually lists a build for this architecture. It decides
+# what a failed download means: a release missing the asset is one thing, and a
+# connection that died halfway through fetching an asset that is right there is
+# another entirely — and telling somebody the release has no build for their
+# machine when it does sends them looking in the wrong place.
+ASSET_LISTED=1
+
 if [ -z "$URL" ]; then
     # An older release, or one published by hand, may not list assets the same
     # way. The conventional name is the fallback.
     URL="$REPO_URL/releases/download/$TAG/ubuntu-panel-${TAG#v}-linux-${ARCH}.tar.gz"
+    ASSET_LISTED=0
     info "No $ARCH asset listed; trying the conventional name."
 fi
 
@@ -230,8 +238,37 @@ TARBALL="${URL##*/}"
 
 say "Downloading $TARBALL"
 
-if ! curl -fSL --progress-bar --max-time 600 -o "$TMP/$TARBALL" "$URL"; then
-    die "Release $TAG has no $ARCH build. Check $REPO_URL/releases, or build on this server with --from-source."
+# Retried, because this is the step that fails on a working server. GitHub
+# serves release assets from object storage, and a connection that dies partway
+# is common enough on some hosts to be the normal way an install ends —
+# curl: (56), five seconds in, on a file that downloads perfectly the next
+# time. --retry-all-errors because the default only retries a handful of
+# transient HTTP codes, and this is not an HTTP code at all.
+# --retry-all-errors arrived in curl 7.71, and Ubuntu 20.04 ships 7.68 — where
+# passing it is not a weaker retry but an immediate "option is unknown".
+RETRY_ALL=""
+curl --help all 2>/dev/null | grep -q -- '--retry-all-errors' && RETRY_ALL="--retry-all-errors"
+
+STATUS=0
+curl -fSL --progress-bar --max-time 600 \
+     --retry 5 --retry-delay 3 $RETRY_ALL \
+     -o "$TMP/$TARBALL" "$URL" || STATUS=$?
+
+if [ "$STATUS" -ne 0 ]; then
+    # 22 is curl's "the server said no" — a 404, which for a URL taken out of
+    # the release itself should not happen, and for the guessed one means the
+    # release has no such file.
+    if [ "$STATUS" -eq 22 ] || [ "$ASSET_LISTED" -eq 0 ]; then
+        die "Release $TAG has no $ARCH build. Check $REPO_URL/releases, or build on this server with --from-source."
+    fi
+
+    printf '\n' >&2
+    printf '!! Could not download %s (curl exit %s).\n' "$TARBALL" "$STATUS" >&2
+    printf '   The release has the file — %s\n' "$URL" >&2
+    printf '   — so this is the connection to GitHub, not a missing build. It was retried five times.\n\n' >&2
+    printf '   Run the same command again, or build on this server instead:\n' >&2
+    printf '       curl -fsSL https://raw.githubusercontent.com/%s/main/get.sh | sudo bash -s -- --from-source\n\n' "$REPO" >&2
+    exit 1
 fi
 
 SIZE="$(wc -c <"$TMP/$TARBALL" | tr -d ' ')"
@@ -239,7 +276,8 @@ ok "$TARBALL ($((SIZE / 1024)) KB)"
 
 # ---------------------------------------------------------------- checksum
 
-if curl -fsSL --max-time 60 -o "$TMP/$TARBALL.sha256" "$URL.sha256" 2>/dev/null; then
+if curl -fsSL --max-time 60 --retry 3 --retry-delay 2 $RETRY_ALL \
+        -o "$TMP/$TARBALL.sha256" "$URL.sha256" 2>/dev/null; then
     WANT="$(awk '{print $1; exit}' "$TMP/$TARBALL.sha256")"
     GOT="$(sha256sum "$TMP/$TARBALL" | awk '{print $1}')"
 
