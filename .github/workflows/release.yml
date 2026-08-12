@@ -1,29 +1,29 @@
 # Build the release tarballs and publish them, so nothing is ever compiled on
 # the server the panel is installed on.
 #
-# This runs on every push to main. It reads the version out of
-# internal/config/config.go, and if no release is tagged with it yet, it tags
-# the commit and publishes one. A push that did not move the version is built
-# and checked and then stops — which is what makes "bump the last digit before
-# every push" the whole of the release process.
-#
-# It builds the frontend once, cross-compiles the binary for amd64 and arm64
-# (CGO is off and the SQLite driver is pure Go, so no cross-toolchain is
+# The tag is the release, and this is the only thing that builds one. It checks
+# the code, builds the frontend once, cross-compiles the binary for amd64 and
+# arm64 (CGO is off and the SQLite driver is pure Go, so no cross-toolchain is
 # involved), and attaches both tarballs and their SHA-256 files to the release
 # get.sh downloads from.
 #
-# Pushing a tag by hand still works, and so does a manual run.
+# It used to run on pushes to main as well, tagging the commit itself when the
+# version had no tag yet. That safety net cost a run on every single push: the
+# tag is pushed first, so by the time main arrived the release had already been
+# published and the second run had nothing to do but say so — an entry in the
+# Actions list for eleven seconds of nothing, next to a Build run compiling the
+# same commit a second time. One version, one run. What the net used to catch
+# is caught by Build instead, which now fails a push to main whose version has
+# no tag rather than quietly tagging it.
 name: Release
 
 # The run's own title, which is what the Actions list shows in bold. Without
 # it a tag push is titled "Release" and the version is only readable from the
 # small ref chip beside it.
-run-name: Release ${{ github.ref_type == 'tag' && github.ref_name || 'from main' }}
+run-name: Release ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
 
@@ -48,45 +48,33 @@ jobs:
           # the tags a shallow clone does not fetch.
           fetch-depth: 0
 
-      # What is being released, and whether it already has been.
-      #
-      # A tag push releases that tag. A push to main releases the version the
-      # code claims — the one the panel reports and the updater compares
-      # against — so the number in config.go is the single thing that decides
-      # what a server is offered.
+      # What is being released. The tag that triggered the run, or the version
+      # typed into a manual one — and either way it has to agree with the
+      # number in config.go, which is what the panel reports and what the
+      # updater compares against. A release built from a commit claiming a
+      # different version is a release every server ignores.
       - name: Work out the version
         id: version
         run: |
-          case "${{ github.event_name }}" in
-              workflow_dispatch)
-                  version="${{ github.event.inputs.version }}"
-                  ;;
-              *)
-                  if [ "${{ github.ref_type }}" = "tag" ]; then
-                      version="${{ github.ref_name }}"
-                  else
-                      version="v$(sed -n 's/.*Version = "\(.*\)".*/\1/p' \
-                          internal/config/config.go | head -1)"
-                  fi
-                  ;;
-          esac
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              version="${{ github.event.inputs.version }}"
+          else
+              version="${{ github.ref_name }}"
+          fi
+
+          claimed="v$(sed -n 's/.*Version = "\(.*\)".*/\1/p' \
+              internal/config/config.go | head -1)"
 
           if [ -z "$version" ] || [ "$version" = "v" ]; then
-              echo "Could not read a version out of internal/config/config.go"
+              echo "No version to release"
               exit 1
           fi
 
-          # An existing tag only means "already released" when this run was
-          # started by a branch push. A run started by the tag itself is the
-          # release — the tag is what triggered it, so of course it exists, and
-          # treating that as "nothing to do" published nothing at all while
-          # reporting success.
-          if [ "${{ github.ref_type }}" != "tag" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ] \
-                  && git rev-parse "refs/tags/$version" >/dev/null 2>&1; then
-              echo "$version is already tagged; the tag's own run published it."
-              echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-              echo "release=true" >> "$GITHUB_OUTPUT"
+          if [ "$version" != "$claimed" ]; then
+              echo "The tag says $version and internal/config/config.go says $claimed."
+              echo "The panel would report $claimed while the release offered $version,"
+              echo "so every server would keep updating to it for ever."
+              exit 1
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -94,27 +82,34 @@ jobs:
           echo "Version: $version"
 
       - uses: actions/setup-go@v5
-        if: steps.version.outputs.release == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - uses: actions/setup-node@v4
-        if: steps.version.outputs.release == 'true'
         with:
           node-version: 22
           cache: npm
 
+      # Everything the Build workflow checks, because this is the only run a
+      # release commit gets: Build stays off main so that one version means one
+      # run, and a release that skipped the checks is worse than a second run.
       - name: Check
-        if: steps.version.outputs.release == 'true'
         run: |
           go vet ./...
           go test ./...
 
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+              echo "These files are not gofmt'd:"
+              echo "$unformatted"
+              exit 1
+          fi
+
       # Tagged before the tarballs are built, so the release and the commit it
       # was built from can never disagree. A tag push has one already.
       - name: Tag the commit
-        if: steps.version.outputs.release == 'true' && github.ref_type != 'tag'
+        if: github.ref_type != 'tag'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -123,13 +118,11 @@ jobs:
           git push origin "${{ steps.version.outputs.version }}"
 
       - name: Build the release tarballs
-        if: steps.version.outputs.release == 'true'
         env:
           PANEL_VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/build-release.sh amd64 arm64
 
       - name: Prove the binaries are static
-        if: steps.version.outputs.release == 'true'
         run: |
           for binary in $(find dist -name '*.tar.gz'); do
               tar -xzf "$binary" -C /tmp
@@ -144,7 +137,6 @@ jobs:
           done
 
       - name: Publish
-        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}

@@ -1,17 +1,29 @@
-# Compile and check the project on every push.
+# Compile and check the project on every push that is not a release.
 #
-# The release workflow only runs for tags, so for a long time a push to main
-# was never built by anything but the machine it was written on. This is the
-# other half: every push and every pull request gets the frontend built, the
-# binary compiled for both architectures the panel ships for, and the tests
-# run — so a commit that does not build is a red mark on the commit rather
-# than a discovery made during a release.
+# Work in progress is what this is for: branches and pull requests, where
+# there is no tag and nothing to publish, and a commit that does not build
+# should be a red mark on the commit rather than a discovery made during a
+# release.
+#
+# Not main. Every push to main carries a new version and a tag pushed just
+# before it, and the tag's Release run compiles and checks that very commit —
+# running this as well meant one version produced two compiles of identical
+# code and three rows in the Actions list for one release. So main is the
+# Release run's, and this is everything else's.
+#
+# What main gives up by not being here is a run of its own when the tag was
+# forgotten. The tag is the release; a push without one was never going to
+# reach a server anyway, and the Release run refuses a tag that disagrees with
+# the version in config.go, which is the mistake that actually happens.
 name: Build
 
 on:
   push:
     branches:
       - "**"
+      # main belongs to the Release run. Negated here rather than in a
+      # branches-ignore of its own: GitHub refuses a filter that has both.
+      - "!main"
     # Tags are the release workflow's job, and it runs the same checks.
     tags-ignore:
       - "**"
