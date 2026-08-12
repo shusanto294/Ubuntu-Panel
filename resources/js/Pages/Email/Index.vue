@@ -37,6 +37,24 @@ const busy = computed(
 
 useLiveRefresh(busy, ['domains', 'activeTask']);
 
+// Two lists, one page. A domain is a thing you set up once — records, DKIM, a
+// certificate — and a mailbox is a thing you make every week; reading past the
+// first to count the second is the wrong way round.
+const tab = ref('domains');
+
+// Every address on the server, with the domain it belongs to. The domains
+// already carry their own mailboxes, so this is the same data read the other
+// way rather than a second thing to keep in step.
+const mailboxes = computed(() =>
+    props.domains.flatMap((domain) =>
+        (domain.accounts ?? []).map((account) => ({
+            ...account,
+            domain: domain.domain,
+            domain_id: domain.id,
+        })),
+    ),
+);
+
 // Holds the conversation a mail client holds — submission on 587, a real
 // login, a real message — and writes every reply the server gives to the log.
 // "Connection to server failed" in a webmail is not a diagnosis; a 535 or a 554
@@ -101,6 +119,36 @@ const test = () => {
         />
 
         <template v-else>
+            <div class="mb-6 border-b border-slate-200">
+                <nav class="-mb-px flex flex-wrap gap-6" aria-label="Sections">
+                    <button
+                        @click="tab = 'domains'"
+                        class="border-b-2 px-1 pb-3 text-sm font-medium transition"
+                        :class="
+                            tab === 'domains'
+                                ? 'border-brand-600 text-brand-700'
+                                : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                        "
+                    >
+                        Domains
+                        <span class="ml-1 text-xs text-slate-400">{{ domains.length }}</span>
+                    </button>
+                    <button
+                        @click="tab = 'mailboxes'"
+                        class="border-b-2 px-1 pb-3 text-sm font-medium transition"
+                        :class="
+                            tab === 'mailboxes'
+                                ? 'border-brand-600 text-brand-700'
+                                : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                        "
+                    >
+                        Mailboxes
+                        <span class="ml-1 text-xs text-slate-400">{{ mailboxes.length }}</span>
+                    </button>
+                </nav>
+            </div>
+
+            <div v-show="tab === 'domains'">
             <div
                 class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
             >
@@ -174,6 +222,91 @@ const test = () => {
                                         >Add one</Link
                                     >
                                     to start creating addresses.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            </div>
+
+            <!--
+                Every address on the server in one list, which is the question
+                this page is usually open for: who has a mailbox here. Creating
+                one still belongs to its domain, because a mailbox needs a
+                domain to be at.
+            -->
+            <div
+                v-show="tab === 'mailboxes'"
+                class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            >
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr
+                                class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+                            >
+                                <th class="px-5 py-3">Address</th>
+                                <th class="px-5 py-3">Domain</th>
+                                <th class="px-5 py-3">Quota</th>
+                                <th class="px-5 py-3">Status</th>
+                                <th class="px-5 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 text-sm">
+                            <template
+                                v-for="mailbox in mailboxes"
+                                :key="mailbox.id"
+                            >
+                                <tr>
+                                    <td class="break-all px-5 py-3 font-medium text-slate-800">
+                                        {{ mailbox.address }}
+                                    </td>
+                                    <td class="px-5 py-3">
+                                        <Link
+                                            :href="route('email.domains.show', mailbox.domain_id)"
+                                            class="text-slate-600 hover:text-brand-600 hover:underline"
+                                            >{{ mailbox.domain }}</Link
+                                        >
+                                    </td>
+                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">
+                                        {{ mailbox.quota_label }}
+                                    </td>
+                                    <td class="px-5 py-3">
+                                        <StatusBadge :status="mailbox.status" />
+                                    </td>
+                                    <td class="whitespace-nowrap px-5 py-3 text-right">
+                                        <a
+                                            v-if="roundcubeInstalled"
+                                            :href="mailbox.webmail_url"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="mr-3 text-brand-600 hover:underline"
+                                            >Webmail</a
+                                        >
+                                        <Link
+                                            :href="route('email.domains.show', mailbox.domain_id)"
+                                            class="text-brand-600 hover:underline"
+                                            >Manage</Link
+                                        >
+                                    </td>
+                                </tr>
+                                <tr v-if="mailbox.last_error">
+                                    <td
+                                        colspan="5"
+                                        class="bg-rose-50 px-5 py-2 text-xs text-rose-700"
+                                    >
+                                        {{ mailbox.last_error }}
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr v-if="!mailboxes.length">
+                                <td
+                                    colspan="5"
+                                    class="px-5 py-16 text-center text-sm text-slate-500"
+                                >
+                                    No mailboxes yet. Open a domain to add the
+                                    first address.
                                 </td>
                             </tr>
                         </tbody>
