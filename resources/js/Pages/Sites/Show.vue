@@ -17,6 +17,8 @@ const props = defineProps({
     resolution: Object,
     phpDirectives: { type: Array, default: () => [] },
     cronJobs: { type: Array, default: () => [] },
+    accessUsers: { type: Array, default: () => [] },
+    sshPort: { type: Number, default: 22 },
     database: { type: Object, default: null },
     logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
@@ -40,6 +42,7 @@ const tabs = computed(() => {
     entries.push({ key: 'database', label: 'Database' });
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
     entries.push({ key: 'files', label: 'File manager' });
+    entries.push({ key: 'access', label: 'SSH/SFTP' });
     entries.push({ key: 'cron', label: 'Cron jobs' });
     entries.push({ key: 'logs', label: 'Logs' });
 
@@ -349,6 +352,74 @@ const onDrop = (event) => {
     dragging.value = false;
     uploadFiles(event.dataTransfer?.files);
 };
+
+// ---- SSH and SFTP accounts.
+//
+// Real system accounts, with the site directory as their home and www-data as
+// their group — so what they upload is what the web server can read.
+const accountName = ref('');
+const accountPassword = ref('');
+const sftpOnly = ref(true);
+const accountWorking = ref(false);
+
+const accessSubmit = (action, extra = {}) => {
+    accountWorking.value = true;
+
+    router.post(
+        route('sites.access', props.site.id),
+        { action, ...extra },
+        {
+            preserveScroll: true,
+            onFinish: () => {
+                accountWorking.value = false;
+                accountName.value = '';
+                accountPassword.value = '';
+            },
+        },
+    );
+};
+
+const addAccount = () => {
+    if (!accountName.value.trim()) return;
+
+    accessSubmit('create', {
+        username: accountName.value,
+        password: accountPassword.value,
+        sftp_only: sftpOnly.value ? '1' : '0',
+    });
+};
+
+const changeAccountPassword = (user) => {
+    const chosen = window.prompt(
+        `New password for ${user.name}. Leave blank to have one generated.`,
+        '',
+    );
+
+    if (chosen === null) return;
+
+    accessSubmit('password', { username: user.name, password: chosen });
+};
+
+const removeAccount = async (user) => {
+    const go = await confirmDanger(
+        `Remove ${user.name}?`,
+        'The account can no longer sign in. The site and its files are untouched.',
+        'Remove',
+    );
+
+    if (!go) return;
+
+    accessSubmit('delete', { username: user.name });
+};
+
+// What somebody pastes into a client. The host is the server, not the site:
+// SFTP is a session on the machine, and a domain behind a CDN would not reach
+// it.
+const sftpExample = computed(
+    () =>
+        `sftp -P ${props.sshPort} <user>@${props.resolution?.expected || props.site.domain}`,
+);
+
 
 // ---- Logs: nginx's own for this site, and the panel's history of it.
 const logView = ref(props.logFiles[0]?.key ?? 'activity');
@@ -1082,6 +1153,120 @@ const destroy = async () => {
                 redeployment. It needs the domain to resolve to this server
                 first; the Logs tab has the run.
             </p>
+        </div>
+
+        <div
+            v-if="!busy && tab === 'access'"
+            class="grid gap-6 lg:grid-cols-3"
+        >
+            <div
+                class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2"
+            >
+                <h3 class="font-semibold text-slate-800">Accounts</h3>
+                <p class="mt-2 text-sm text-slate-500">
+                    Real system accounts whose home is this site's directory.
+                    They belong to <span class="font-mono">www-data</span>, so
+                    what they upload is what the web server can read.
+                </p>
+
+                <ul class="mt-4 divide-y divide-slate-100 text-sm">
+                    <li
+                        v-for="user in accessUsers"
+                        :key="user.name"
+                        class="flex flex-wrap items-center justify-between gap-2 py-3"
+                    >
+                        <div class="min-w-0">
+                            <p class="break-all font-mono text-slate-800">
+                                {{ user.name }}
+                            </p>
+                            <p class="text-xs text-slate-500">
+                                {{ user.sftp_only ? 'SFTP only' : 'SSH and SFTP' }}
+                                · <span class="font-mono">{{ user.shell }}</span>
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-3">
+                            <button
+                                @click="changeAccountPassword(user)"
+                                :disabled="accountWorking"
+                                class="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                            >
+                                Password
+                            </button>
+                            <button
+                                @click="removeAccount(user)"
+                                :disabled="accountWorking"
+                                class="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
+                            >
+                                Remove
+                            </button>
+                        </div>
+                    </li>
+                    <li v-if="!accessUsers.length" class="py-3 text-slate-500">
+                        No account can sign in for this site yet.
+                    </li>
+                </ul>
+
+                <div class="mt-5 border-t border-slate-200 pt-4">
+                    <p class="text-xs text-slate-500">Connect with</p>
+                    <pre
+                        class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
+                        >{{ sftpExample }}</pre
+                    >
+                    <p class="mt-2 text-xs text-slate-500">
+                        The same host, port and password work in FileZilla,
+                        Cyberduck or any client that speaks SFTP — choose SFTP
+                        rather than FTP, which this server does not run. An
+                        account with a shell uses
+                        <span class="font-mono">ssh</span> on the same port.
+                    </p>
+                </div>
+            </div>
+
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-800">Add an account</h3>
+
+                <input
+                    v-model="accountName"
+                    type="text"
+                    placeholder="username"
+                    class="mt-4 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                />
+                <input
+                    v-model="accountPassword"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="Leave blank to generate a password"
+                    class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                />
+
+                <label class="mt-3 flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                        type="checkbox"
+                        v-model="sftpOnly"
+                        class="mt-0.5 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                    />
+                    <span>
+                        SFTP only
+                        <span class="block text-xs text-slate-500">
+                            No shell. Files in and out, and nothing else.
+                        </span>
+                    </span>
+                </label>
+
+                <button
+                    @click="addAccount"
+                    :disabled="accountWorking || !accountName.trim()"
+                    class="mt-4 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                >
+                    Add account
+                </button>
+
+                <p class="mt-3 text-xs text-slate-500">
+                    The password is shown once, when it is set — the panel does
+                    not store it. Unticking SFTP only gives this account a shell
+                    on the server, with everything that implies.
+                </p>
+            </div>
         </div>
 
         <div

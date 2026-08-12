@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
@@ -375,6 +376,8 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"logFiles":      a.siteLogFiles(site),
 		"resolution":    resolution,
 		"phpDirectives": directives,
+		"accessUsers":   a.Sites.AccessUsers(site),
+		"sshPort":       system.SSHPort(),
 		"cronJobs":      a.Sites.CronJobs(site),
 		"certificate":   a.certificateSummary(site),
 		"site":          site.Summary(true),
@@ -986,4 +989,69 @@ func (a *App) sitesWPAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, link, http.StatusSeeOther)
+}
+
+// sitesAccess is the SSH/SFTP tab's one endpoint: add an account, change a
+// password, remove one.
+func (a *App) sitesAccess(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	name := strings.TrimSpace(strings.ToLower(input["username"]))
+	password := input["password"]
+
+	// Generated when none was typed: this account opens a session on the
+	// server, and one somebody invents at the keyboard is the weakest thing
+	// standing in front of it.
+	if strings.TrimSpace(password) == "" {
+		password = crypto.Password(24)
+	}
+
+	switch input["action"] {
+	case "create":
+		err = a.Sites.CreateAccessUser(r.Context(), id, name, password,
+			input["sftp_only"] == "1" || input["sftp_only"] == "true")
+
+		if err == nil {
+			sess.Flash("success", name+" was created. Its password is "+password+
+				" — the panel does not store it, so copy it now.")
+		}
+
+	case "password":
+		err = a.Sites.SetAccessPassword(r.Context(), id, name, password)
+
+		if err == nil {
+			sess.Flash("success", "The password for "+name+" is now "+password+
+				" — copy it before leaving this page.")
+		}
+
+	case "delete":
+		err = a.Sites.DeleteAccessUser(r.Context(), id, name)
+
+		if err == nil {
+			sess.Flash("danger", name+" can no longer sign in. The site's files are untouched.")
+		}
+
+	default:
+		err = errors.New("that is not something the panel does to an account")
+	}
+
+	if err != nil {
+		a.failBack(w, r, err.Error())
+
+		return
+	}
+
+	inertia.Back(w, r, "/sites")
 }

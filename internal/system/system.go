@@ -386,3 +386,19 @@ func InstalledPHPVersions() []string {
 
 	return versions
 }
+
+// SSHPort is what sshd is listening on, for the page that tells somebody how
+// to connect.
+//
+// Read from the configuration rather than assumed to be 22: a server whose SSH
+// port was moved is a server where 22 is the one number that will not work,
+// and printing it would be the panel confidently giving the wrong instruction.
+func SSHPort() int {
+	result := proc.Run("sudo sshd -T 2>/dev/null | awk '/^port /{print $2; exit}'", 30*time.Second)
+
+	if port, err := strconv.Atoi(strings.TrimSpace(result.Output)); err == nil && port > 0 {
+		return port
+	}
+
+	return 22
+}

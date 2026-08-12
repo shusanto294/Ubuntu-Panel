@@ -94,6 +94,7 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/php", "sites.php", authenticated, a.sitesPHP)
 	rt.post("/sites/{site}/certificate", "sites.certificate", authenticated, a.sitesCertificate)
 	rt.post("/sites/{site}/cron", "sites.cron", authenticated, a.sitesCron)
+	rt.post("/sites/{site}/access", "sites.access", authenticated, a.sitesAccess)
 
 	rt.get("/sites/{site}/files", "sites.files", authenticated, a.sitesFiles)
 	rt.get("/sites/{site}/file", "sites.file", authenticated, a.sitesFileRead)
