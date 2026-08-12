@@ -5,8 +5,7 @@ import AppIcon from '@/Components/AppIcon.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { confirmDanger } from '@/dialog';
+import { Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({
     databases: Array,
@@ -29,21 +28,6 @@ const busy = computed(
 );
 
 useLiveRefresh(busy, ['databases', 'activeTask']);
-
-
-const destroy = async (database) => {
-    const go = await confirmDanger(
-        `Drop ${database.name}?`,
-        'All data in it is lost, and the database user is removed with it.',
-        'Drop',
-    );
-
-    if (!go) return;
-
-    router.delete(route('databases.destroy', database.id), {
-        preserveScroll: true,
-    });
-};
 
 // The server-wide MongoDB connection string, for Compass. Fetched when the
 // dialog opens rather than shipped with the page: it carries the password to
@@ -295,6 +279,13 @@ const copy = async (text, which) => {
                                 <td class="px-5 py-3">
                                     <StatusBadge :status="database.status" />
                                 </td>
+                                <!--
+                                    No Drop here. It sat one careless click
+                                    from a database and its contents, in a list
+                                    people open to read — it lives on the
+                                    database's own page now, under a heading
+                                    that says what it is.
+                                -->
                                 <td class="whitespace-nowrap px-5 py-3 text-right">
                                     <Link
                                         :href="route('databases.show', database.id)"
@@ -302,12 +293,6 @@ const copy = async (text, which) => {
                                     >
                                         Manage
                                     </Link>
-                                    <button
-                                        @click="destroy(database)"
-                                        class="ml-3 text-rose-600 hover:underline"
-                                    >
-                                        Drop
-                                    </button>
                                 </td>
                             </tr>
                             <tr v-if="database.last_error">
