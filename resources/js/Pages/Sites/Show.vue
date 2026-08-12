@@ -77,6 +77,32 @@ const saveJobs = () =>
         { preserveScroll: true },
     );
 
+// A deploy runs on the queue, so the page has to go and look for the result.
+const busy = computed(() =>
+    ['pending', 'deploying', 'deleting'].includes(props.site.status),
+);
+
+// The step list stays up while the work runs, and while the run that failed is
+// still the last thing that happened — that is when the steps are worth
+// reading, because one of them has the ✕ against it.
+const showProgress = computed(
+    () =>
+        busy.value ||
+        props.activeTask?.status === 'running' ||
+        ((props.activeTask ?? props.latestTask)?.status === 'failed' &&
+            props.site.status !== 'active'),
+);
+
+const live = computed(() => props.site.status === 'active' && !busy.value);
+
+// The site can be built, running and answering nginx on this machine while its
+// name resolves to nothing at all — every step of the deployment passes and
+// the browser still says "this site can't be reached". That is DNS, not the
+// site, and the page has to say which of the two it is.
+const unreachable = computed(
+    () => props.resolution?.checked && !props.resolution.resolves,
+);
+
 let timer = null;
 
 const startPolling = () => {
