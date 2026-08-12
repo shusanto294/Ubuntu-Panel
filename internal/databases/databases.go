@@ -209,22 +209,15 @@ if (target.getCollectionNames().length === 0) {
 `, database.Name, database.Username, jsQuote(database.Password))
 
 	default:
-		script = fmt.Sprintf(
-			"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s COLLATE %s_unicode_ci;\n"+
-				"CREATE USER IF NOT EXISTS '%s'@'127.0.0.1' IDENTIFIED BY %s;\n"+
-				"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY %s;\n"+
-				"ALTER USER '%s'@'127.0.0.1' IDENTIFIED BY %s;\n"+
-				"ALTER USER '%s'@'localhost' IDENTIFIED BY %s;\n"+
-				"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'127.0.0.1';\n"+
-				"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';\n"+
-				"FLUSH PRIVILEGES;\n",
-			database.Name, charset, charset,
-			database.Username, password,
-			database.Username, password,
-			database.Username, password,
-			database.Username, password,
-			database.Name, database.Username,
-			database.Name, database.Username)
+		// The server has to be listening off the machine before an account
+		// that may only be used from off the machine is worth creating.
+		if err := EnsureMySQLRemote(s.Store, runner); err != nil {
+			return fail(err)
+		}
+
+		script = mysqlAccountScript(database.Name, database.Username, database.Password,
+			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s COLLATE %s_unicode_ci;\n",
+				database.Name, charset, charset))
 	}
 
 	if err := runSQL(runner, database.Engine, script); err != nil {
@@ -268,12 +261,13 @@ if (target.getUser("%[2]s")) {
 target.dropDatabase();
 `, database.Name, database.Username)
 	default:
-		script = fmt.Sprintf(
-			"DROP DATABASE IF EXISTS `%s`;\n"+
-				"DROP USER IF EXISTS '%s'@'127.0.0.1';\n"+
-				"DROP USER IF EXISTS '%s'@'localhost';\n"+
-				"FLUSH PRIVILEGES;\n",
-			database.Name, database.Username, database.Username)
+		script = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;\n", database.Name)
+
+		for _, host := range mysqlHosts {
+			script += fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s';\n", database.Username, host)
+		}
+
+		script += "FLUSH PRIVILEGES;\n"
 	}
 
 	if err := runSQL(runner, database.Engine, script); err != nil {
@@ -347,4 +341,86 @@ func (s *Service) DeleteTask(ctx context.Context, databaseID int64) error {
 	}
 
 	return nil
+}
+
+// SetPassword changes the password of a database's own user, on the server and
+// in the panel's record.
+//
+// The reason this exists is the one nobody plans for: the password has been
+// somewhere it should not have been — a chat message, a screenshot, a
+// repository — and the answer is a new one, now, without losing the database.
+// So the account is altered rather than dropped and recreated, and everything
+// in it is untouched.
+//
+// The record is only updated once the server has accepted the change. A panel
+// showing a password the server does not have is worse than one showing the
+// old password, because the old one at least works.
+func (s *Service) SetPassword(ctx context.Context, databaseID int64, password string) error {
+	database, err := s.Store.FindDatabase(ctx, databaseID)
+	if err != nil {
+		return errors.New("The database record no longer exists.")
+	}
+
+	if !SafeIdentifier(database.Name) || !SafeIdentifier(database.Username) {
+		return errors.New("Refusing to touch an account whose name is not a plain identifier.")
+	}
+
+	if !s.Store.ServiceInstalled(database.Engine) {
+		return fmt.Errorf("%s is not installed on this machine.", config.EngineLabel(database.Engine))
+	}
+
+	var script string
+
+	switch database.Engine {
+	case "postgres":
+		script = fmt.Sprintf("ALTER ROLE %s WITH LOGIN PASSWORD %s;\n",
+			database.Username, sqlQuote(password))
+
+	case "mongodb":
+		script = mongoPrelude(s.Store) + fmt.Sprintf(
+			"db.getSiblingDB(\"%s\").changeUserPassword(\"%s\", %s);\n",
+			database.Name, database.Username, jsQuote(password))
+
+	default:
+		// Every host the account exists at, or the application connecting from
+		// one of the others goes on using the old password — which is the
+		// whole thing this was called to stop.
+		script = mysqlAccountScript(database.Name, database.Username, password, "")
+	}
+
+	if err := runSQL(nil, database.Engine, script); err != nil {
+		return err
+	}
+
+	return s.Store.SetDatabasePassword(databaseID, password)
+}
+
+// RepairAccount puts a database's account back the way the panel means it to
+// be: existing at every host, with the password the panel holds, and granted
+// its own database.
+//
+// For the databases created before the panel opened MariaDB to the network,
+// whose accounts exist for localhost and nowhere else — the credentials the
+// panel prints are right and the connection is refused, which reads as a
+// password that does not work.
+func (s *Service) RepairAccount(ctx context.Context, databaseID int64) error {
+	database, err := s.Store.FindDatabase(ctx, databaseID)
+	if err != nil {
+		return errors.New("The database record no longer exists.")
+	}
+
+	if database.Engine != "mysql" {
+		return nil
+	}
+
+	if !SafeIdentifier(database.Name) || !SafeIdentifier(database.Username) {
+		return errors.New("Refusing to touch an account whose name is not a plain identifier.")
+	}
+
+	if err := EnsureMySQLRemote(s.Store, nil); err != nil {
+		return err
+	}
+
+	return runSQL(nil, database.Engine,
+		mysqlAccountScript(database.Name, database.Username, database.Password, ""))
 }

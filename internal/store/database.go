@@ -126,6 +126,21 @@ func (s *Store) SetDatabaseStatus(id int64, status, lastError string) {
 	           WHERE id = ?`, status, nullText(lastError), id)
 }
 
+// SetDatabasePassword records a password the engine has already accepted.
+// Encrypted like the one the row was created with, so the column stays
+// readable by the same key and by nothing else.
+func (s *Store) SetDatabasePassword(id int64, password string) error {
+	encrypted, err := s.encrypt(password)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE databases SET password = ?, updated_at = datetime('now')
+	                    WHERE id = ?`, encrypted, id)
+
+	return err
+}
+
 // DeleteDatabase removes the row once the engine has dropped the database.
 func (s *Store) DeleteDatabase(id int64) {
 	s.db.Exec(`DELETE FROM databases WHERE id = ?`, id)

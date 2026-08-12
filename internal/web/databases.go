@@ -208,8 +208,30 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 		port = engine.Port
 	}
 
+	body := databaseCredentials(database, port)
+
+	a.writeJSON(w, http.StatusOK, body)
+}
+
+// databaseCredentials is everything needed to connect to one database, in the
+// shape both the credentials endpoint and the database's own page use.
+//
+// The host is the address an application should actually use, which is not
+// always loopback. MariaDB and MongoDB are both listening on every interface
+// here — the panel opens them so an application on another machine can connect
+// with the credentials it prints — so naming 127.0.0.1 would be printing an
+// address that only works in one of the two places the credentials are for.
+//
+// PostgreSQL keeps loopback, because the panel has not opened it.
+func databaseCredentials(database *store.Database, port int) map[string]any {
+	host := "127.0.0.1"
+
+	if database.Engine == "mysql" || database.Engine == "mongodb" {
+		host = serverAddress()
+	}
+
 	body := map[string]any{
-		"host":     "127.0.0.1",
+		"host":     host,
 		"port":     port,
 		"database": database.Name,
 		"username": database.Username,
@@ -220,19 +242,24 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 	// hand one over is that assembling it by hand goes wrong in the same two
 	// places every time: the authentication database is the one the user was
 	// created in, not `admin`, and the password has to be escaped.
-	//
-	// One URI, on the server's own address rather than loopback. There used to
-	// be two — a loopback one and a remote one — and two connection strings for
-	// one database is a question rather than an answer. The server's address is
-	// an address on the machine's own interface, so it works from a client
-	// sitting on the server exactly as it works from a laptop.
 	if database.Engine == "mongodb" {
-		body["host"] = mongoHost()
 		body["auth_db"] = database.Name
-		body["uri"] = mongoURI(mongoHost(), port, database.Name, database.Username, database.Password)
+		body["uri"] = mongoURI(host, port, database.Name, database.Username, database.Password)
 	}
 
-	a.writeJSON(w, http.StatusOK, body)
+	return body
+}
+
+// serverAddress is the address this machine answers to on its own network
+// interface — the one to print for a database an application off the machine
+// is meant to reach. Loopback only when the panel cannot work out any other,
+// where an address that works on the server beats none at all.
+func serverAddress() string {
+	if ip := system.PublicIP(); ip != "" {
+		return ip
+	}
+
+	return "127.0.0.1"
 }
 
 // databasesMongoConnection is the server-wide connection string for MongoDB
@@ -313,4 +340,121 @@ func truncate(text string, length int) string {
 	}
 
 	return text[:length]
+}
+
+// databasesShow is one database's own page: what it is, how to connect to it,
+// and the two things that can be done to it.
+//
+// The credentials are rendered into this page rather than fetched, unlike the
+// list — a page about one database is a page whose whole purpose is those
+// details, and asking for them a second time to display them is a round trip
+// for nothing.
+func (a *App) databasesShow(w http.ResponseWriter, r *http.Request) {
+	database, err := a.Store.FindDatabase(r.Context(), routeID(r, "database"))
+	if err != nil {
+		a.notFoundError(w, r, "No such database.")
+		return
+	}
+
+	port := 3306
+	if engine := config.FindEngine(database.Engine); engine != nil {
+		port = engine.Port
+	}
+
+	summary := database.Summary()
+	summary["credentials"] = databaseCredentials(database, port)
+
+	a.Render.Render(w, r, "Databases/Show", inertia.Props{
+		"database":   summary,
+		"phpMyAdmin": a.Store.ServiceInstalled("phpmyadmin"),
+		"phpMyAdminManual": a.phpMyAdminURL(phpMyAdminServerManual) +
+			separatorFor(a.phpMyAdminURL(phpMyAdminServerManual)) +
+			"db=" + url.QueryEscape(database.Name),
+		"activeTask": a.activeTask(r, "database"),
+	})
+}
+
+// separatorFor is whether a query string has been started already.
+func separatorFor(link string) string {
+	if strings.Contains(link, "?") {
+		return "&"
+	}
+
+	return "?"
+}
+
+// databasesPassword changes the password of a database's own user.
+//
+// Done in the request rather than on the queue: it is one statement, the
+// operator is waiting to copy the result, and a password that changes some
+// seconds later is a password they will have copied the old version of.
+func (a *App) databasesPassword(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "database")
+
+	database, err := a.Store.FindDatabase(r.Context(), id)
+	if err != nil {
+		a.notFoundError(w, r, "No such database.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	password := input["password"]
+
+	// Generated when none was typed, which is the better answer anyway: the
+	// reason to change a password is usually that the old one got out, and a
+	// generated one cannot be the old one with a digit on the end.
+	if strings.TrimSpace(password) == "" {
+		password = crypto.Password(24)
+	} else if len(password) < 8 {
+		sess.Error("password", "Use at least 8 characters, or leave it blank to have one generated.")
+
+		inertia.Back(w, r, "/databases")
+
+		return
+	}
+
+	if err := a.Databases.SetPassword(r.Context(), id, password); err != nil {
+		a.Log.Error("could not change the database password", "database", id, "error", err)
+		a.failBack(w, r, err.Error())
+
+		return
+	}
+
+	sess.Flash("success", "The password for "+database.Username+" was changed.")
+
+	inertia.Back(w, r, "/databases")
+}
+
+// databasesRepair puts a database's account back at every host the panel
+// creates accounts for, with the password the panel holds.
+//
+// For a database made before MariaDB was opened to the network: its account
+// exists for localhost and nowhere else, so the credentials this page prints
+// are correct and the connection from anywhere else is refused — which reads
+// as a password that does not work.
+func (a *App) databasesRepair(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "database")
+
+	if _, err := a.Store.FindDatabase(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such database.")
+		return
+	}
+
+	if err := a.Databases.RepairAccount(r.Context(), id); err != nil {
+		a.Log.Error("could not repair the database account", "database", id, "error", err)
+		a.failBack(w, r, err.Error())
+
+		return
+	}
+
+	sess.Flash("success", "The account was rebuilt. It now works from this server and from off it.")
+
+	inertia.Back(w, r, "/databases")
 }

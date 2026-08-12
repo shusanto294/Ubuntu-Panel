@@ -13,12 +13,11 @@ const props = defineProps({
     availableEngines: Array,
     engines: Object,
     phpMyAdmin: Boolean,
-    // Paths, not URLs: phpMyAdmin is served from the panel's own origin, so it
-    // opens on whatever address this page was reached on. The first signs
-    // itself in and shows every database; the second stops at the login form,
-    // for signing in as one database's own user.
+    // A path, not a URL: phpMyAdmin is served from the panel's own origin, so
+    // it opens on whatever address this page was reached on. This one signs
+    // itself in and shows every database; the one on a database's own page
+    // stops at the login form instead.
     phpMyAdminAll: { type: String, default: '/phpmyadmin/' },
-    phpMyAdminManual: { type: String, default: '/phpmyadmin/' },
     mongodb: Boolean,
     activeTask: { type: Object, default: null },
 });
@@ -44,74 +43,6 @@ const destroy = async (database) => {
     router.delete(route('databases.destroy', database.id), {
         preserveScroll: true,
     });
-};
-
-// The Manage dialog: one database's credentials, and the ways into it.
-//
-// A dialog rather than a row that unfolds underneath: what it holds is a
-// password, and a password that stays open on a page somebody scrolls past is
-// a password on a screen somebody walks past.
-const managing = ref(null);
-
-const manage = async (database) => {
-    managing.value = { database, credentials: null };
-
-    try {
-        const { data } = await window.axios.get(
-            route('databases.credentials', database.id),
-        );
-
-        // Guard against a second click having moved on while this was in
-        // flight, which would otherwise fill one database's dialog with
-        // another's password.
-        if (managing.value?.database.id === database.id)
-            managing.value = { database, credentials: data };
-    } catch {
-        if (managing.value?.database.id === database.id)
-            managing.value = {
-                database,
-                error: 'The panel could not read this database’s credentials.',
-            };
-    }
-};
-
-const closeManage = () => {
-    managing.value = null;
-    copied.value = '';
-};
-
-// Everything about one database as a single block of text.
-//
-// One block and one button, because the reason somebody opens this dialog is
-// usually to send the lot to a developer — and four separate copy buttons is
-// four chances to paste three of them and leave the port behind.
-const managedDetails = computed(() => {
-    if (!managing.value?.credentials) return '';
-
-    const { database } = managing.value;
-    const it = managing.value.credentials;
-
-    const lines = [
-        `Database: ${it.database}`,
-        `Engine:   ${database.engine_label}`,
-        `Host:     ${it.host}`,
-        `Port:     ${it.port}`,
-        `Username: ${it.username}`,
-        `Password: ${it.password}`,
-    ];
-
-    if (it.auth_db) lines.push(`Auth database: ${it.auth_db}`);
-    if (it.uri) lines.push(`Connection string: ${it.uri}`);
-
-    return lines.join('\n');
-});
-
-// phpMyAdmin, at its login form, with this database already named — so the
-// credentials above are pasted into a page that opens straight onto it.
-const phpMyAdminFor = (database) => {
-    const separator = props.phpMyAdminManual.includes('?') ? '&' : '?';
-
-    return `${props.phpMyAdminManual}${separator}db=${encodeURIComponent(database.name)}`;
 };
 
 // The server-wide MongoDB connection string, for Compass. Fetched when the
@@ -208,109 +139,6 @@ const copy = async (text, which) => {
 
         <div v-if="activeTask" class="mb-6">
             <TaskStatus :task="activeTask" />
-        </div>
-
-        <!-- One database: what it is called, who it belongs to, and the way in. -->
-        <div
-            v-if="managing"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-            @click.self="closeManage"
-        >
-            <div
-                class="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/10"
-            >
-                <div class="flex items-start justify-between gap-4">
-                    <div>
-                        <h3 class="text-lg font-semibold text-slate-900">
-                            {{ managing.database.name }}
-                        </h3>
-                        <p class="mt-1 text-sm text-slate-500">
-                            {{ managing.database.engine_label }}
-                        </p>
-                    </div>
-                    <button
-                        @click="closeManage"
-                        class="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                        aria-label="Close"
-                    >
-                        ✕
-                    </button>
-                </div>
-
-                <p
-                    v-if="managing.error"
-                    class="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800"
-                >
-                    {{ managing.error }}
-                </p>
-
-                <p
-                    v-else-if="!managing.credentials"
-                    class="mt-6 text-sm text-slate-500"
-                >
-                    Reading the credentials…
-                </p>
-
-                <template v-else>
-                    <!--
-                        Everything in one block, copied by one button. What
-                        this dialog is usually open for is sending a developer
-                        their connection details, and a field at a time is how
-                        the port gets left behind.
-                    -->
-                    <div class="mt-5">
-                        <div class="flex items-center justify-between gap-3">
-                            <p class="text-sm font-medium text-slate-700">
-                                Connection details
-                            </p>
-                            <button
-                                @click="copy(managedDetails, 'all')"
-                                class="text-xs font-medium text-brand-600 hover:underline"
-                            >
-                                {{ copied === 'all' ? 'Copied' : 'Copy all' }}
-                            </button>
-                        </div>
-                        <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
-                            >{{ managedDetails }}</pre
-                        >
-                        <p
-                            v-if="managing.credentials.uri"
-                            class="mt-2 text-xs text-slate-500"
-                        >
-                            The connection string works from MongoDB Compass on
-                            your desktop and from anything running on the
-                            server.
-                        </p>
-                    </div>
-
-                    <!--
-                        The same phpMyAdmin the header button opens, stopped at
-                        its login form with this database named. The header one
-                        is already signed in as an administrator and shows
-                        everything; this one is whatever the credentials above
-                        can reach, which is this database and nothing else.
-                    -->
-                    <div
-                        v-if="phpMyAdmin && managing.database.engine === 'mysql'"
-                        class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4"
-                    >
-                        <p class="text-xs text-slate-500">
-                            Opens phpMyAdmin's login form. Sign in with the user
-                            and password above to manage this database on its
-                            own.
-                        </p>
-                        <a
-                            :href="phpMyAdminFor(managing.database)"
-                            target="_blank"
-                            rel="noopener"
-                            class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                        >
-                            Open in phpMyAdmin
-                        </a>
-                    </div>
-                </template>
-            </div>
         </div>
 
         <!--
@@ -446,9 +274,12 @@ const copy = async (text, which) => {
                         <template v-for="database in databases" :key="database.id">
                             <tr>
                                 <td class="px-5 py-3">
-                                    <p class="font-medium text-slate-800">
+                                    <Link
+                                        :href="route('databases.show', database.id)"
+                                        class="font-medium text-slate-800 hover:text-brand-600 hover:underline"
+                                    >
                                         {{ database.name }}
-                                    </p>
+                                    </Link>
                                     <p class="text-xs text-slate-500">
                                         user: {{ database.username }}
                                         <span
@@ -465,12 +296,12 @@ const copy = async (text, which) => {
                                     <StatusBadge :status="database.status" />
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-3 text-right">
-                                    <button
-                                        @click="manage(database)"
+                                    <Link
+                                        :href="route('databases.show', database.id)"
                                         class="text-brand-600 hover:underline"
                                     >
                                         Manage
-                                    </button>
+                                    </Link>
                                     <button
                                         @click="destroy(database)"
                                         class="ml-3 text-rose-600 hover:underline"

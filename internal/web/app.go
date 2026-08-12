@@ -92,6 +92,7 @@ func (a *App) Start(ctx context.Context) {
 		a.BootstrapApps(ctx)
 		a.EnsureMailConfigured()
 		a.EnsurePhpMyAdminReady(nil)
+		a.EnsureMySQLReachable(ctx)
 	}()
 }
 

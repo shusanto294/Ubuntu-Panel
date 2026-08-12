@@ -82,6 +82,10 @@ func (a *App) routes() *router {
 	rt.get("/databases", "databases.index", authenticated, a.databasesIndex)
 	rt.get("/databases/create", "databases.create", authenticated, a.databasesCreate)
 	rt.post("/databases", "databases.store", authenticated, a.databasesStore)
+	rt.get("/databases/{database}", "databases.show", authenticated, a.databasesShow)
+	rt.post("/databases/{database}/password", "databases.password", authenticated,
+		a.databasesPassword)
+	rt.post("/databases/{database}/repair", "databases.repair", authenticated, a.databasesRepair)
 	rt.delete("/databases/{database}", "databases.destroy", authenticated, a.databasesDestroy)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)

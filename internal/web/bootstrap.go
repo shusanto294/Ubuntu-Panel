@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
+	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 )
 
@@ -96,4 +97,56 @@ func (a *App) BootstrapApps(ctx context.Context) {
 
 	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
 		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+}
+
+// mysqlAccountsOpened records that every MariaDB account the panel created has
+// been rebuilt at every host, so the sweep below runs once.
+const mysqlAccountsOpened = "mysql_accounts_opened"
+
+// EnsureMySQLReachable makes the credentials the panel prints true.
+//
+// The Databases pages now name the server's own address for MariaDB, because
+// the credentials are for applications that connect from off the machine. Two
+// things have to be so for that to work, and on a server set up by an earlier
+// panel neither is: MariaDB listens on loopback only, and every account it
+// created exists for 'localhost' and nowhere else.
+//
+// Printing an address that is refused is worse than printing loopback. So the
+// server is opened and the accounts are rebuilt — once, on the first start
+// after the update, and never again.
+//
+// Rebuilt with the password the panel already holds, so nothing that works
+// today stops working. It restarts MariaDB, which is why it is guarded by a
+// setting rather than run on every start.
+func (a *App) EnsureMySQLReachable(ctx context.Context) {
+	if !a.Store.ServiceInstalled("mysql") || a.Store.SettingBool(mysqlAccountsOpened, false) {
+		return
+	}
+
+	if err := databases.EnsureMySQLRemote(a.Store, nil); err != nil {
+		a.Log.Warn("could not open MariaDB to the network", "error", err)
+
+		return
+	}
+
+	rows, err := a.Store.Databases(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, database := range rows {
+		if database.Engine != "mysql" {
+			continue
+		}
+
+		if err := a.Databases.RepairAccount(ctx, database.ID); err != nil {
+			a.Log.Warn("could not rebuild a MariaDB account",
+				"database", database.Name, "error", err)
+
+			return
+		}
+	}
+
+	a.Store.SetSetting(mysqlAccountsOpened, "1")
+	a.Log.Info("MariaDB now accepts connections from off this machine")
 }
