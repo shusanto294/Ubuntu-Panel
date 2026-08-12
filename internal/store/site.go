@@ -387,13 +387,19 @@ func (site *Site) NodeMinimum() int {
 	return kind.NodeMinimum
 }
 
-// AdminURL is where the application's own administration lives.
+// AdminURL is where the button on the site page goes.
+//
+// Where somebody wants to arrive, which is not always the administration. A
+// WordPress site opens at wp-admin, because that is what a WordPress login is
+// for. Nextcloud opens at its front door: it used to open at /settings/admin,
+// the server-administration screen, which is a page for changing how the
+// server is set up rather than for using it — Nextcloud sends a login on to
+// the dashboard by itself, and that is where anybody clicking Open Nextcloud
+// meant to go.
 func (site *Site) AdminURL() string {
 	switch site.Type {
 	case "wordpress":
 		return site.URL() + "/wp-admin"
-	case "nextcloud":
-		return site.URL() + "/settings/admin"
 	default:
 		return site.URL()
 	}
