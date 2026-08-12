@@ -21,6 +21,13 @@ var SharedNginxConfig func(runner *tasks.Runner) error
 // configured once its packages are down.
 var ConfigureMail func(ctx context.Context, userID int64) error
 
+// RefreshPanelVhost rewrites the panel's own nginx vhost in whatever shape it
+// is currently in. Same arrangement again: the vhost is the web layer's, and
+// phpMyAdmin is the app that needs it — the location that serves it only
+// reaches a machine whose vhost was written since the panel learned to emit
+// it, and that is the vhost this rewrites.
+var RefreshPanelVhost func(runner *tasks.Runner) error
+
 // packagesFor is the apt line for one app.
 func (s *Service) packagesFor(key string) string {
 	php := s.Store.PHPVersion()
@@ -422,11 +429,34 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 			Optional().Group(key)
 
 	case "phpmyadmin":
-		user := s.Store.Setting("system_user", "ubuntupanel")
-
+		// www-data, because nginx passes these requests to PHP-FPM, which runs
+		// as www-data — phpMyAdmin writes its session and template cache into
+		// this directory, and complains on every page about a directory it
+		// cannot write to.
 		list.Add("Configure phpMyAdmin",
-			fmt.Sprintf("sudo chown -R %[1]s:%[1]s /var/lib/ubuntu-panel/phpmyadmin-tmp && "+
-				"sudo chmod 700 /var/lib/ubuntu-panel/phpmyadmin-tmp", user)).Group(key)
+			"sudo chown -R www-data:www-data /var/lib/ubuntu-panel/phpmyadmin-tmp && "+
+				"sudo chmod 700 /var/lib/ubuntu-panel/phpmyadmin-tmp").Group(key)
+
+		list.AddFn("Write phpMyAdmin's configuration", func(runner *tasks.Runner) (string, error) {
+			return s.writePhpMyAdminConfig()
+		}).Group(key)
+
+		// The location that serves it lives in the panel's own vhost, and a
+		// machine installed before the panel emitted that block still has the
+		// vhost without it. Rewritten here rather than at every start: this is
+		// the moment somebody asked for phpMyAdmin, and it is the only app
+		// whose being installed changes what the panel's vhost has to serve.
+		list.AddFn("Serve it from the panel's address", func(runner *tasks.Runner) (string, error) {
+			if RefreshPanelVhost == nil {
+				return "", errors.New("the panel's vhost writer is not wired up")
+			}
+
+			if err := RefreshPanelVhost(runner); err != nil {
+				return "", err
+			}
+
+			return "phpMyAdmin is served at /phpmyadmin on the panel's own address.", nil
+		}).Optional().Group(key)
 
 	case "mail":
 		list.Add("Start the mail server",

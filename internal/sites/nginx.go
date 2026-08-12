@@ -19,7 +19,64 @@ const (
 	// DefaultCert is self-signed, and only ever presented to requests for
 	// hostnames nothing is configured for.
 	DefaultCert = "/etc/nginx/panel-default"
+
+	// PhpMyAdminParent is what the panel unpacks phpMyAdmin under, and
+	// PhpMyAdminPath is where the panel's own origin serves it from.
+	//
+	// The parent rather than the directory itself, because the location below
+	// uses `root` and not `alias`: with the URI prefix and the last path
+	// segment spelled the same, nginx maps /phpmyadmin/x to
+	// /usr/share/ubuntu-panel/phpmyadmin/x on its own. `alias` would do the
+	// same job and take try_files, $document_root and PATH_INFO with it — the
+	// standard way this configuration is got wrong.
+	PhpMyAdminParent = "/usr/share/ubuntu-panel"
+	PhpMyAdminPath   = "/phpmyadmin"
 )
+
+// PhpMyAdminLocation serves phpMyAdmin from the panel's own origin.
+//
+// On the panel's origin rather than a vhost of its own: phpMyAdmin is a login
+// form for every database on the machine, and the panel's hostname is the one
+// with a certificate on it. Given a vhost of its own on plain HTTP, the first
+// thing through it would be a MySQL password in clear text.
+//
+// Emitted whether or not phpMyAdmin is installed. A location pointing at a
+// directory that is not there is a 404, which is what it should be; making the
+// block conditional would mean the panel had to rewrite its own vhost the
+// moment somebody installed the app from Apps.
+//
+// Nothing here references $panel_https, deliberately. That map lives in a
+// conf.d file the panel writes when it configures nginx, and this block also
+// goes into the vhost the installer writes before any of that has happened —
+// a vhost naming an undefined variable is one nginx refuses to load, and the
+// thing it would refuse to load is the panel itself. fastcgi-php.conf sets
+// HTTPS from $https, which is right whenever TLS ends at this nginx.
+func PhpMyAdminLocation(php string) string {
+	if php == "" {
+		php = "8.3"
+	}
+
+	return fmt.Sprintf(
+		"    # phpMyAdmin, when it is installed. See PhpMyAdminLocation in nginx.go.\n"+
+			"    location ^~ %[2]s {\n"+
+			"        root %[1]s;\n"+
+			"        index index.php;\n"+
+			"        try_files $uri $uri/ =404;\n"+
+			"\n"+
+			"        location ~ ^%[2]s/.+\\.php$ {\n"+
+			"            root %[1]s;\n"+
+			"            include snippets/fastcgi-php.conf;\n"+
+			"            fastcgi_pass unix:/run/php/php%[3]s-fpm.sock;\n"+
+			"            fastcgi_read_timeout 300;\n"+
+			"            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"+
+			"        }\n"+
+			"\n"+
+			"        # Nothing under here is meant to be fetched directly.\n"+
+			"        location ~ ^%[2]s/(libraries|templates|setup)/ {\n"+
+			"            deny all;\n"+
+			"        }\n"+
+			"    }\n", PhpMyAdminParent, PhpMyAdminPath, php)
+}
 
 // AvailablePath, EnabledPath, CertificatePath and UnitPath are where a site's
 // files live.

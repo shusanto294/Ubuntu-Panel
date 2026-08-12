@@ -85,6 +85,8 @@ func (a *App) routes() *router {
 	rt.delete("/databases/{database}", "databases.destroy", authenticated, a.databasesDestroy)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)
+	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
+		a.databasesMongoConnection)
 
 	// Email
 	rt.get("/email", "email.index", authenticated, a.emailIndex)

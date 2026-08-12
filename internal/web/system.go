@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -454,8 +455,12 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		names = domain + " " + ip
 	}
 
+	// Which PHP-FPM socket the phpMyAdmin location talks to. The panel's
+	// default version, which is the one the app was installed against.
+	php := a.Store.PHPVersion()
+
 	if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-		panelVhost(names, port), true); err != nil {
+		panelVhost(names, port, php), true); err != nil {
 		a.Store.FinishTask(taskID, "failed", err.Error(), 0)
 
 		return err
@@ -515,14 +520,14 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		}
 
 		if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-			panelTLSVhost(domain, system.PublicIP(), port), true); err != nil {
+			panelTLSVhost(domain, system.PublicIP(), port, php), true); err != nil {
 			return "", err
 		}
 
 		// Tested before the reload: a vhost nginx refuses freezes the running
 		// configuration for every site on the box.
 		if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
-			proc.PutFile("/etc/nginx/sites-available/ubuntu-panel", panelVhost(names, port), true)
+			proc.PutFile("/etc/nginx/sites-available/ubuntu-panel", panelVhost(names, port, php), true)
 			proc.Ok("sudo systemctl reload nginx")
 
 			return "", fmt.Errorf("nginx rejected the HTTPS vhost, so the panel was put back on HTTP:\n%s",
@@ -549,7 +554,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 // them: a browser on http:// gets the panel rather than a certificate warning,
 // and a proxy on https:// gets an answer. The redirect arrives with the real
 // certificate.
-func panelVhost(names string, port int) string {
+func panelVhost(names string, port int, php string) string {
 	return fmt.Sprintf(
 		"# Managed by %s — the panel itself\n"+
 			"server {\n"+
@@ -576,8 +581,10 @@ func panelVhost(names string, port int) string {
 			"\n"+
 			"%s"+
 			"}\n",
-		config.Name, names, sites.ACMEWebroot, panelProxyBlock(port),
-		names, sites.DefaultCert, sites.DefaultCert, panelProxyBlock(port))
+		config.Name, names, sites.ACMEWebroot,
+		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port),
+		names, sites.DefaultCert, sites.DefaultCert,
+		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port))
 }
 
 // panelTLSVhost redirects the hostname to HTTPS and keeps a plain block for the
@@ -587,7 +594,12 @@ func panelVhost(names string, port int) string {
 // sending it to https:// would present the hostname's certificate to a request
 // that did not use the hostname, so the address that always works would always
 // warn.
-func panelTLSVhost(domain, ip string, port int) string {
+func panelTLSVhost(domain, ip string, port int, php string) string {
+	// phpMyAdmin is deliberately absent from the IP block below. That block is
+	// plain HTTP on purpose — see the note above — and phpMyAdmin's login form
+	// carries a database password. The hostname redirects to HTTPS and serves
+	// it there; the address that always works serves the panel and nothing
+	// that would put a MySQL password on the wire in clear.
 	ipBlock := ""
 
 	if ip != "" {
@@ -629,7 +641,102 @@ func panelTLSVhost(domain, ip string, port int) string {
 			"%s"+
 			"}\n%s",
 		config.Name, domain, sites.ACMEWebroot, domain, domain, domain,
-		panelProxyBlock(port), ipBlock)
+		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port), ipBlock)
+}
+
+// panelDefaultVhost is the shape the installer writes: the catch-all on port
+// 80, for a panel that has not been given a hostname yet.
+//
+// Kept in step with the copy in install.sh. The two exist because the
+// installer has to write one before the panel is running, and the panel has to
+// be able to rewrite it afterwards without turning it into a named vhost —
+// which would take the panel off the bare IP address the operator reaches it
+// by.
+func panelDefaultVhost(port int, php string) string {
+	return fmt.Sprintf(
+		"# Managed by the Ubuntu Panel installer.\n"+
+			"server {\n"+
+			"    listen 80 default_server;\n"+
+			"    listen [::]:80 default_server;\n"+
+			"    server_name _;\n"+
+			"\n"+
+			"    location ^~ /.well-known/acme-challenge/ {\n"+
+			"        root %s;\n"+
+			"        default_type \"text/plain\";\n"+
+			"    }\n"+
+			"\n"+
+			"%s\n"+
+			"%s"+
+			"}\n",
+		sites.ACMEWebroot, sites.PhpMyAdminLocation(php), panelProxyBlock(port))
+}
+
+// refreshPanelVhost rewrites the panel's vhost in the shape it is already in,
+// so a location the panel has since learned to emit reaches a machine whose
+// vhost was written before it did. phpMyAdmin is why it exists.
+//
+// Only ever rewrites a vhost the panel or its installer wrote — both start
+// with a "# Managed by" line — and puts the old one back if nginx will not
+// have the new one. The file being rewritten is the one serving the panel, so
+// a bad write is the panel disappearing.
+func (a *App) refreshPanelVhost(runner *tasks.Runner) error {
+	const path = "/etc/nginx/sites-available/ubuntu-panel"
+
+	current := proc.Run("sudo cat "+path+" 2>/dev/null", time.Minute).Output
+
+	if !strings.HasPrefix(strings.TrimSpace(current), "# Managed by") {
+		return errors.New("the panel's nginx vhost was edited by hand, so it was left alone. " +
+			"Add the phpMyAdmin location to it yourself, or set the panel hostname again " +
+			"from Settings to have the panel rewrite it")
+	}
+
+	php := a.Store.PHPVersion()
+	port := a.Config.BindPort
+	domain := a.Store.Setting("panel_domain", "")
+
+	var rewritten string
+
+	switch {
+	case domain == "":
+		rewritten = panelDefaultVhost(port, php)
+
+	case a.Store.SettingBool("panel_domain_tls", false):
+		rewritten = panelTLSVhost(domain, system.PublicIP(), port, php)
+
+	default:
+		names := domain
+		if ip := system.PublicIP(); ip != "" {
+			names = domain + " " + ip
+		}
+
+		rewritten = panelVhost(names, port, php)
+	}
+
+	if strings.TrimSpace(rewritten) == strings.TrimSpace(current) {
+		return nil
+	}
+
+	if err := proc.PutFile(path, rewritten, true); err != nil {
+		return err
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		proc.PutFile(path, current, true)
+		proc.Ok("sudo systemctl reload nginx")
+
+		return fmt.Errorf("nginx refused the rewritten panel vhost, so the old one was put back:\n%s",
+			check.Output)
+	}
+
+	if runner != nil {
+		return runner.Must("sudo systemctl reload nginx", time.Minute)
+	}
+
+	if !proc.Ok("sudo systemctl reload nginx") {
+		return errors.New("nginx accepted the vhost but would not reload")
+	}
+
+	return nil
 }
 
 func panelProxyBlock(port int) string {

@@ -155,3 +155,44 @@ func TestCatchAllTakesBothSlotsWhenTheyAreFree(t *testing.T) {
 		t.Fatal("the port 80 half does not serve the ACME challenge")
 	}
 }
+
+// The location that serves phpMyAdmin uses `root` with a prefix that matches
+// the last path segment, so /phpmyadmin/x resolves to
+// /usr/share/ubuntu-panel/phpmyadmin/x. An `alias` here — the usual way this
+// is written — silently breaks try_files and SCRIPT_FILENAME.
+func TestPhpMyAdminIsServedByRootRatherThanAlias(t *testing.T) {
+	block := PhpMyAdminLocation("8.3")
+
+	if strings.Contains(block, "alias") {
+		t.Error("the block uses alias, which breaks $document_root under it")
+	}
+
+	for _, want := range []string{
+		"location ^~ /phpmyadmin {",
+		"root /usr/share/ubuntu-panel;",
+		"fastcgi_pass unix:/run/php/php8.3-fpm.sock;",
+		"fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the block is missing %q:\n%s", want, block)
+		}
+	}
+}
+
+// $panel_https is defined in a conf.d file the panel writes when it configures
+// nginx, and this block also goes into the vhost the installer writes before
+// any of that exists. A vhost naming an undefined variable is one nginx
+// refuses to load — and it is the vhost serving the panel.
+func TestPhpMyAdminBlockNamesNoPanelVariables(t *testing.T) {
+	if strings.Contains(PhpMyAdminLocation(""), "$panel_https") {
+		t.Error("the block references $panel_https, which is not defined on a fresh install")
+	}
+}
+
+// An empty version still has to produce a socket path, because the vhost is
+// written on machines where no PHP default has been chosen yet.
+func TestPhpMyAdminFallsBackToTheDefaultPHP(t *testing.T) {
+	if !strings.Contains(PhpMyAdminLocation(""), "php8.3-fpm.sock") {
+		t.Error("no PHP version produced no socket")
+	}
+}

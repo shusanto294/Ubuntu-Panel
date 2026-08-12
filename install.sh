@@ -43,6 +43,12 @@ PANEL_PORT_EXPLICIT=0
 PANEL_USER="${PANEL_USER:-ubuntupanel}"
 PANEL_ROOT="${PANEL_ROOT:-/opt/ubuntu-panel}"
 PANEL_PORT="${PANEL_PORT:-8088}"
+
+# Which PHP-FPM socket the phpMyAdmin location in the vhost below talks to.
+# The panel's own default, because PHP is not on the machine yet when this
+# runs — and the panel rewrites the vhost with the real version the moment
+# phpMyAdmin is installed from Apps.
+PANEL_PHP_VERSION="${PANEL_PHP_VERSION:-8.3}"
 PANEL_SWAP="${PANEL_SWAP:-1}"
 PANEL_SKIP_APT="${PANEL_SKIP_APT:-0}"
 PANEL_FROM_SOURCE="${PANEL_FROM_SOURCE:-0}"
@@ -991,6 +997,27 @@ server {
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/letsencrypt;
         default_type "text/plain";
+    }
+
+    # phpMyAdmin, when it is installed — a 404 until then. Kept in step with
+    # PhpMyAdminLocation in internal/sites/nginx.go, which is what rewrites
+    # this vhost once the panel is running and knows which PHP is on the box.
+    location ^~ /phpmyadmin {
+        root /usr/share/ubuntu-panel;
+        index index.php;
+        try_files \$uri \$uri/ =404;
+
+        location ~ ^/phpmyadmin/.+\.php\$ {
+            root /usr/share/ubuntu-panel;
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/run/php/php${PANEL_PHP_VERSION}-fpm.sock;
+            fastcgi_read_timeout 300;
+            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        }
+
+        location ~ ^/phpmyadmin/(libraries|templates|setup)/ {
+            deny all;
+        }
     }
 
     location / {

@@ -9,9 +9,11 @@ import (
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
 	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
+	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 )
@@ -66,7 +68,12 @@ func (a *App) databasesIndex(w http.ResponseWriter, r *http.Request) {
 		"availableEngines": a.availableEngines(),
 		"engines":          engineLabels(),
 		"phpMyAdmin":       a.Store.ServiceInstalled("phpmyadmin"),
-		"activeTask":       a.activeTask(r, "database"),
+		// Served from the panel's own origin, so the link is a path and not a
+		// URL: whatever address the operator reached this page on is the one
+		// phpMyAdmin should open on, hostname or bare IP, HTTP or HTTPS.
+		"phpMyAdminPath": sites.PhpMyAdminPath + "/",
+		"mongodb":        a.Store.ServiceInstalled("mongodb"),
+		"activeTask":     a.activeTask(r, "database"),
 	})
 }
 
@@ -207,6 +214,61 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.writeJSON(w, http.StatusOK, body)
+}
+
+// databasesMongoConnection is the server-wide connection string for MongoDB
+// Compass: the panel's own administrator account, which can see every database
+// on the machine rather than the one a site was given.
+//
+// Fetched on demand, like the per-database credentials, so the root password is
+// not in the payload of a page anybody can leave open.
+func (a *App) databasesMongoConnection(w http.ResponseWriter, r *http.Request) {
+	if !a.Store.ServiceInstalled("mongodb") {
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"error": "MongoDB is not installed on this machine.",
+		})
+
+		return
+	}
+
+	// Read, never minted. RememberSecret would generate one on a machine that
+	// has none — and hand over a password MongoDB has never been told about,
+	// which is a worse answer than saying there is nothing to give yet. The
+	// account is created the first time a MongoDB database is.
+	password := a.Store.SecretSetting(databases.MongoSecret)
+
+	if password == "" {
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"error": "MongoDB is installed, but the panel has not set up its administrator " +
+				"account yet — that happens the first time a MongoDB database is created. " +
+				"Create one, then this string will work.",
+		})
+
+		return
+	}
+
+	// The address a desktop reaches this machine on, not 127.0.0.1: the whole
+	// point of this string is that it is pasted into Compass on somebody's
+	// laptop. Loopback is offered too, for a client on the server itself.
+	host := system.PublicIP()
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	// authSource=admin, not the database being browsed: the panel's account was
+	// created in admin, and Compass authenticating against anything else fails
+	// with "Authentication failed" on a password that is perfectly correct.
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"host":     host,
+		"port":     databases.MongoPort,
+		"username": databases.MongoAdmin,
+		"password": password,
+		"auth_db":  "admin",
+		"uri": fmt.Sprintf("mongodb://%s@%s:%d/?authSource=admin",
+			url.UserPassword(databases.MongoAdmin, password).String(), host, databases.MongoPort),
+		"local_uri": fmt.Sprintf("mongodb://%s@127.0.0.1:%d/?authSource=admin",
+			url.UserPassword(databases.MongoAdmin, password).String(), databases.MongoPort),
+	})
 }
 
 // mongoURI is the connection string a driver or MongoDB Compass is given.

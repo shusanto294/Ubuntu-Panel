@@ -68,6 +68,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	// configures the mail server once the packages are down.
 	catalog.SharedNginxConfig = app.Sites.WriteSharedConfig
 	catalog.ConfigureMail = app.Mail.Configure
+	catalog.RefreshPanelVhost = app.refreshPanelVhost
 
 	app.registerJobs()
 
