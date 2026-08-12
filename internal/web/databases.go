@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -364,8 +365,18 @@ func (a *App) databasesShow(w http.ResponseWriter, r *http.Request) {
 	summary := database.Summary()
 	summary["credentials"] = databaseCredentials(database, port)
 
+	users, err := a.Databases.Users(r.Context(), database.ID)
+	if err != nil {
+		// A listing the engine would not give is not a reason to lose the page:
+		// the credentials above it are still what somebody came for.
+		a.Log.Warn("could not list a database's users", "database", database.Name, "error", err)
+
+		users = nil
+	}
+
 	a.Render.Render(w, r, "Databases/Show", inertia.Props{
 		"database":   summary,
+		"users":      users,
 		"phpMyAdmin": a.Store.ServiceInstalled("phpmyadmin"),
 		"phpMyAdminManual": a.phpMyAdminURL(phpMyAdminServerManual) +
 			separatorFor(a.phpMyAdminURL(phpMyAdminServerManual)) +
@@ -455,6 +466,75 @@ func (a *App) databasesRepair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess.Flash("success", "The account was rebuilt. It now works from this server and from off it.")
+
+	inertia.Back(w, r, "/databases")
+}
+
+// databasesUsers is the one endpoint behind the users table: add, change a
+// password, remove.
+//
+// One endpoint and an action, rather than three routes: they are three forms
+// against the same database, and the checks that matter — is this a name the
+// panel will accept, is this the account the site is configured with — are the
+// same for all of them.
+func (a *App) databasesUsers(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "database")
+
+	if _, err := a.Store.FindDatabase(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such database.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	username := strings.TrimSpace(input["username"])
+	password := input["password"]
+
+	// Generated when none was typed. The reason to set a password is usually
+	// that the last one got out, and one chosen in that moment is the old one
+	// with a digit on the end.
+	if strings.TrimSpace(password) == "" {
+		password = crypto.Password(24)
+	}
+
+	switch input["action"] {
+	case "create":
+		err = a.Databases.CreateUser(r.Context(), id, username, password)
+
+		if err == nil {
+			sess.Flash("success", username+" was created. Its password is "+password+
+				" — the panel does not store it, so copy it now.")
+		}
+
+	case "password":
+		err = a.Databases.SetUserPassword(r.Context(), id, username, password)
+
+		if err == nil {
+			sess.Flash("success", "The password for "+username+" is now "+password+
+				" — copy it before leaving this page.")
+		}
+
+	case "delete":
+		err = a.Databases.DropUser(r.Context(), id, username)
+
+		if err == nil {
+			sess.Flash("danger", username+" no longer has access to this database.")
+		}
+
+	default:
+		err = errors.New("that is not something the panel does to a database user")
+	}
+
+	if err != nil {
+		a.failBack(w, r, err.Error())
+
+		return
+	}
 
 	inertia.Back(w, r, "/databases")
 }

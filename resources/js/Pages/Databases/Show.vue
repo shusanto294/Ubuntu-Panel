@@ -9,6 +9,7 @@ import { confirmDanger } from '@/dialog';
 
 const props = defineProps({
     database: Object,
+    users: { type: Array, default: () => [] },
     phpMyAdmin: Boolean,
     phpMyAdminManual: String,
     activeTask: { type: Object, default: null },
@@ -51,35 +52,74 @@ const copy = async (text, which) => {
     }
 };
 
-// Blank means "generate one", which is the better answer anyway: the reason to
-// change a password is usually that the old one got out, and a password
-// somebody chooses in that moment is the old one with a digit on the end.
+// Users. A database is not one account and a password: it is a database, and
+// whoever needs to reach it needs an account of their own — an application, a
+// backup job, somebody who should be able to read it and nothing else.
+//
+// No password is ever shown back from the record for anybody but the account
+// the database was created with. The panel does not store the others, so it
+// prints each one once when it is set and forgets it.
+const username = ref('');
 const password = ref('');
-const changing = ref(false);
+const working = ref(false);
 
-const changePassword = async () => {
+const submit = (action, extra = {}) => {
+    working.value = true;
+
+    router.post(
+        route('databases.users', props.database.id),
+        { action, ...extra },
+        {
+            preserveScroll: true,
+            onFinish: () => {
+                working.value = false;
+                username.value = '';
+                password.value = '';
+            },
+        },
+    );
+};
+
+const addUser = () => {
+    if (!username.value.trim()) return;
+
+    submit('create', { username: username.value, password: password.value });
+};
+
+const changePassword = async (user) => {
+    const chosen = window.prompt(
+        `New password for ${user.name}. Leave blank to have one generated.`,
+        '',
+    );
+
+    // Cancel is null; an empty string is "generate one", which is a different
+    // answer and a deliberate one.
+    if (chosen === null) return;
+
     const go = await confirmDanger(
-        `Change the password for ${credentials.value.username}?`,
-        'Anything connecting with the old one stops working until it is updated — ' +
-            'sites the panel deployed included.',
+        `Change the password for ${user.name}?`,
+        user.primary
+            ? 'Anything connecting with the old one stops working until it is updated — ' +
+              'sites the panel deployed included.'
+            : 'Anything connecting as this user with the old password stops working.',
         'Change it',
     );
 
     if (!go) return;
 
-    changing.value = true;
+    submit('password', { username: user.name, password: chosen });
+};
 
-    router.post(
-        route('databases.password', props.database.id),
-        { password: password.value },
-        {
-            preserveScroll: true,
-            onFinish: () => {
-                changing.value = false;
-                password.value = '';
-            },
-        },
+const removeUser = async (user) => {
+    const go = await confirmDanger(
+        `Remove ${user.name}?`,
+        'The account is dropped. The database and everything in it is untouched.',
+        'Remove',
     );
+
+    if (!go) return;
+
+    submit('delete', { username: user.name });
 };
 
 const repair = () =>
@@ -196,33 +236,86 @@ const destroy = async () => {
             </div>
 
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                <h3 class="font-semibold text-slate-800">Change the password</h3>
+                <h3 class="font-semibold text-slate-800">Users</h3>
                 <p class="mt-2 text-sm text-slate-500">
-                    For when the old one has been somewhere it should not have
-                    been. The database and everything in it is untouched.
+                    Accounts that can reach this database, as the engine reports
+                    them — including any made outside the panel.
                 </p>
 
-                <input
-                    v-model="password"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="Leave blank to generate one"
-                    class="mt-4 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                />
+                <ul class="mt-4 divide-y divide-slate-100 text-sm">
+                    <li
+                        v-for="user in users"
+                        :key="user.name"
+                        class="flex flex-wrap items-center justify-between gap-2 py-3"
+                    >
+                        <div class="min-w-0">
+                            <p class="break-all font-mono text-slate-800">
+                                {{ user.name }}
+                            </p>
+                            <p v-if="user.primary" class="text-xs text-brand-600">
+                                created with the database
+                            </p>
+                            <p v-else-if="user.hosts" class="text-xs text-slate-400">
+                                {{ user.hosts }}
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-3">
+                            <button
+                                @click="changePassword(user)"
+                                :disabled="working"
+                                class="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                            >
+                                Password
+                            </button>
+                            <!--
+                                The account the database was created with has no
+                                Remove: a site's configuration names it, and
+                                dropping it from here would take that site down
+                                from a page which says nothing about it.
+                            -->
+                            <button
+                                v-if="!user.primary"
+                                @click="removeUser(user)"
+                                :disabled="working"
+                                class="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
+                            >
+                                Remove
+                            </button>
+                        </div>
+                    </li>
+                    <li v-if="!users.length" class="py-3 text-slate-500">
+                        The engine reported no users for this database.
+                    </li>
+                </ul>
 
-                <button
-                    @click="changePassword"
-                    :disabled="changing"
-                    class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
-                >
-                    {{ changing ? 'Changing…' : 'Change password' }}
-                </button>
-
-                <p class="mt-3 text-xs text-slate-500">
-                    Anything still using the old password stops working until it
-                    is updated — including sites the panel deployed against this
-                    database.
-                </p>
+                <div class="mt-5 border-t border-slate-200 pt-4">
+                    <p class="text-sm font-medium text-slate-700">Add a user</p>
+                    <input
+                        v-model="username"
+                        type="text"
+                        placeholder="username"
+                        class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <input
+                        v-model="password"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="Leave blank to generate a password"
+                        class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <button
+                        @click="addUser"
+                        :disabled="working || !username.trim()"
+                        class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                    >
+                        Add user
+                    </button>
+                    <p class="mt-3 text-xs text-slate-500">
+                        The password is shown once, when it is set. The panel
+                        stores it only for the account the database was created
+                        with — the one in the connection details.
+                    </p>
+                </div>
             </div>
         </div>
 

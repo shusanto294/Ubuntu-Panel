@@ -86,6 +86,7 @@ func (a *App) routes() *router {
 	rt.post("/databases/{database}/password", "databases.password", authenticated,
 		a.databasesPassword)
 	rt.post("/databases/{database}/repair", "databases.repair", authenticated, a.databasesRepair)
+	rt.post("/databases/{database}/users", "databases.users", authenticated, a.databasesUsers)
 	rt.delete("/databases/{database}", "databases.destroy", authenticated, a.databasesDestroy)
 
 	// The site page's own tabs.
