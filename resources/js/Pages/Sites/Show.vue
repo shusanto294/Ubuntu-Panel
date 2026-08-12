@@ -13,6 +13,7 @@ const props = defineProps({
     activeTask: Object,
     latestTask: Object,
     certbot: Boolean,
+    resolution: Object,
 });
 
 const deleteFiles = ref(true);
@@ -35,6 +36,21 @@ const showProgress = computed(
 );
 
 const live = computed(() => props.site.status === 'active' && !busy.value);
+
+// The site can be built, running and answering nginx on this machine while its
+// name resolves to nothing at all — every step of the deployment passes and
+// the browser still says "this site can't be reached". That is DNS, not the
+// site, and the page has to say which of the two it is.
+const unreachable = computed(
+    () => props.resolution?.checked && !props.resolution.resolves,
+);
+
+const elsewhere = computed(
+    () =>
+        props.resolution?.checked &&
+        props.resolution.resolves &&
+        !props.resolution.matches,
+);
 
 let timer = null;
 
@@ -186,8 +202,14 @@ const destroy = async () => {
             <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                     <p class="flex items-center gap-2 font-semibold text-slate-900">
-                        <span class="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                        {{ site.domain }} is live
+                        <span
+                            class="h-2.5 w-2.5 rounded-full"
+                            :class="unreachable ? 'bg-rose-500' : 'bg-emerald-500'"
+                        />
+                        <template v-if="unreachable">
+                            {{ site.domain }} is built, but nothing resolves it
+                        </template>
+                        <template v-else>{{ site.domain }} is live</template>
                     </p>
                     <a
                         :href="site.url"
@@ -208,6 +230,65 @@ const destroy = async () => {
                     Open {{ site.type_label }}
                 </a>
             </div>
+
+            <!--
+                The deployment checks the application on its port and nginx
+                with the site's own Host header, both on this machine, so all
+                of it passes on a domain that resolves to nothing. Opening the
+                link then gives DNS_PROBE_FINISHED_NXDOMAIN and reads as the
+                panel having built a broken site. It has not: the name has
+                nowhere to send anyone.
+            -->
+            <div
+                v-if="unreachable"
+                class="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-xs text-rose-800"
+            >
+                <span class="font-medium">{{ site.domain }} does not resolve.</span>
+                The site is built and nginx answers for it on this server, but the
+                domain points nowhere, so a browser shows
+                <code class="rounded bg-rose-100 px-1"
+                    >DNS_PROBE_FINISHED_NXDOMAIN</code
+                >
+                rather than reaching it.
+                <template v-if="site.manage_dns">
+                    The panel published the record itself, so either it has not
+                    spread yet — that takes minutes — or the zone at the provider
+                    is not the one serving this name. Check the zone, then
+                    <button
+                        @click="post('sites.dns-sync')"
+                        class="font-medium underline"
+                    >
+                        Sync DNS</button
+                    >.
+                </template>
+                <template v-else>
+                    Add this record at whoever runs
+                    <span class="font-mono">{{ site.domain }}</span
+                    >'s DNS:
+                    <span class="mt-2 block font-mono text-rose-900"
+                        >A&nbsp;&nbsp;{{ site.domain }}&nbsp;&nbsp;→&nbsp;&nbsp;{{
+                            resolution.expected || 'this server’s IP'
+                        }}</span
+                    >
+                    Nothing needs redeploying afterwards; the site is already
+                    waiting for it.
+                </template>
+            </div>
+
+            <p
+                v-else-if="elsewhere"
+                class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
+            >
+                {{ site.domain }} resolves to
+                <span class="font-mono">{{
+                    resolution.addresses.join(', ')
+                }}</span>
+                rather than to this server
+                <span class="font-mono">{{ resolution.expected }}</span
+                >. That is what a CDN or proxy in front looks like and is fine. If
+                there is none, the record is pointing at somewhere else and this
+                site will not be what a visitor sees.
+            </p>
 
             <p
                 v-if="!site.ssl"

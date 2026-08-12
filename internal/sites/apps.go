@@ -17,6 +17,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
 )
 
@@ -353,6 +354,69 @@ func answeringPort(listening string) int {
 	}
 
 	return 0
+}
+
+// checkDomainResolves asks whether a visitor can get here at all.
+//
+// Every other check in the deployment is asked of this machine — the app on
+// its port, nginx with the site's own Host header and `--resolve`. All of them
+// pass on a site whose name resolves to nothing, because none of them is
+// looking at DNS. So the deployment goes green, the panel says the site is
+// live, and the browser says DNS_PROBE_FINISHED_NXDOMAIN, which reads as the
+// panel having built a broken site.
+//
+// Optional in the recipe: the machine's part is genuinely finished, and a name
+// that has not been pointed here yet, or was pointed here a minute ago, is not
+// a reason to throw away a working deployment. It is a reason to say so.
+func (s *Service) checkDomainResolves(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", errors.New("site vanished")
+		}
+
+		expected := system.PublicIP()
+
+		// The record may have been published by the first step of this same
+		// deployment, minutes ago, so this waits rather than asking once. Its
+		// own answer is what the site page will show next, so the cached one
+		// goes.
+		system.ForgetResolution(site.Domain)
+
+		resolution := system.WaitForHostname(ctx, site.Domain, expected, 90*time.Second)
+
+		switch {
+		case !resolution.Resolves():
+			hint := fmt.Sprintf("Point an A record for %s at %s", site.Domain, expected)
+
+			if site.ManageDNS {
+				hint = fmt.Sprintf(
+					"The panel published the record for %s, so either it has not spread yet or the "+
+						"zone at the provider is not the one serving this name. Check it, then Sync DNS",
+					site.Domain)
+			}
+
+			return "", fmt.Errorf(
+				"%s does not resolve to anything, so a browser cannot reach this site no matter "+
+					"what nginx does — it shows DNS_PROBE_FINISHED_NXDOMAIN. Everything on this "+
+					"machine is built and answering. %s.",
+				site.Domain, hint)
+
+		case !resolution.Matches:
+			// Cloudflare's proxy, another CDN, or a stale record: the first two
+			// work, the third does not, and they look identical from here.
+			runner.Writef("%s resolves to %s rather than to %s, this machine. That is what a CDN "+
+				"or proxy in front looks like and is fine; if there is none, the record is "+
+				"pointing somewhere else.\n",
+				site.Domain, strings.Join(resolution.Addresses, ", "), expected)
+
+			return fmt.Sprintf("%s resolves to %s, not to this machine.",
+				site.Domain, strings.Join(resolution.Addresses, ", ")), nil
+
+		default:
+			return fmt.Sprintf("%s resolves to %s, this machine.", site.Domain, expected), nil
+		}
+	}
 }
 
 // checkThroughNginx asks the site for its own front page the way a visitor

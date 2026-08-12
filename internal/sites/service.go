@@ -279,6 +279,10 @@ func (s *Service) publishDNS(ctx context.Context, siteID int64) func(*tasks.Runn
 			return "", errors.New("site vanished")
 		}
 
+		// The site page's answer for this name is now out of date, and the
+		// operator syncing records by hand is the person about to look at it.
+		system.ForgetResolution(site.Domain)
+
 		return dns.SyncForSite(ctx, s.Store, site)
 	}
 }

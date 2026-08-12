@@ -173,6 +173,12 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	// operator to go and find out for themselves.
 	list.AddFn("Check the site answers", s.checkThroughNginx(ctx, site.ID))
 
+	// And on whether anyone can get to it. The step above asks nginx on this
+	// machine with `--resolve`, on purpose, so it passes whether or not the
+	// domain resolves — which means a site whose name points nowhere finishes
+	// every step green and then shows NXDOMAIN in the browser.
+	list.AddFn("Check the domain points here", s.checkDomainResolves(ctx, site.ID)).Optional()
+
 	return list
 }
 

@@ -307,8 +307,37 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Whether a visitor can get here at all. Everything else on this page is
+	// about the machine, and all of it can be right while the domain resolves
+	// to nothing — which is what the browser calls
+	// DNS_PROBE_FINISHED_NXDOMAIN and the operator calls a broken panel.
+	//
+	// Not while the site is being built: the page polls every three seconds
+	// then, and the answer is not settled until the deployment has published
+	// the record anyway.
+	resolution := map[string]any{"checked": false}
+
+	if site.Status != "pending" && site.Status != "deploying" {
+		expected := system.PublicIP()
+		answer := system.Lookup(r.Context(), site.Domain, expected)
+
+		addresses := answer.Addresses
+		if addresses == nil {
+			addresses = []string{}
+		}
+
+		resolution = map[string]any{
+			"checked":   true,
+			"resolves":  answer.Resolves(),
+			"matches":   answer.Matches,
+			"addresses": addresses,
+			"expected":  expected,
+		}
+	}
+
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
 		"certbot":    a.Store.ServiceInstalled("certbot"),
+		"resolution": resolution,
 		"site":       site.Summary(true),
 		"logs":       logs,
 		"activeTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),

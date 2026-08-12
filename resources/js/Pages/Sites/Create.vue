@@ -486,7 +486,12 @@ const submit = () => form.post(route('sites.store'));
                         >Connect one</Link
                     >
                     to have records created and deleted with the site — or leave
-                    this off and point an A record at this server yourself.
+                    this off and point an A record at this server yourself:
+                    <span class="font-mono text-slate-700"
+                        >A {{ form.domain || 'your domain' }} →
+                        {{ publicIp || 'this server’s IP' }}</span
+                    >. Without it the site is built and serves nothing, because
+                    the name reaches no one.
                 </p>
 
                 <div
