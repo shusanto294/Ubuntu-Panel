@@ -99,6 +99,7 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)
 	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.sitesFileAction)
 	rt.get("/sites/{site}/download", "sites.download", authenticated, a.sitesFileDownload)
+	rt.get("/sites/{site}/wp-admin", "sites.wp-admin", authenticated, a.sitesWPAdmin)
 	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.sitesFileUpload)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)

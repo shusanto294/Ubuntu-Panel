@@ -959,3 +959,31 @@ func (a *App) sitesFileUpload(w http.ResponseWriter, r *http.Request) {
 
 	a.writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded})
 }
+
+// sitesWPAdmin sends the browser into a site's WordPress dashboard, signed in.
+//
+// A redirect rather than a link the page could build: the sign-in token is
+// minted per click, spent on arrival, and valid for two minutes — so it cannot
+// be something rendered into a page that might sit open on a screen.
+func (a *App) sitesWPAdmin(w http.ResponseWriter, r *http.Request) {
+	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
+	if err != nil {
+		a.notFoundError(w, r, "No such site.")
+
+		return
+	}
+
+	link, err := a.Sites.WordPressLoginURL(r.Context(), site.ID)
+	if err != nil {
+		// Straight to wp-admin, which is where they were going: a sign-in that
+		// could not be arranged is a login form, not a dead end.
+		a.Log.Warn("could not mint a WordPress sign-in link",
+			"site", site.Domain, "error", err)
+
+		http.Redirect(w, r, site.URL()+"/wp-admin/", http.StatusSeeOther)
+
+		return
+	}
+
+	http.Redirect(w, r, link, http.StatusSeeOther)
+}

@@ -556,8 +556,22 @@ const destroy = async () => {
                     >
                 </div>
 
+                <!--
+                    For WordPress this goes through the panel, which mints a
+                    one-time token and sends the browser on already signed in.
+                    Everything else opens the application's own front door.
+                -->
                 <a
-                    v-if="site.app"
+                    v-if="site.type === 'wordpress'"
+                    :href="route('sites.wp-admin', site.id)"
+                    target="_blank"
+                    rel="noopener"
+                    class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+                >
+                    WP Admin
+                </a>
+                <a
+                    v-else-if="site.app"
                     :href="site.app.url"
                     target="_blank"
                     rel="noopener"
@@ -822,12 +836,16 @@ const destroy = async () => {
                 </dl>
 
                 <a
-                    :href="site.app.url"
+                    :href="
+                        site.type === 'wordpress'
+                            ? route('sites.wp-admin', site.id)
+                            : site.app.url
+                    "
                     target="_blank"
                     rel="noopener"
                     class="mt-4 inline-block rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
                 >
-                    Open {{ site.type_label }}
+                    {{ site.type === 'wordpress' ? 'WP Admin' : `Open ${site.type_label}` }}
                 </a>
 
                 <p v-if="site.app.websocket" class="mt-4 text-xs text-slate-500">
