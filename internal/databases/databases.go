@@ -233,10 +233,6 @@ if (target.getCollectionNames().length === 0) {
 
 	s.Store.SetDatabaseStatus(databaseID, "ready", "")
 
-	// The list of what is on the server has just changed, and the page that
-	// shows it is where the operator is heading next.
-	ForgetDiscovered()
-
 	return nil
 }
 
@@ -287,7 +283,6 @@ target.dropDatabase();
 	}
 
 	s.Store.DeleteDatabase(databaseID)
-	ForgetDiscovered()
 
 	return nil
 }
