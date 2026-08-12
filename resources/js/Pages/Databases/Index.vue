@@ -287,13 +287,33 @@ const copy = async (text, which) => {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100 text-sm">
-                        <template v-for="database in databases" :key="database.id">
+                        <!--
+                            Keyed by engine and name, not id: every row found
+                            on the server rather than in the panel's table
+                            carries id 0, and Vue would treat them as one row.
+                        -->
+                        <template
+                            v-for="database in databases"
+                            :key="`${database.engine}/${database.name}`"
+                        >
                             <tr>
                                 <td class="px-5 py-3">
                                     <p class="font-medium text-slate-800">
                                         {{ database.name }}
                                     </p>
-                                    <p class="text-xs text-slate-500">
+                                    <!--
+                                        A database the panel did not create has
+                                        no stored user or password — saying
+                                        "user: null" would be inventing one.
+                                    -->
+                                    <p
+                                        v-if="database.unmanaged"
+                                        class="text-xs text-slate-500"
+                                    >
+                                        found on the server · not created by the
+                                        panel
+                                    </p>
+                                    <p v-else class="text-xs text-slate-500">
                                         user: {{ database.username }}
                                         <span
                                             v-if="database.managed_by_site"
@@ -309,18 +329,33 @@ const copy = async (text, which) => {
                                     <StatusBadge :status="database.status" />
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-3 text-right">
-                                    <button
-                                        @click="reveal(database)"
-                                        class="text-brand-600 hover:underline"
+                                    <!--
+                                        Nothing to reveal and nothing to drop
+                                        for a database the panel did not make:
+                                        it holds no password for it, and
+                                        dropping it belongs to whatever created
+                                        it.
+                                    -->
+                                    <span
+                                        v-if="database.unmanaged"
+                                        class="text-xs text-slate-400"
                                     >
-                                        Credentials
-                                    </button>
-                                    <button
-                                        @click="destroy(database)"
-                                        class="ml-3 text-rose-600 hover:underline"
-                                    >
-                                        Drop
-                                    </button>
+                                        managed elsewhere
+                                    </span>
+                                    <template v-else>
+                                        <button
+                                            @click="reveal(database)"
+                                            class="text-brand-600 hover:underline"
+                                        >
+                                            Credentials
+                                        </button>
+                                        <button
+                                            @click="destroy(database)"
+                                            class="ml-3 text-rose-600 hover:underline"
+                                        >
+                                            Drop
+                                        </button>
+                                    </template>
                                 </td>
                             </tr>
                             <tr v-if="revealed[database.id]">

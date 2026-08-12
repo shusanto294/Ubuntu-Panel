@@ -91,6 +91,7 @@ func (a *App) Start(ctx context.Context) {
 	go func() {
 		a.BootstrapApps(ctx)
 		a.EnsureMailConfigured()
+		a.EnsurePanelVhostCurrent()
 	}()
 }
 

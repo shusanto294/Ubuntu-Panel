@@ -2,9 +2,13 @@ package web
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
+	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
+	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 )
 
 // bootstrapSetting is how the panel remembers it has done this. It is a
@@ -96,4 +100,38 @@ func (a *App) BootstrapApps(ctx context.Context) {
 
 	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
 		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+}
+
+// EnsurePanelVhostCurrent rewrites the panel's own nginx vhost when it is
+// missing something the panel has since learned to serve.
+//
+// phpMyAdmin is why. Its location lives in the panel's vhost, and a machine
+// whose vhost was written before the panel emitted that block has no route to
+// it — nginx passes /phpmyadmin straight to the panel, which answers "No route
+// matches this URL", which is exactly what it is. Installing phpMyAdmin
+// rewrites the vhost, but that is no help to a machine where it was installed
+// long ago: the button appears, and the page behind it is the panel's own 404.
+//
+// So it is checked on every start instead. Nothing is rewritten unless the
+// block is genuinely absent, the file is one the panel or its installer wrote,
+// and nginx accepts the result — and the old file goes back if it does not.
+func (a *App) EnsurePanelVhostCurrent() {
+	if !a.Store.ServiceInstalled("phpmyadmin") {
+		return
+	}
+
+	current := proc.Run("sudo cat /etc/nginx/sites-available/ubuntu-panel 2>/dev/null",
+		time.Minute).Output
+
+	if strings.Contains(current, sites.PhpMyAdminPath) {
+		return
+	}
+
+	if err := a.refreshPanelVhost(nil); err != nil {
+		a.Log.Warn("could not add phpMyAdmin to the panel's nginx vhost", "error", err)
+
+		return
+	}
+
+	a.Log.Info("the panel's nginx vhost now serves phpMyAdmin at " + sites.PhpMyAdminPath)
 }

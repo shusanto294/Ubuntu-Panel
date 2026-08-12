@@ -59,8 +59,40 @@ func (a *App) databasesIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	summaries := make([]map[string]any, 0, len(databases))
+	known := map[string]bool{}
+
 	for _, database := range databases {
 		summaries = append(summaries, database.Summary())
+		known[database.Engine+"/"+database.Name] = true
+	}
+
+	// And the ones on the server that the panel did not create: made in
+	// phpMyAdmin, or by a MongoDB client using the administrator string this
+	// same page hands out. They exist, they take up room, and a list that
+	// leaves them out is a list that says a server holding six databases holds
+	// two.
+	//
+	// Listed, never claimed. There is no stored password for a database the
+	// panel did not make, so there are no credentials to reveal and no user to
+	// name — and dropping one is left to the tool that created it.
+	for _, engine := range a.availableEngines() {
+		for _, name := range a.Databases.Discover(engine) {
+			if known[engine+"/"+name] {
+				continue
+			}
+
+			summaries = append(summaries, map[string]any{
+				"id":              0,
+				"engine":          engine,
+				"engine_label":    config.EngineLabel(engine),
+				"name":            name,
+				"username":        nil,
+				"status":          "active",
+				"managed_by_site": false,
+				"unmanaged":       true,
+				"last_error":      nil,
+			})
+		}
 	}
 
 	a.Render.Render(w, r, "Databases/Index", inertia.Props{
