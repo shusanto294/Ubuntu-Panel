@@ -98,6 +98,7 @@ const loadFiles = async (where = '/') => {
         });
 
         files.value = { path: data.path ?? where, entries: data.entries ?? [], error: data.error ?? null };
+        selected.value = [];
     } catch {
         files.value = { path: where, entries: [], error: 'The folder could not be read.' };
     } finally {
@@ -227,6 +228,116 @@ const humanSize = (bytes) => {
 
     return `${bytes} B`;
 };
+
+// ---- Selection, so the toolbar can act on more than one thing at a time.
+const selected = ref([]);
+
+const toggleAll = (event) => {
+    selected.value = event.target.checked
+        ? files.value.entries.map((entry) => entry.name)
+        : [];
+};
+
+const allSelected = computed(
+    () =>
+        files.value.entries.length > 0 &&
+        selected.value.length === files.value.entries.length,
+);
+
+const downloadURL = (entry) =>
+    `${route('sites.download', props.site.id)}?path=${encodeURIComponent(entry.path)}`;
+
+const zipSelected = async () => {
+    if (!selected.value.length) return;
+
+    const name = window.prompt(
+        'Name for the archive',
+        selected.value.length === 1 ? selected.value[0] : 'archive',
+    );
+
+    if (!name) return;
+
+    await fileAction('zip', files.value.path, {
+        names: JSON.stringify(selected.value),
+        name,
+    });
+
+    selected.value = [];
+};
+
+const deleteSelected = async () => {
+    if (!selected.value.length) return;
+
+    const go = await confirmDanger(
+        `Delete ${selected.value.length} item${selected.value.length === 1 ? '' : 's'}?`,
+        'Folders are removed with everything in them.',
+        'Delete',
+    );
+
+    if (!go) return;
+
+    for (const name of selected.value) {
+        await fileAction('delete', `${files.value.path}/${name}`);
+    }
+
+    selected.value = [];
+};
+
+// ---- Upload. Streamed as multipart so a large file is not held in memory at
+// either end, and the folder it lands in is the one on screen.
+const uploading = ref(false);
+const uploadInput = ref(null);
+const dragging = ref(false);
+
+const uploadFiles = async (list) => {
+    if (!list || !list.length) return;
+
+    const body = new FormData();
+    body.append('path', files.value.path);
+
+    for (const file of list) body.append('files[]', file, file.name);
+
+    uploading.value = true;
+
+    try {
+        const { data } = await window.axios.post(
+            route('sites.upload', props.site.id),
+            body,
+        );
+
+        files.value.error = data.error ?? null;
+    } catch {
+        files.value.error = 'The upload did not finish.';
+    } finally {
+        uploading.value = false;
+        if (uploadInput.value) uploadInput.value.value = '';
+        loadFiles(files.value.path);
+    }
+};
+
+const onDrop = (event) => {
+    dragging.value = false;
+    uploadFiles(event.dataTransfer?.files);
+};
+
+// A mark for what the thing is, so a listing can be read without reading it.
+const iconFor = (entry) => {
+    if (entry.directory) return '📁';
+    if (entry.archive) return '🗜️';
+
+    const name = entry.name.toLowerCase();
+
+    if (/\.(png|jpe?g|gif|svg|webp|ico|avif)$/.test(name)) return '🖼️';
+    if (/\.(mp4|mov|webm|mkv|avi)$/.test(name)) return '🎬';
+    if (/\.(mp3|wav|ogg|flac|m4a)$/.test(name)) return '🎵';
+    if (/\.(pdf)$/.test(name)) return '📕';
+    if (/\.(php|js|ts|vue|go|py|rb|sh|css|scss|html?|json|ya?ml|xml|sql)$/.test(name))
+        return '📜';
+    if (/\.(env|conf|ini|cnf|lock|toml)$/.test(name) || name.startsWith('.')) return '⚙️';
+
+    return '📄';
+};
+
 
 // ---- Logs: nginx's own for this site, and the panel's history of it.
 const logView = ref(props.logFiles[0]?.key ?? 'activity');
@@ -968,24 +1079,45 @@ const destroy = async () => {
 
         <div
             v-if="!busy && tab === 'files'"
-            class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            @dragover.prevent="dragging = true"
+            @dragleave.prevent="dragging = false"
+            @drop.prevent="onDrop"
         >
-            <div
-                class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4"
-            >
+            <div class="border-b border-slate-200 px-6 py-4">
                 <nav class="flex flex-wrap items-center gap-1 text-sm text-slate-500">
                     <template v-for="(crumb, index) in crumbs" :key="crumb.path">
                         <span v-if="index" class="text-slate-300">/</span>
                         <button
                             @click="loadFiles(crumb.path)"
                             class="rounded px-1 hover:text-brand-600"
-                            :class="index === crumbs.length - 1 ? 'font-medium text-slate-800' : ''"
+                            :class="
+                                index === crumbs.length - 1
+                                    ? 'font-medium text-slate-800'
+                                    : ''
+                            "
                         >
                             {{ crumb.name }}
                         </button>
                     </template>
                 </nav>
-                <div class="flex items-center gap-2">
+
+                <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                        @click="uploadInput?.click()"
+                        :disabled="uploading"
+                        class="rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+                    >
+                        {{ uploading ? 'Uploading…' : 'Upload' }}
+                    </button>
+                    <input
+                        ref="uploadInput"
+                        type="file"
+                        multiple
+                        class="hidden"
+                        @change="uploadFiles($event.target.files)"
+                    />
+
                     <button
                         @click="newFolder"
                         class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
@@ -998,8 +1130,43 @@ const destroy = async () => {
                     >
                         New file
                     </button>
+
+                    <span class="mx-1 h-5 w-px bg-slate-200" />
+
+                    <button
+                        @click="zipSelected"
+                        :disabled="!selected.length"
+                        class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-40"
+                    >
+                        Compress
+                    </button>
+                    <button
+                        @click="deleteSelected"
+                        :disabled="!selected.length"
+                        class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-rose-600 ring-1 ring-slate-900/10 transition hover:bg-rose-50 disabled:opacity-40"
+                    >
+                        Delete
+                    </button>
+
+                    <span v-if="selected.length" class="text-xs text-slate-500">
+                        {{ selected.length }} selected
+                    </span>
+
+                    <a
+                        :href="`${route('sites.download', site.id)}?path=${encodeURIComponent(files.path)}`"
+                        class="ml-auto rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                    >
+                        Download this folder
+                    </a>
                 </div>
             </div>
+
+            <p
+                v-if="dragging"
+                class="border-b border-brand-200 bg-brand-50 px-6 py-3 text-sm text-brand-800"
+            >
+                Drop the files to upload them into {{ files.path }}
+            </p>
 
             <p
                 v-if="files.error"
@@ -1008,72 +1175,116 @@ const destroy = async () => {
                 {{ files.error }}
             </p>
 
-            <p v-if="filesLoading" class="px-6 py-8 text-sm text-slate-500">Reading…</p>
+            <p v-if="filesLoading" class="px-6 py-10 text-sm text-slate-500">Reading…</p>
 
-            <table v-else class="min-w-full divide-y divide-slate-200">
-                <thead class="bg-slate-50">
-                    <tr
-                        class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
-                    >
-                        <th class="px-6 py-3">Name</th>
-                        <th class="px-6 py-3">Size</th>
-                        <th class="px-6 py-3">Modified</th>
-                        <th class="px-6 py-3">Mode</th>
-                        <th class="px-6 py-3"></th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100 text-sm">
-                    <tr v-if="files.path !== '/'">
-                        <td colspan="5" class="px-6 py-2">
-                            <button
-                                @click="loadFiles(parentPath)"
-                                class="text-brand-600 hover:underline"
+            <div v-else class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50">
+                        <tr
+                            class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+                        >
+                            <th class="w-10 px-6 py-3">
+                                <input
+                                    type="checkbox"
+                                    :checked="allSelected"
+                                    @change="toggleAll"
+                                    class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                                />
+                            </th>
+                            <th class="px-3 py-3">Name</th>
+                            <th class="px-3 py-3">Size</th>
+                            <th class="px-3 py-3">Modified</th>
+                            <th class="px-3 py-3">Mode</th>
+                            <th class="px-6 py-3"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-sm">
+                        <tr v-if="files.path !== '/'">
+                            <td colspan="6" class="px-6 py-2">
+                                <button
+                                    @click="loadFiles(parentPath)"
+                                    class="text-brand-600 hover:underline"
+                                >
+                                    ← up one folder
+                                </button>
+                            </td>
+                        </tr>
+                        <tr
+                            v-for="entry in files.entries"
+                            :key="entry.path"
+                            class="transition hover:bg-slate-50"
+                        >
+                            <td class="px-6 py-3">
+                                <input
+                                    type="checkbox"
+                                    :value="entry.name"
+                                    v-model="selected"
+                                    class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                                />
+                            </td>
+                            <td class="px-3 py-3">
+                                <button
+                                    @click="openEntry(entry)"
+                                    class="flex items-start gap-2 break-all text-left font-medium hover:underline"
+                                    :class="
+                                        entry.directory ? 'text-brand-700' : 'text-slate-800'
+                                    "
+                                >
+                                    <span aria-hidden="true">{{ iconFor(entry) }}</span>
+                                    <span>{{ entry.name }}</span>
+                                </button>
+                            </td>
+                            <td class="whitespace-nowrap px-3 py-3 text-slate-500">
+                                {{ entry.directory ? '—' : humanSize(entry.size) }}
+                            </td>
+                            <td class="whitespace-nowrap px-3 py-3 text-slate-500">
+                                {{ entry.modified }}
+                            </td>
+                            <td
+                                class="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-500"
                             >
-                                ← up one folder
-                            </button>
-                        </td>
-                    </tr>
-                    <tr v-for="entry in files.entries" :key="entry.path">
-                        <td class="px-6 py-3">
-                            <button
-                                @click="openEntry(entry)"
-                                class="break-all text-left font-medium hover:underline"
-                                :class="entry.directory ? 'text-brand-700' : 'text-slate-800'"
+                                {{ entry.mode }}
+                            </td>
+                            <td class="whitespace-nowrap px-6 py-3 text-right">
+                                <button
+                                    v-if="entry.archive"
+                                    @click="fileAction('unzip', entry.path)"
+                                    class="text-brand-600 hover:underline"
+                                >
+                                    Extract
+                                </button>
+                                <a
+                                    :href="downloadURL(entry)"
+                                    class="ml-3 text-brand-600 hover:underline"
+                                >
+                                    Download
+                                </a>
+                                <button
+                                    @click="renameEntry(entry)"
+                                    class="ml-3 text-brand-600 hover:underline"
+                                >
+                                    Rename
+                                </button>
+                                <button
+                                    @click="deleteEntry(entry)"
+                                    class="ml-3 text-rose-600 hover:underline"
+                                >
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                        <tr v-if="!files.entries.length && !files.error">
+                            <td
+                                colspan="6"
+                                class="px-6 py-16 text-center text-sm text-slate-500"
                             >
-                                {{ entry.directory ? '📁' : '📄' }} {{ entry.name }}
-                            </button>
-                        </td>
-                        <td class="whitespace-nowrap px-6 py-3 text-slate-500">
-                            {{ entry.directory ? '—' : humanSize(entry.size) }}
-                        </td>
-                        <td class="whitespace-nowrap px-6 py-3 text-slate-500">
-                            {{ entry.modified }}
-                        </td>
-                        <td class="whitespace-nowrap px-6 py-3 font-mono text-xs text-slate-500">
-                            {{ entry.mode }} {{ entry.owner }}
-                        </td>
-                        <td class="whitespace-nowrap px-6 py-3 text-right">
-                            <button
-                                @click="renameEntry(entry)"
-                                class="text-brand-600 hover:underline"
-                            >
-                                Rename
-                            </button>
-                            <button
-                                @click="deleteEntry(entry)"
-                                class="ml-3 text-rose-600 hover:underline"
-                            >
-                                Delete
-                            </button>
-                        </td>
-                    </tr>
-                    <tr v-if="!files.entries.length && !files.error">
-                        <td colspan="5" class="px-6 py-12 text-center text-sm text-slate-500">
-                            This folder is empty.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+                                This folder is empty. Drop files anywhere here to upload
+                                them.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- The editor, for the text files a site is actually configured by. -->

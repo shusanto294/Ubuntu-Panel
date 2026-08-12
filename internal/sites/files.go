@@ -27,6 +27,7 @@ type FileEntry struct {
 	Mode      string `json:"mode"`
 	Owner     string `json:"owner"`
 	Symlink   bool   `json:"symlink"`
+	Archive   bool   `json:"archive"`
 }
 
 // resolve turns a path from the browser into an absolute one inside the site,
@@ -123,6 +124,7 @@ func (s *Service) ListFiles(site *store.Site, relative string) ([]FileEntry, str
 		size, _ := strconv.ParseInt(fields[1], 10, 64)
 
 		entries = append(entries, FileEntry{
+			Archive:   IsArchive(fields[5]),
 			Name:      fields[5],
 			Path:      path.Join(relativeTo(site, absolute), fields[5]),
 			Directory: fields[0] == "d",
@@ -298,4 +300,200 @@ func humanSize(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
+}
+
+// ------------------------------------------------------------- archives etc
+
+// Download describes what a download request should send.
+//
+// A command rather than bytes, because the bytes may be a gigabyte: the web
+// layer streams the command's output straight into the response instead of
+// holding a file in memory to hand it over.
+type Download struct {
+	Name    string
+	Command string
+	Type    string
+}
+
+// DownloadFor is that description for one path.
+//
+// A folder is archived on the way out. tar rather than zip for a folder:
+// it is in every Ubuntu without asking, it streams — the first bytes leave
+// before the last are read — and it keeps the permissions and symlinks that a
+// site directory depends on.
+func (s *Service) DownloadFor(site *store.Site, relative string) (Download, error) {
+	absolute, err := resolve(site, relative)
+	if err != nil {
+		return Download{}, err
+	}
+
+	if !proc.Ok("sudo test -e " + proc.Quote(absolute)) {
+		return Download{}, errors.New("that is not there")
+	}
+
+	name := path.Base(absolute)
+	if name == "/" || name == "." {
+		name = site.Domain
+	}
+
+	if proc.Ok("sudo test -d " + proc.Quote(absolute)) {
+		return Download{
+			Name: name + ".tar.gz",
+			Type: "application/gzip",
+			Command: fmt.Sprintf("sudo tar -czf - -C %s %s",
+				proc.Quote(path.Dir(absolute)), proc.Quote(name)),
+		}, nil
+	}
+
+	return Download{
+		Name:    name,
+		Type:    "application/octet-stream",
+		Command: "sudo cat " + proc.Quote(absolute),
+	}, nil
+}
+
+// Compress makes a zip of whatever was selected, beside it.
+//
+// zip rather than tar here, because this one is made to be handed to somebody:
+// a .zip opens by double-clicking on every desktop there is, and a .tar.gz
+// does not open on Windows without installing something first.
+func (s *Service) Compress(site *store.Site, folder string, names []string, archive string) error {
+	directory, err := resolve(site, folder)
+	if err != nil {
+		return err
+	}
+
+	if archive = strings.TrimSpace(archive); archive == "" {
+		archive = "archive"
+	}
+
+	if !strings.HasSuffix(strings.ToLower(archive), ".zip") {
+		archive += ".zip"
+	}
+
+	target, err := resolve(site, path.Join(folder, path.Base(archive)))
+	if err != nil {
+		return err
+	}
+
+	if !proc.Which("zip") {
+		return errors.New("zip is not installed on this machine")
+	}
+
+	// Each name resolved on its own, so a selection cannot name something
+	// outside the folder it was made in, and then reduced to its last segment
+	// — zip is run from the folder and everything it archives is inside it.
+	quoted := make([]string, 0, len(names))
+
+	for _, name := range names {
+		entry, err := resolve(site, path.Join(folder, path.Base(name)))
+		if err != nil {
+			return err
+		}
+
+		quoted = append(quoted, proc.Quote(path.Base(entry)))
+	}
+
+	if len(quoted) == 0 {
+		return errors.New("nothing was selected")
+	}
+
+	command := fmt.Sprintf("cd %s && sudo zip -r -q %s %s",
+		proc.Quote(directory), proc.Quote(target), strings.Join(quoted, " "))
+
+	if result := proc.Run(command, 30*time.Minute); !result.OK() {
+		return fmt.Errorf("the archive was not created: %s", strings.TrimSpace(result.Output))
+	}
+
+	proc.Ok("sudo chown www-data:www-data " + proc.Quote(target))
+
+	return nil
+}
+
+// Extract unpacks an archive into the folder it sits in.
+func (s *Service) Extract(site *store.Site, relative string) error {
+	absolute, err := resolve(site, relative)
+	if err != nil {
+		return err
+	}
+
+	if !proc.Ok("sudo test -f " + proc.Quote(absolute)) {
+		return errors.New("that archive is not there")
+	}
+
+	into := path.Dir(absolute)
+	lower := strings.ToLower(absolute)
+
+	var command string
+
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		if !proc.Which("unzip") {
+			return errors.New("unzip is not installed on this machine")
+		}
+
+		// -o so a second extraction overwrites rather than stopping to ask a
+		// question nobody is there to answer.
+		command = fmt.Sprintf("sudo unzip -o -q %s -d %s",
+			proc.Quote(absolute), proc.Quote(into))
+
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"),
+		strings.HasSuffix(lower, ".tar.bz2"), strings.HasSuffix(lower, ".tar.xz"),
+		strings.HasSuffix(lower, ".tar"):
+		command = fmt.Sprintf("sudo tar -xf %s -C %s",
+			proc.Quote(absolute), proc.Quote(into))
+
+	case strings.HasSuffix(lower, ".gz"):
+		command = fmt.Sprintf("sudo gunzip -kf %s", proc.Quote(absolute))
+
+	default:
+		return errors.New("that is not an archive this can unpack")
+	}
+
+	if result := proc.Run(command, 30*time.Minute); !result.OK() {
+		return fmt.Errorf("the archive was not unpacked: %s", strings.TrimSpace(result.Output))
+	}
+
+	proc.Ok("sudo chown -R www-data:www-data " + proc.Quote(into))
+
+	return nil
+}
+
+// IsArchive reports whether a name is one Extract knows how to open, so the
+// listing can offer it on the rows where it means something.
+func IsArchive(name string) bool {
+	lower := strings.ToLower(name)
+
+	for _, suffix := range []string{".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar", ".gz"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// PlaceUpload moves a file that has already been received into the site.
+//
+// Received first and moved second, because the panel does not run as the user
+// that owns the site: the upload lands somewhere this process can write, and
+// then one command puts it where it belongs with the right owner.
+func (s *Service) PlaceUpload(site *store.Site, folder, name, staged string) error {
+	if name = path.Base(strings.TrimSpace(name)); name == "" || name == "." || name == "/" {
+		return errors.New("that file has no name")
+	}
+
+	target, err := resolve(site, path.Join(folder, name))
+	if err != nil {
+		return err
+	}
+
+	if !proc.Ok(fmt.Sprintf("sudo mv %s %s", proc.Quote(staged), proc.Quote(target))) {
+		return errors.New("the upload could not be saved")
+	}
+
+	proc.Ok("sudo chown www-data:www-data " + proc.Quote(target))
+	proc.Ok("sudo chmod 644 " + proc.Quote(target))
+
+	return nil
 }

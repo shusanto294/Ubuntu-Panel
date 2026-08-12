@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -821,6 +823,20 @@ func (a *App) sitesFileAction(w http.ResponseWriter, r *http.Request) {
 		err = a.Sites.RenameEntry(site, input["path"], input["to"])
 	case "delete":
 		err = a.Sites.DeleteEntry(site, input["path"])
+	case "zip":
+		var names []string
+
+		if encoded := strings.TrimSpace(input["names"]); encoded != "" {
+			if err := json.Unmarshal([]byte(encoded), &names); err != nil {
+				a.writeJSON(w, http.StatusOK, map[string]any{"error": "the selection could not be read"})
+
+				return
+			}
+		}
+
+		err = a.Sites.Compress(site, input["path"], names, input["name"])
+	case "unzip":
+		err = a.Sites.Extract(site, input["path"])
 	default:
 		err = errors.New("that is not something the file manager does")
 	}
@@ -832,4 +848,114 @@ func (a *App) sitesFileAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.writeJSON(w, http.StatusOK, map[string]any{"done": true})
+}
+
+// sitesFileDownload sends a file, or a folder as a tar.gz.
+//
+// Streamed rather than read: a site directory is measured in hundreds of
+// megabytes, and holding one in memory to hand it to a browser is how a panel
+// with 1 GB of RAM stops answering.
+func (a *App) sitesFileDownload(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	download, err := a.Sites.DownloadFor(site, r.URL.Query().Get("path"))
+	if err != nil {
+		a.notFoundError(w, r, err.Error())
+
+		return
+	}
+
+	// The filename is quoted and its quotes stripped: a name is whatever the
+	// filesystem allowed, and one containing a quote would otherwise end the
+	// header and start a second one.
+	safe := strings.NewReplacer(`"`, "", "\r", "", "\n", "").Replace(download.Name)
+
+	w.Header().Set("Content-Type", download.Type)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+safe+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	flusher, _ := w.(http.Flusher)
+
+	proc.Stream(download.Command, 2*time.Hour, func(chunk []byte) {
+		if _, err := w.Write(chunk); err != nil {
+			return
+		}
+
+		if flusher != nil {
+			flusher.Flush()
+		}
+	})
+}
+
+// sitesFileUpload receives files into the folder the page is showing.
+func (a *App) sitesFileUpload(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	// Streamed through a reader rather than parsed into memory: ParseMultipartForm
+	// keeps everything under its limit in RAM, and an upload is exactly the
+	// request that is larger than the limit somebody chose.
+	reader, err := r.MultipartReader()
+	if err != nil {
+		a.badRequest(w, r, err)
+
+		return
+	}
+
+	folder := "/"
+	uploaded := 0
+
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			break
+		}
+
+		if part.FormName() == "path" {
+			where, _ := io.ReadAll(io.LimitReader(part, 4096))
+			folder = string(where)
+
+			continue
+		}
+
+		if part.FileName() == "" {
+			continue
+		}
+
+		staged, err := os.CreateTemp("", "ubuntu-panel-upload-*")
+		if err != nil {
+			a.writeJSON(w, http.StatusOK, map[string]any{"error": "the upload could not be staged"})
+
+			return
+		}
+
+		_, copyErr := io.Copy(staged, part)
+		staged.Close()
+
+		if copyErr != nil {
+			os.Remove(staged.Name())
+			a.writeJSON(w, http.StatusOK, map[string]any{"error": "the upload did not finish"})
+
+			return
+		}
+
+		// Readable by root, which is what moves it into place.
+		os.Chmod(staged.Name(), 0o644)
+
+		if err := a.Sites.PlaceUpload(site, folder, part.FileName(), staged.Name()); err != nil {
+			os.Remove(staged.Name())
+			a.writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})
+
+			return
+		}
+
+		uploaded++
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded})
 }

@@ -98,6 +98,8 @@ func (a *App) routes() *router {
 	rt.get("/sites/{site}/file", "sites.file", authenticated, a.sitesFileRead)
 	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)
 	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.sitesFileAction)
+	rt.get("/sites/{site}/download", "sites.download", authenticated, a.sitesFileDownload)
+	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.sitesFileUpload)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
