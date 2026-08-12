@@ -16,6 +16,8 @@ const props = defineProps({
     resolution: Object,
     phpDirectives: { type: Array, default: () => [] },
     cronJobs: { type: Array, default: () => [] },
+    database: { type: Object, default: null },
+    logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
 });
 
@@ -36,6 +38,7 @@ const tabs = computed(() => {
 
     entries.push({ key: 'database', label: 'Database' });
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
+    entries.push({ key: 'files', label: 'File manager' });
     entries.push({ key: 'cron', label: 'Cron jobs' });
     entries.push({ key: 'logs', label: 'Logs' });
 
@@ -76,6 +79,166 @@ const saveJobs = () =>
         { jobs: JSON.stringify(jobs.value) },
         { preserveScroll: true },
     );
+
+// ---- File manager.
+//
+// Everything here names a path relative to the site's own directory, and the
+// panel resolves it against that root and refuses anything that leaves — so a
+// path typed into this page cannot reach the rest of the machine.
+const files = ref({ path: '/', entries: [], error: null });
+const filesLoading = ref(false);
+const editing = ref(null);
+
+const loadFiles = async (where = '/') => {
+    filesLoading.value = true;
+
+    try {
+        const { data } = await window.axios.get(route('sites.files', props.site.id), {
+            params: { path: where },
+        });
+
+        files.value = { path: data.path ?? where, entries: data.entries ?? [], error: data.error ?? null };
+    } catch {
+        files.value = { path: where, entries: [], error: 'The folder could not be read.' };
+    } finally {
+        filesLoading.value = false;
+    }
+};
+
+// The path split into the links above the listing.
+const crumbs = computed(() => {
+    const parts = files.value.path.split('/').filter(Boolean);
+    const trail = [{ name: props.site.domain, path: '/' }];
+
+    parts.forEach((part, index) => {
+        trail.push({ name: part, path: '/' + parts.slice(0, index + 1).join('/') });
+    });
+
+    return trail;
+});
+
+const parentPath = computed(() => {
+    const parts = files.value.path.split('/').filter(Boolean);
+    parts.pop();
+
+    return '/' + parts.join('/');
+});
+
+const openEntry = (entry) => {
+    if (entry.directory) return loadFiles(entry.path);
+
+    return openEditor(entry);
+};
+
+const openEditor = async (entry) => {
+    editing.value = { path: entry.path, contents: '', loading: true, error: null };
+
+    try {
+        const { data } = await window.axios.get(route('sites.file', props.site.id), {
+            params: { path: entry.path },
+        });
+
+        editing.value = {
+            path: entry.path,
+            contents: data.contents ?? '',
+            loading: false,
+            error: data.error ?? null,
+        };
+    } catch {
+        editing.value = { path: entry.path, contents: '', loading: false,
+            error: 'That file could not be opened.' };
+    }
+};
+
+const saveFile = async () => {
+    const { data } = await window.axios.post(route('sites.file.save', props.site.id), {
+        path: editing.value.path,
+        contents: editing.value.contents,
+    });
+
+    if (data.error) {
+        editing.value.error = data.error;
+
+        return;
+    }
+
+    editing.value = null;
+    loadFiles(files.value.path);
+};
+
+// One endpoint for new, rename and delete: three verbs against one path, and
+// three routes would be three places to get the path check wrong.
+const fileAction = async (action, entry, extra = {}) => {
+    const { data } = await window.axios.post(route('sites.files.action', props.site.id), {
+        action,
+        path: entry,
+        ...extra,
+    });
+
+    if (data.error) {
+        files.value.error = data.error;
+
+        return;
+    }
+
+    files.value.error = null;
+    loadFiles(files.value.path);
+};
+
+const newFolder = () => {
+    const name = window.prompt('Name for the new folder');
+    if (!name) return;
+
+    fileAction('folder', `${files.value.path}/${name}`);
+};
+
+const newFile = () => {
+    const name = window.prompt('Name for the new file');
+    if (!name) return;
+
+    fileAction('file', `${files.value.path}/${name}`);
+};
+
+const renameEntry = (entry) => {
+    const name = window.prompt(`Rename ${entry.name} to`, entry.name);
+    if (!name || name === entry.name) return;
+
+    fileAction('rename', entry.path, { to: `${files.value.path}/${name}` });
+};
+
+const deleteEntry = async (entry) => {
+    const go = await confirmDanger(
+        `Delete ${entry.name}?`,
+        entry.directory
+            ? 'The folder and everything in it is removed.'
+            : 'The file is removed.',
+        'Delete',
+    );
+
+    if (!go) return;
+
+    fileAction('delete', entry.path);
+};
+
+const humanSize = (bytes) => {
+    if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
+    if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+    if (bytes >= 1 << 10) return `${Math.round(bytes / (1 << 10))} KB`;
+
+    return `${bytes} B`;
+};
+
+// ---- Logs: nginx's own for this site, and the panel's history of it.
+const logView = ref(props.logFiles[0]?.key ?? 'activity');
+
+const shownLog = computed(() =>
+    props.logFiles.find((file) => file.key === logView.value),
+);
+
+watch(tab, (value) => {
+    if (value === 'files' && !files.value.entries.length) loadFiles('/');
+});
+
 
 // A deploy runs on the queue, so the page has to go and look for the result.
 const busy = computed(() =>
@@ -149,7 +312,7 @@ const destroy = async () => {
     const parts = ['its nginx vhost'];
     if (props.site.manage_dns)
         parts.push(`${props.site.dns_provider ?? 'DNS'} records`);
-    if (props.site.database) parts.push('the site database');
+    if (props.database) parts.push('the site database');
     if (props.site.is_proxied) parts.push('the systemd service');
 
     const go = await confirmDanger(
@@ -557,26 +720,26 @@ const destroy = async () => {
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
                 <h3 class="font-semibold text-slate-800">Database</h3>
 
-                <div v-if="site.database" class="mt-4 space-y-3 text-sm">
+                <div v-if="database" class="mt-4 space-y-3 text-sm">
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Engine</dt>
-                        <dd class="text-slate-800">{{ site.database.engine_label }}</dd>
+                        <dd class="text-slate-800">{{ database.engine_label }}</dd>
                     </div>
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Database</dt>
                         <dd class="break-all text-right text-slate-800">
-                            {{ site.database.name }}
+                            {{ database.name }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">User</dt>
                         <dd class="break-all text-right text-slate-800">
-                            {{ site.database.username }}
+                            {{ database.username }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Status</dt>
-                        <dd><StatusBadge :status="site.database.status" /></dd>
+                        <dd><StatusBadge :status="database.status" /></dd>
                     </div>
                 </div>
 
@@ -592,8 +755,8 @@ const destroy = async () => {
                     many.
                 -->
                 <Link
-                    v-if="site.database"
-                    :href="route('databases.show', site.database.id)"
+                    v-if="database"
+                    :href="route('databases.show', database.id)"
                     class="mt-5 inline-block rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
                 >
                     Credentials and users
@@ -803,8 +966,227 @@ const destroy = async () => {
             </p>
         </div>
 
+        <div
+            v-if="!busy && tab === 'files'"
+            class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+        >
+            <div
+                class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4"
+            >
+                <nav class="flex flex-wrap items-center gap-1 text-sm text-slate-500">
+                    <template v-for="(crumb, index) in crumbs" :key="crumb.path">
+                        <span v-if="index" class="text-slate-300">/</span>
+                        <button
+                            @click="loadFiles(crumb.path)"
+                            class="rounded px-1 hover:text-brand-600"
+                            :class="index === crumbs.length - 1 ? 'font-medium text-slate-800' : ''"
+                        >
+                            {{ crumb.name }}
+                        </button>
+                    </template>
+                </nav>
+                <div class="flex items-center gap-2">
+                    <button
+                        @click="newFolder"
+                        class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                    >
+                        New folder
+                    </button>
+                    <button
+                        @click="newFile"
+                        class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                    >
+                        New file
+                    </button>
+                </div>
+            </div>
+
+            <p
+                v-if="files.error"
+                class="border-b border-rose-100 bg-rose-50 px-6 py-3 text-sm text-rose-700"
+            >
+                {{ files.error }}
+            </p>
+
+            <p v-if="filesLoading" class="px-6 py-8 text-sm text-slate-500">Reading…</p>
+
+            <table v-else class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr
+                        class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+                    >
+                        <th class="px-6 py-3">Name</th>
+                        <th class="px-6 py-3">Size</th>
+                        <th class="px-6 py-3">Modified</th>
+                        <th class="px-6 py-3">Mode</th>
+                        <th class="px-6 py-3"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-sm">
+                    <tr v-if="files.path !== '/'">
+                        <td colspan="5" class="px-6 py-2">
+                            <button
+                                @click="loadFiles(parentPath)"
+                                class="text-brand-600 hover:underline"
+                            >
+                                ← up one folder
+                            </button>
+                        </td>
+                    </tr>
+                    <tr v-for="entry in files.entries" :key="entry.path">
+                        <td class="px-6 py-3">
+                            <button
+                                @click="openEntry(entry)"
+                                class="break-all text-left font-medium hover:underline"
+                                :class="entry.directory ? 'text-brand-700' : 'text-slate-800'"
+                            >
+                                {{ entry.directory ? '📁' : '📄' }} {{ entry.name }}
+                            </button>
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-3 text-slate-500">
+                            {{ entry.directory ? '—' : humanSize(entry.size) }}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-3 text-slate-500">
+                            {{ entry.modified }}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-3 font-mono text-xs text-slate-500">
+                            {{ entry.mode }} {{ entry.owner }}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-3 text-right">
+                            <button
+                                @click="renameEntry(entry)"
+                                class="text-brand-600 hover:underline"
+                            >
+                                Rename
+                            </button>
+                            <button
+                                @click="deleteEntry(entry)"
+                                class="ml-3 text-rose-600 hover:underline"
+                            >
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                    <tr v-if="!files.entries.length && !files.error">
+                        <td colspan="5" class="px-6 py-12 text-center text-sm text-slate-500">
+                            This folder is empty.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- The editor, for the text files a site is actually configured by. -->
+        <div
+            v-if="editing"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            @click.self="editing = null"
+        >
+            <div
+                class="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/10"
+            >
+                <div class="flex items-start justify-between gap-4">
+                    <h3 class="break-all font-mono text-sm font-medium text-slate-800">
+                        {{ editing.path }}
+                    </h3>
+                    <button
+                        @click="editing = null"
+                        class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                        aria-label="Close"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <p v-if="editing.loading" class="mt-6 text-sm text-slate-500">Opening…</p>
+
+                <p
+                    v-else-if="editing.error"
+                    class="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                >
+                    {{ editing.error }}
+                </p>
+
+                <template v-else>
+                    <textarea
+                        v-model="editing.contents"
+                        spellcheck="false"
+                        class="mt-4 min-h-[50vh] flex-1 rounded-xl border-slate-300 font-mono text-xs shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <div class="mt-4 flex items-center justify-end gap-2">
+                        <button
+                            @click="editing = null"
+                            class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            @click="saveFile"
+                            class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                        >
+                            Save
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <div v-if="!busy && tab === 'logs'">
-                <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+            <!--
+                nginx writes two files for every site the panel renders a vhost
+                for, and a proxied application writes a third. Those are this
+                site's logs. The panel's own history of deploying it is a
+                different thing and is one of the choices here rather than the
+                only one.
+            -->
+            <div class="mb-4 flex flex-wrap items-center gap-2">
+                <button
+                    v-for="file in logFiles"
+                    :key="file.key"
+                    @click="logView = file.key"
+                    class="rounded-xl px-3 py-2 text-sm font-medium transition"
+                    :class="
+                        logView === file.key
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-white text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50'
+                    "
+                >
+                    {{ file.label }}
+                </button>
+                <button
+                    @click="logView = 'activity'"
+                    class="rounded-xl px-3 py-2 text-sm font-medium transition"
+                    :class="
+                        logView === 'activity'
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-white text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50'
+                    "
+                >
+                    Panel activity
+                </button>
+            </div>
+
+            <div
+                v-if="shownLog"
+                class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+            >
+                <p class="break-all font-mono text-xs text-slate-500">
+                    {{ shownLog.path }} · last 200 lines
+                </p>
+                <pre
+                    v-if="shownLog.lines"
+                    class="mt-3 max-h-[60vh] overflow-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
+                    >{{ shownLog.lines }}</pre
+                >
+                <p v-else class="mt-3 text-sm text-slate-500">
+                    Nothing in this log yet.
+                </p>
+            </div>
+
+            <div
+                v-if="logView === 'activity'"
+                class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            >
                 <div class="border-b border-slate-200 px-5 py-4">
                     <h3 class="font-semibold text-slate-800">Activity log</h3>
                 </div>

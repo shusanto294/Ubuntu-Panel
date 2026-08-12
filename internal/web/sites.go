@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -354,8 +356,21 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// The database the panel made for this site. Not in the site's own summary
+	// because the row only holds its id — and without this the Database tab
+	// told a WordPress site with a database that it did not have one.
+	var database map[string]any
+
+	if site.DatabaseID > 0 {
+		if row, err := a.Store.FindDatabase(r.Context(), site.DatabaseID); err == nil {
+			database = row.Summary()
+		}
+	}
+
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
 		"certbot":       a.Store.ServiceInstalled("certbot"),
+		"database":      database,
+		"logFiles":      a.siteLogFiles(site),
 		"resolution":    resolution,
 		"phpDirectives": directives,
 		"cronJobs":      a.Sites.CronJobs(site),
@@ -658,4 +673,163 @@ func (a *App) sitesCron(w http.ResponseWriter, r *http.Request) {
 	sess.Flash("success", "The schedule was written.")
 
 	inertia.Back(w, r, "/sites")
+}
+
+// siteLogFiles is the last of nginx's own logs for this site.
+//
+// The Logs tab used to show the panel's task history, which is a list of what
+// the panel did — deployments, restarts, certificates. That is worth keeping,
+// but it is not what "the site's logs" means to anybody looking for a 500: the
+// site's logs are the two files nginx writes for it, which every vhost the
+// panel renders already names.
+//
+// The tail, not the file. An error log on a busy site is megabytes, and the
+// question being asked of it is always about the last few minutes.
+func (a *App) siteLogFiles(site *store.Site) []map[string]any {
+	const lines = 200
+
+	files := []struct {
+		key, label, path string
+	}{
+		{"access", "Access log", "/var/log/nginx/" + site.Domain + "-access.log"},
+		{"error", "Error log", "/var/log/nginx/" + site.Domain + "-error.log"},
+	}
+
+	// A proxied site's application writes its own, which is where the reason
+	// for a 502 actually is — nginx only knows it could not connect.
+	if site.IsProxied() {
+		files = append(files, struct{ key, label, path string }{
+			"app", site.TypeLabel() + " log", "/var/log/" + site.ServiceName() + ".log",
+		})
+	}
+
+	summaries := make([]map[string]any, 0, len(files))
+
+	for _, file := range files {
+		contents := proc.Run(fmt.Sprintf("sudo tail -n %d %s 2>/dev/null", lines,
+			proc.Quote(file.path)), 30*time.Second).Output
+
+		summaries = append(summaries, map[string]any{
+			"key":   file.key,
+			"label": file.label,
+			"path":  file.path,
+			"lines": nullable(strings.TrimRight(contents, "\n")),
+		})
+	}
+
+	return summaries
+}
+
+// ------------------------------------------------------------ file manager
+
+// siteFor loads the site a file-manager request names.
+func (a *App) siteFor(w http.ResponseWriter, r *http.Request) *store.Site {
+	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
+	if err != nil {
+		a.notFoundError(w, r, "No such site.")
+
+		return nil
+	}
+
+	return site
+}
+
+// sitesFiles lists one folder.
+func (a *App) sitesFiles(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	entries, where, err := a.Sites.ListFiles(site, r.URL.Query().Get("path"))
+	if err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})
+
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"path":    where,
+		"entries": entries,
+		"root":    site.RootPath,
+	})
+}
+
+// sitesFileRead opens a file in the editor.
+func (a *App) sitesFileRead(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	contents, err := a.Sites.ReadFile(site, r.URL.Query().Get("path"))
+	if err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})
+
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"path":     r.URL.Query().Get("path"),
+		"contents": contents,
+	})
+}
+
+// sitesFileWrite saves it back.
+func (a *App) sitesFileWrite(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	if err := a.Sites.WriteFile(site, input["path"], input["contents"]); err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})
+
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"saved": true})
+}
+
+// sitesFileAction is everything else the file manager does: new, rename,
+// delete. One endpoint, because they are one form each and three routes for
+// three verbs is three places to get the path check wrong.
+func (a *App) sitesFileAction(w http.ResponseWriter, r *http.Request) {
+	site := a.siteFor(w, r)
+	if site == nil {
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	switch input["action"] {
+	case "folder":
+		err = a.Sites.CreateEntry(site, input["path"], true)
+	case "file":
+		err = a.Sites.CreateEntry(site, input["path"], false)
+	case "rename":
+		err = a.Sites.RenameEntry(site, input["path"], input["to"])
+	case "delete":
+		err = a.Sites.DeleteEntry(site, input["path"])
+	default:
+		err = errors.New("that is not something the file manager does")
+	}
+
+	if err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"error": err.Error()})
+
+		return
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"done": true})
 }

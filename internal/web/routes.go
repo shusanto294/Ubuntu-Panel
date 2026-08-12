@@ -93,6 +93,11 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/php", "sites.php", authenticated, a.sitesPHP)
 	rt.post("/sites/{site}/certificate", "sites.certificate", authenticated, a.sitesCertificate)
 	rt.post("/sites/{site}/cron", "sites.cron", authenticated, a.sitesCron)
+
+	rt.get("/sites/{site}/files", "sites.files", authenticated, a.sitesFiles)
+	rt.get("/sites/{site}/file", "sites.file", authenticated, a.sitesFileRead)
+	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)
+	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.sitesFileAction)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
