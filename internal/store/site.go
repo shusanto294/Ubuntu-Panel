@@ -44,7 +44,13 @@ type Site struct {
 	DNSType         string
 	DNSContent      string
 	DNSProxied      bool
-	CreatedAt       string
+
+	// PHPSettings is the per-site php.ini overrides, as a JSON object of
+	// directive to value. Empty on a site nobody has changed, where PHP's own
+	// defaults are what the pool was configured with.
+	PHPSettings string
+
+	CreatedAt string
 }
 
 // DefaultWPTitle is what a WordPress site is called when the form left it
@@ -55,7 +61,8 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	root_path, web_directory, php_version, node_version, status, ssl, last_error,
 	app_port, start_command, build_command, repository, branch,
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
-	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied, created_at`
+	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
+	php_settings, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -67,7 +74,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var dnsAccountID, databaseID, userID, appPort nullInt
 	var aliases, nodeVersion, lastError, startCommand, buildCommand text
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
-	var dnsZoneID, dnsRecordIDs, dnsContent text
+	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings text
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -75,7 +82,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&startCommand, &buildCommand, &repository, &site.Branch,
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
-		&site.DNSProxied, &site.CreatedAt)
+		&site.DNSProxied, &phpSettings, &site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -96,6 +103,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.DNSZoneID = dnsZoneID.String()
 	site.DNSRecordIDs = dnsRecordIDs.String()
 	site.DNSContent = dnsContent.String()
+	site.PHPSettings = phpSettings.String()
 
 	site.Aliases = decodeStringList(aliases.String())
 
@@ -216,6 +224,19 @@ func (s *Store) SetSiteDNS(id int64, zoneID, recordIDs string) {
 // takes its own default instead is not going to be argued out of it, and the
 // vhost is written after the app has started — so the honest thing is to
 // follow it rather than to serve a 502 with the port the panel preferred.
+// SetSitePHPSettings stores the per-site php.ini overrides. The vhost is
+// rewritten from them, so this is only half the change.
+func (s *Store) SetSitePHPSettings(id int64, encoded string) {
+	s.db.Exec(`UPDATE sites SET php_settings = ?, updated_at = datetime('now')
+	           WHERE id = ?`, nullText(encoded), id)
+}
+
+// SetSiteWebDirectory moves the document root inside the site directory.
+func (s *Store) SetSiteWebDirectory(id int64, directory string) {
+	s.db.Exec(`UPDATE sites SET web_directory = ?, updated_at = datetime('now')
+	           WHERE id = ?`, directory, id)
+}
+
 func (s *Store) SetSiteAppPort(id int64, port int) {
 	s.db.Exec(`UPDATE sites SET app_port = ?, updated_at = datetime('now') WHERE id = ?`,
 		nullID(int64(port)), id)
@@ -409,6 +430,19 @@ func (site *Site) Hostnames() []string {
 	}
 
 	return names
+}
+
+// PHPOverrides is PHPSettings decoded. An unreadable value is no overrides
+// rather than an error: it is a vhost being rendered, and a site that serves
+// with PHP's defaults is better than one that does not serve.
+func (site *Site) PHPOverrides() map[string]string {
+	settings := map[string]string{}
+
+	if strings.TrimSpace(site.PHPSettings) != "" {
+		json.Unmarshal([]byte(site.PHPSettings), &settings)
+	}
+
+	return settings
 }
 
 // RecordIDs is the map of published DNS records, by fully qualified name.

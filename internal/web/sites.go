@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -337,21 +338,32 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The vhost nginx is actually serving, read rather than re-rendered: the
-	// point of showing it is to see what is on disk, which is the thing that
-	// differs from what the panel thinks it wrote.
-	vhost := strings.TrimSpace(proc.Run("sudo cat "+proc.Quote(sites.AvailablePath(site))+
-		" 2>/dev/null", 15*time.Second).Output)
+	// What the PHP tab offers, with the site's own value against each and the
+	// value PHP would use where the site has none. Sent together so the form is
+	// one loop and the panel decides what is settable, not the page.
+	directives := make([]map[string]any, 0, len(sites.PHPDirectives))
+	overrides := site.PHPOverrides()
+
+	for _, directive := range sites.PHPDirectives {
+		directives = append(directives, map[string]any{
+			"key":     directive.Key,
+			"label":   directive.Label,
+			"help":    directive.Help,
+			"default": directive.Default,
+			"value":   overrides[directive.Key],
+		})
+	}
 
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
-		"certbot":    a.Store.ServiceInstalled("certbot"),
-		"resolution": resolution,
-		"vhost":      nullable(vhost),
-		"vhostPath":  sites.AvailablePath(site),
-		"site":       site.Summary(true),
-		"logs":       logs,
-		"activeTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
-		"latestTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
+		"certbot":       a.Store.ServiceInstalled("certbot"),
+		"resolution":    resolution,
+		"phpDirectives": directives,
+		"cronJobs":      a.Sites.CronJobs(site),
+		"certificate":   a.certificateSummary(site),
+		"site":          site.Summary(true),
+		"logs":          logs,
+		"activeTask":    a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
+		"latestTask":    a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
 	})
 }
 
@@ -485,4 +497,165 @@ func orDefault(value, fallback string) string {
 
 func itoa(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+// certificateSummary is what the SSL/TLS tab shows: whether Let's Encrypt has
+// issued anything for this site, and when it stops being valid.
+//
+// Read from the certificate on disk rather than from the site's `ssl` column.
+// That column is what the site asked for; this is what it got, and the two
+// differ precisely when somebody needs to look at this tab.
+func (a *App) certificateSummary(site *store.Site) map[string]any {
+	path := sites.CertificatePath(site) + "/fullchain.pem"
+
+	summary := map[string]any{
+		"wanted":  site.SSL,
+		"issued":  false,
+		"certbot": a.Store.ServiceInstalled("certbot"),
+		"path":    path,
+		"expires": nil,
+		"issuer":  nil,
+	}
+
+	if !proc.Ok("sudo test -f " + proc.Quote(path)) {
+		return summary
+	}
+
+	summary["issued"] = true
+
+	// -noout, so what comes back is the two lines this shows and not a
+	// kilobyte of base64 in a page payload.
+	details := proc.Run("sudo openssl x509 -in "+proc.Quote(path)+
+		" -noout -enddate -issuer 2>/dev/null", 30*time.Second).Output
+
+	for _, line := range strings.Split(details, "\n") {
+		if value, found := strings.CutPrefix(strings.TrimSpace(line), "notAfter="); found {
+			summary["expires"] = value
+		}
+
+		if value, found := strings.CutPrefix(strings.TrimSpace(line), "issuer="); found {
+			summary["issuer"] = value
+		}
+	}
+
+	return summary
+}
+
+// sitesSettings changes the document root.
+func (a *App) sitesSettings(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	if err := a.Sites.SetWebDirectory(r.Context(), id, input["web_directory"]); err != nil {
+		a.failBack(w, r, err.Error())
+		return
+	}
+
+	sess.Flash("success", "The root directory was changed and nginx reloaded.")
+
+	inertia.Back(w, r, "/sites")
+}
+
+// sitesPHP writes the site's php.ini overrides.
+func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	// Only the directives the panel offers. The form posts them flat, so
+	// anything else in the body is somebody's idea rather than the form's.
+	settings := map[string]string{}
+
+	for name, value := range input {
+		if sites.IsPHPDirective(name) {
+			settings[name] = value
+		}
+	}
+
+	if err := a.Sites.SetPHPSettings(r.Context(), id, settings); err != nil {
+		a.failBack(w, r, err.Error())
+		return
+	}
+
+	sess.Flash("success", "The PHP settings were applied.")
+
+	inertia.Back(w, r, "/sites")
+}
+
+// sitesCertificate asks certbot for the site's certificate, now.
+func (a *App) sitesCertificate(w http.ResponseWriter, r *http.Request) {
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	a.Queue.PushID(queue.SiteCertificate, "site", id)
+
+	if sess := session.FromContext(r.Context()); sess != nil {
+		sess.Flash("status", "Requesting the certificate. The Logs tab has the run.")
+	}
+
+	inertia.Back(w, r, "/sites")
+}
+
+// sitesCron writes the whole of a site's schedule.
+func (a *App) sitesCron(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	// The page posts the whole list as JSON in one field, because a schedule
+	// and a command are two halves of one line and a flat form would have to
+	// number them.
+	var jobs []sites.CronJob
+
+	if encoded := strings.TrimSpace(input["jobs"]); encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &jobs); err != nil {
+			a.failBack(w, r, "The schedule could not be read.")
+
+			return
+		}
+	}
+
+	if err := a.Sites.SetCronJobs(r.Context(), id, jobs); err != nil {
+		a.failBack(w, r, err.Error())
+		return
+	}
+
+	sess.Flash("success", "The schedule was written.")
+
+	inertia.Back(w, r, "/sites")
 }

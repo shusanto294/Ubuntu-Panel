@@ -87,6 +87,12 @@ func (a *App) routes() *router {
 		a.databasesPassword)
 	rt.post("/databases/{database}/repair", "databases.repair", authenticated, a.databasesRepair)
 	rt.delete("/databases/{database}", "databases.destroy", authenticated, a.databasesDestroy)
+
+	// The site page's own tabs.
+	rt.post("/sites/{site}/settings", "sites.settings", authenticated, a.sitesSettings)
+	rt.post("/sites/{site}/php", "sites.php", authenticated, a.sitesPHP)
+	rt.post("/sites/{site}/certificate", "sites.certificate", authenticated, a.sitesCertificate)
+	rt.post("/sites/{site}/cron", "sites.cron", authenticated, a.sitesCron)
 	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
 		a.databasesCredentials)
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,

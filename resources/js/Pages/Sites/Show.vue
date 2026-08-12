@@ -14,76 +14,68 @@ const props = defineProps({
     latestTask: Object,
     certbot: Boolean,
     resolution: Object,
-    vhost: { type: String, default: null },
-    vhostPath: { type: String, default: '' },
+    phpDirectives: { type: Array, default: () => [] },
+    cronJobs: { type: Array, default: () => [] },
+    certificate: { type: Object, default: () => ({}) },
 });
 
 const deleteFiles = ref(true);
 const showSecrets = ref(false);
 
-// Which section is on screen. Settings first, because the thing somebody
-// usually opens a site for is what it is set to.
-const tab = ref('settings');
+// Which section is on screen. General first, because the thing somebody opens
+// a site for is usually to read it rather than to change it.
+const tab = ref('general');
 
 const tabs = computed(() => {
-    const entries = [{ key: 'settings', label: 'Settings' }];
+    const entries = [
+        { key: 'general', label: 'General' },
+        { key: 'settings', label: 'Settings' },
+    ];
 
-    entries.push({
-        key: 'data',
-        label: props.site.database ? 'Database' : 'DNS',
-    });
+    if (!props.site.is_proxied) entries.push({ key: 'php', label: 'PHP' });
 
-    entries.push({ key: 'vhost', label: 'Vhost' });
+    entries.push({ key: 'database', label: 'Database' });
+    entries.push({ key: 'ssl', label: 'SSL/TLS' });
+    entries.push({ key: 'cron', label: 'Cron jobs' });
     entries.push({ key: 'logs', label: 'Logs' });
 
     return entries;
 });
 
-const vhostCopied = ref(false);
+// ---- Settings: the document root, inside the site's own directory.
+const webDirectory = ref((props.site.web_directory ?? '').replace(/^\//, ''));
 
-const copyVhost = async () => {
-    try {
-        await navigator.clipboard.writeText(props.vhost ?? '');
-        vhostCopied.value = true;
-    } catch {
-        // A browser that refuses the clipboard leaves the text on screen to be
-        // selected by hand, which is what it was rendered for anyway.
-        vhostCopied.value = false;
-    }
-};
+const saveDirectory = () =>
+    router.post(
+        route('sites.settings', props.site.id),
+        { web_directory: webDirectory.value },
+        { preserveScroll: true },
+    );
 
-// A deploy runs on the queue, so the page has to go and look for the result.
-const busy = computed(() =>
-    ['pending', 'deploying', 'deleting'].includes(props.site.status),
+// ---- PHP: one field per directive the panel is willing to write.
+const phpValues = ref(
+    Object.fromEntries(
+        props.phpDirectives.map((directive) => [directive.key, directive.value ?? '']),
+    ),
 );
 
-// The step list stays up while the work runs, and while the run that failed is
-// still the last thing that happened — that is when the steps are worth
-// reading, because one of them has the ✕ against it.
-const showProgress = computed(
-    () =>
-        busy.value ||
-        props.activeTask?.status === 'running' ||
-        ((props.activeTask ?? props.latestTask)?.status === 'failed' &&
-            props.site.status !== 'active'),
-);
+const savePHP = () =>
+    router.post(route('sites.php', props.site.id), phpValues.value, {
+        preserveScroll: true,
+    });
 
-const live = computed(() => props.site.status === 'active' && !busy.value);
+// ---- Cron: the whole list is posted, so removing a row removes the line.
+const jobs = ref(props.cronJobs.map((job) => ({ ...job })));
 
-// The site can be built, running and answering nginx on this machine while its
-// name resolves to nothing at all — every step of the deployment passes and
-// the browser still says "this site can't be reached". That is DNS, not the
-// site, and the page has to say which of the two it is.
-const unreachable = computed(
-    () => props.resolution?.checked && !props.resolution.resolves,
-);
+const addJob = () => jobs.value.push({ schedule: '0 3 * * *', command: '' });
+const removeJob = (index) => jobs.value.splice(index, 1);
 
-const elsewhere = computed(
-    () =>
-        props.resolution?.checked &&
-        props.resolution.resolves &&
-        !props.resolution.matches,
-);
+const saveJobs = () =>
+    router.post(
+        route('sites.cron', props.site.id),
+        { jobs: JSON.stringify(jobs.value) },
+        { preserveScroll: true },
+    );
 
 let timer = null;
 
@@ -309,21 +301,6 @@ const destroy = async () => {
             </div>
 
             <p
-                v-else-if="elsewhere"
-                class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
-            >
-                {{ site.domain }} resolves to
-                <span class="font-mono">{{
-                    resolution.addresses.join(', ')
-                }}</span>
-                rather than to this server
-                <span class="font-mono">{{ resolution.expected }}</span
-                >. That is what a CDN or proxy in front looks like and is fine. If
-                there is none, the record is pointing at somewhere else and this
-                site will not be what a visitor sees.
-            </p>
-
-            <p
                 v-if="!site.ssl"
                 class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
             >
@@ -448,7 +425,7 @@ const destroy = async () => {
             </nav>
         </div>
 
-        <div v-if="!busy && tab === 'settings'" class="grid gap-6 lg:grid-cols-3">
+        <div v-if="!busy && tab === 'general'" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Site</h3>
                 <dl class="mt-4 space-y-3 text-sm">
@@ -500,6 +477,33 @@ const destroy = async () => {
                 </dl>
             </div>
 
+            <div
+                v-if="site.manage_dns"
+                class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6"
+            >
+                <h3 class="font-semibold text-slate-800">DNS</h3>
+                <div v-if="site.manage_dns" class="mt-4 space-y-3 text-sm">
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Account</dt>
+                        <dd class="text-slate-800">
+                            {{ site.dns_account }}
+                        </dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Record</dt>
+                        <dd class="text-slate-800">
+                            {{ site.dns_type }} to {{ site.dns_content }}
+                        </dd>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Proxied</dt>
+                        <dd class="text-slate-800">
+                            {{ site.dns_proxied ? 'yes' : 'no' }}
+                        </dd>
+                    </div>
+                </div>
+            </div>
+
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
@@ -523,18 +527,14 @@ const destroy = async () => {
             </div>
         </div>
 
-        <div v-if="!busy && tab === 'data'" class="grid gap-6 lg:grid-cols-3">
-            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
-                <h3 class="font-semibold text-slate-800">
-                    {{ site.database ? 'Database & credentials' : 'DNS' }}
-                </h3>
+        <div v-if="!busy && tab === 'database'" class="grid gap-6 lg:grid-cols-3">
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
+                <h3 class="font-semibold text-slate-800">Database</h3>
 
                 <div v-if="site.database" class="mt-4 space-y-3 text-sm">
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Engine</dt>
-                        <dd class="text-slate-800">
-                            {{ site.database.engine_label }}
-                        </dd>
+                        <dd class="text-slate-800">{{ site.database.engine_label }}</dd>
                     </div>
                     <div class="flex justify-between gap-4">
                         <dt class="text-slate-500">Database</dt>
@@ -552,145 +552,228 @@ const destroy = async () => {
                         <dt class="text-slate-500">Status</dt>
                         <dd><StatusBadge :status="site.database.status" /></dd>
                     </div>
-                    <Link
-                        :href="route('databases.index')"
-                        class="inline-block pt-1 text-xs text-brand-600 hover:underline"
-                        >Manage databases</Link
-                    >
-                </div>
-
-                <div v-else-if="site.manage_dns" class="mt-4 space-y-3 text-sm">
-                    <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Account</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_account }}
-                        </dd>
-                    </div>
-                    <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Record</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_type }} to {{ site.dns_content }}
-                        </dd>
-                    </div>
-                    <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Proxied</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_proxied ? 'yes' : 'no' }}
-                        </dd>
-                    </div>
                 </div>
 
                 <p v-else class="mt-4 text-sm text-slate-500">
-                    DNS is managed manually. Point {{ site.domain }} at
-                    this machine yourself.
+                    This kind of site does not use a database, and the panel did
+                    not create one for it.
                 </p>
 
-                <!-- The application's own credentials -->
-                <div v-if="site.app" class="mt-6 border-t border-slate-200 pt-4">
-                    <p class="text-sm font-medium text-slate-800">
-                        {{ site.app.label }}
-                    </p>
-                    <p class="mt-1 text-sm text-slate-600">
-                        <a
-                            :href="site.app.url"
-                            target="_blank"
-                            rel="noopener"
-                            class="text-brand-600 hover:underline"
-                            >{{ site.app.url }}</a
-                        >
-                    </p>
-                    <p v-if="!site.app.token" class="mt-1 text-sm text-slate-600">
-                        user: {{ site.app.user }}
-                    </p>
-                    <p class="mt-1 break-all text-sm text-slate-600">
-                        {{ site.app.token ? 'token' : 'password' }}:
-                        <span v-if="showSecrets" class="font-mono">{{
-                            site.app.password
-                        }}</span>
-                        <button
-                            v-else
-                            @click="showSecrets = true"
-                            class="text-brand-600 hover:underline"
-                        >
-                            reveal
-                        </button>
-                    </p>
-                    <p
-                        v-if="site.app.websocket"
-                        class="mt-1 break-all text-sm text-slate-600"
-                    >
-                        WebSocket URL:
-                        <span class="font-mono">{{ site.app.websocket }}</span>
-                    </p>
-                    <p v-if="site.app.websocket" class="mt-2 text-xs text-slate-500">
-                        Open the site, sign in with these, and the dashboard
-                        connects on its own — nginx does the authenticating and
-                        tells the gateway who you are, so there is no token to
-                        paste. The WebSocket URL above is only needed if you
-                        point some other client at the gateway.
-                    </p>
-
-                    <!--
-                        Said here because OpenClaw's own dialog cannot say it:
-                        "Connect to mobile" fails with GatewayRequestError:
-                        Gateway auth is not configured (no token or password),
-                        which reads as a broken install rather than as the one
-                        thing this arrangement gives up.
-                    -->
-                    <p
-                        v-if="site.app.websocket"
-                        class="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500"
-                    >
-                        <span class="font-medium text-slate-700"
-                            >Connect to mobile does not work on this site.</span
-                        >
-                        A setup code has to carry a gateway token or password for
-                        the phone to log in with, and this gateway has neither on
-                        purpose — the site password you just used is checked by
-                        nginx in front of it, which is what lets the dashboard
-                        open without asking you for anything. The error the
-                        dialog shows,
-                        <span class="font-mono">Gateway auth is not configured</span
-                        >, is that and nothing worse. The dashboard, and
-                        everything in it, is unaffected.
-                    </p>
-                </div>
+                <!--
+                    The user, the password and the connection details live on
+                    the database's own page, which is also where the password is
+                    changed. Two places to manage one database is one place too
+                    many.
+                -->
+                <Link
+                    v-if="site.database"
+                    :href="route('databases.show', site.database.id)"
+                    class="mt-5 inline-block rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                >
+                    Credentials and users
+                </Link>
+                <Link
+                    v-else
+                    :href="route('databases.index')"
+                    class="mt-5 inline-block text-sm text-brand-600 hover:underline"
+                >
+                    All databases
+                </Link>
             </div>
         </div>
 
+        <div
+            v-if="!busy && tab === 'settings'"
+            class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <h3 class="font-semibold text-slate-800">Root directory</h3>
+            <p class="mt-2 text-sm text-slate-500">
+                The folder inside the site that nginx serves. A Laravel site
+                serves <code>public</code>; a plain HTML site serves the site
+                directory itself, which is this box left empty.
+            </p>
+
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+                <span class="font-mono text-sm text-slate-500">{{ site.root_path }}/</span>
+                <input
+                    v-model="webDirectory"
+                    type="text"
+                    placeholder="public"
+                    class="w-56 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                />
+                <button
+                    @click="saveDirectory"
+                    class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                >
+                    Save
+                </button>
+            </div>
+
+            <p class="mt-3 text-xs text-slate-500">
+                The folder is created if it is not there, and nginx is reloaded
+                — after being asked whether it will take the new configuration,
+                and given the old one back if it will not.
+            </p>
+        </div>
+
+        <div
+            v-if="!busy && tab === 'php'"
+            class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <h3 class="font-semibold text-slate-800">PHP settings</h3>
+            <p class="mt-2 text-sm text-slate-500">
+                For this site only, passed to PHP-FPM with every request. Left
+                blank, each takes the value PHP itself was configured with.
+            </p>
+
+            <div class="mt-5 grid gap-5 sm:grid-cols-2">
+                <div v-for="directive in phpDirectives" :key="directive.key">
+                    <label class="block text-sm font-medium text-slate-700">
+                        {{ directive.label }}
+                    </label>
+                    <input
+                        v-model="phpValues[directive.key]"
+                        type="text"
+                        :placeholder="directive.default"
+                        class="mt-1 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <p class="mt-1 text-xs text-slate-500">{{ directive.help }}</p>
+                </div>
+            </div>
+
+            <button
+                @click="savePHP"
+                class="mt-6 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            >
+                Apply
+            </button>
+
+            <p class="mt-3 text-xs text-slate-500">
+                An upload also has to fit inside the maximum POST size, and
+                nginx has its own limit on top of both — this panel sets that to
+                128 MB for every site.
+            </p>
+        </div>
+
         <!--
-            The vhost as it is on disk, not as the panel would render it now:
-            what is worth looking at is the file nginx is serving, which is the
-            one that can differ from what the panel thinks it wrote.
+            What was issued, read off the certificate on disk rather than from
+            what the site asked for. The two differ exactly when somebody comes
+            to this tab.
         -->
         <div
-            v-if="!busy && tab === 'vhost'"
+            v-if="!busy && tab === 'ssl'"
+            class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <h3 class="font-semibold text-slate-800">SSL/TLS</h3>
+
+            <dl class="mt-4 space-y-3 text-sm">
+                <div class="flex justify-between gap-4">
+                    <dt class="text-slate-500">Certificate</dt>
+                    <dd class="text-slate-800">
+                        {{ certificate.issued ? 'Issued' : 'None yet' }}
+                    </dd>
+                </div>
+                <div v-if="certificate.expires" class="flex justify-between gap-4">
+                    <dt class="text-slate-500">Expires</dt>
+                    <dd class="text-right text-slate-800">{{ certificate.expires }}</dd>
+                </div>
+                <div v-if="certificate.issuer" class="flex justify-between gap-4">
+                    <dt class="text-slate-500">Issuer</dt>
+                    <dd class="break-all text-right text-xs text-slate-700">
+                        {{ certificate.issuer }}
+                    </dd>
+                </div>
+                <div class="flex justify-between gap-4">
+                    <dt class="text-slate-500">Serving over</dt>
+                    <dd class="text-slate-800">{{ site.ssl ? 'HTTPS' : 'HTTP' }}</dd>
+                </div>
+            </dl>
+
+            <p
+                v-if="!certificate.certbot"
+                class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
+            >
+                Certbot is not installed, so no certificate can be issued.
+                Install it from Apps first.
+            </p>
+
+            <button
+                v-else
+                @click="post('sites.certificate')"
+                class="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            >
+                {{ certificate.issued ? 'Renew the certificate' : 'Issue a certificate' }}
+            </button>
+
+            <p class="mt-3 text-xs text-slate-500">
+                Certbot is asked for this site alone — no rebuild, no
+                redeployment. It needs the domain to resolve to this server
+                first; the Logs tab has the run.
+            </p>
+        </div>
+
+        <div
+            v-if="!busy && tab === 'cron'"
             class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
         >
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h3 class="font-semibold text-slate-800">nginx configuration</h3>
-                    <p class="mt-1 break-all font-mono text-xs text-slate-500">
-                        {{ vhostPath }}
+                    <h3 class="font-semibold text-slate-800">Cron jobs</h3>
+                    <p class="mt-1 text-sm text-slate-500">
+                        Run as <span class="font-mono">www-data</span>, from
+                        <span class="font-mono">{{ site.root_path }}</span>.
                     </p>
                 </div>
                 <button
-                    v-if="vhost"
-                    @click="copyVhost"
-                    class="text-xs font-medium text-brand-600 hover:underline"
+                    @click="addJob"
+                    class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
                 >
-                    {{ vhostCopied ? 'Copied' : 'Copy' }}
+                    Add a job
                 </button>
             </div>
 
-            <pre
-                v-if="vhost"
-                class="mt-4 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
-                >{{ vhost }}</pre
+            <div v-if="jobs.length" class="mt-5 space-y-3">
+                <div
+                    v-for="(job, index) in jobs"
+                    :key="index"
+                    class="flex flex-wrap items-start gap-2"
+                >
+                    <input
+                        v-model="job.schedule"
+                        type="text"
+                        placeholder="0 3 * * *"
+                        class="w-40 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <input
+                        v-model="job.command"
+                        type="text"
+                        placeholder="php artisan schedule:run"
+                        class="min-w-0 flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    />
+                    <button
+                        @click="removeJob(index)"
+                        class="px-2 py-2 text-sm text-rose-600 hover:underline"
+                    >
+                        Remove
+                    </button>
+                </div>
+            </div>
+
+            <p v-else class="mt-5 text-sm text-slate-500">
+                Nothing scheduled for this site.
+            </p>
+
+            <button
+                @click="saveJobs"
+                class="mt-6 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
             >
-            <p v-else class="mt-4 text-sm text-slate-500">
-                There is no vhost on disk for this site yet. Redeploy writes
-                one.
+                Save the schedule
+            </button>
+
+            <p class="mt-3 text-xs text-slate-500">
+                Five fields — minute, hour, day of month, month, day of week.
+                The whole list is written at once, so removing a row here
+                removes the line on the machine.
             </p>
         </div>
 

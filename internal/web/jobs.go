@@ -70,6 +70,16 @@ func (a *App) registerJobs() {
 		return a.Sites.Restart(ctx, payload.Site)
 	})
 
+	a.Queue.Handle(queue.SiteCertificate, func(ctx context.Context, job *store.Job) error {
+		var payload sitePayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Sites.Certificate(ctx, payload.Site)
+	})
+
 	a.Queue.Handle(queue.SitePull, func(ctx context.Context, job *store.Job) error {
 		var payload sitePayload
 

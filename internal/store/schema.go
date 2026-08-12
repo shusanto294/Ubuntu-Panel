@@ -236,6 +236,7 @@ var migrations = []string{
 	`ALTER TABLE email_accounts ADD COLUMN deleted_at TEXT`,
 	`ALTER TABLE email_domains ADD COLUMN dns_record_ids TEXT`,
 	`ALTER TABLE services ADD COLUMN detected_at TEXT`,
+	`ALTER TABLE sites ADD COLUMN php_settings TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

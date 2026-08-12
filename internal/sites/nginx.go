@@ -4,6 +4,7 @@ package sites
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -306,6 +307,7 @@ func body(out *strings.Builder, site *store.Site) {
 			"        # Overrides last — see the note in nginx.go.\n"+
 			"        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;\n"+
 			"        fastcgi_param HTTPS $panel_https;\n"+
+			phpValueParam(site)+
 			"    }\n"+
 			"\n"+
 			"    location ~ /\\.(?!well-known).* {\n"+
@@ -643,4 +645,58 @@ func defaultServer() string {
 			"    return 404 \"No site is configured for this hostname.\\n\";\n"+
 			"}\n",
 		config.Name, ACMEWebroot, DefaultCert, DefaultCert)
+}
+
+// phpValueParam is the site's own php.ini overrides, handed to PHP-FPM through
+// the request rather than through a pool of its own.
+//
+// PHP_VALUE is read by FPM as a block of ini directives, one per line, and
+// applied to that request. A pool per site would be the other way to do it and
+// costs a socket, a systemd reload and a vhost that names it — for settings an
+// operator changes to make an upload work.
+//
+// Directives and values are both filtered to what an ini line can hold, so a
+// value with a newline in it cannot smuggle a second directive into the block.
+func phpValueParam(site *store.Site) string {
+	settings := site.PHPOverrides()
+	if len(settings) == 0 {
+		return ""
+	}
+
+	// Sorted, so the file does not churn between renders and a diff of two
+	// vhosts is about what changed.
+	names := make([]string, 0, len(settings))
+	for name := range settings {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	lines := make([]string, 0, len(names))
+
+	for _, name := range names {
+		if !safeINIToken(name) || !safeINIToken(settings[name]) {
+			continue
+		}
+
+		lines = append(lines, name+"="+settings[name])
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	return "\n        # Set from this site's PHP settings.\n" +
+		"        fastcgi_param PHP_VALUE \"" + strings.Join(lines, "\n") + "\";\n"
+}
+
+// safeINIToken is what may appear either side of the `=` in a PHP_VALUE line.
+// No quotes, no newlines, no semicolons: each of those ends the directive and
+// starts something the operator did not write.
+func safeINIToken(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+
+	return !strings.ContainsAny(value, "\"\n\r;$")
 }

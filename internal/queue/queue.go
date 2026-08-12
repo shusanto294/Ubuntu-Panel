@@ -26,6 +26,10 @@ const (
 	SiteRestart = "site.restart"
 	SitePull    = "site.pull"
 
+	// SiteCertificate asks certbot for a site's certificate on its own,
+	// without rebuilding the application to get there.
+	SiteCertificate = "site.certificate"
+
 	DatabaseCreate = "database.create"
 	DatabaseDelete = "database.delete"
 
