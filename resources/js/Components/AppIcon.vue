@@ -17,6 +17,10 @@ const props = defineProps({
     appKey: { type: String, required: true },
     label: { type: String, default: '' },
     size: { type: String, default: 'md' }, // sm | md | lg
+    // The glyph on its own, with no tile behind it and taking the colour of
+    // whatever it sits in — for inside a button, where a tinted square next to
+    // the label is a second button.
+    bare: { type: Boolean, default: false },
 });
 
 // Stroked paths on a 24×24 grid. `fill` entries are drawn filled instead.
@@ -108,7 +112,23 @@ const initial = computed(() => (props.label || props.appKey).charAt(0).toUpperCa
 </script>
 
 <template>
+    <svg
+        v-if="bare && mark"
+        :class="GLYPH[size]"
+        class="shrink-0"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+    >
+        <path :d="mark.path" />
+    </svg>
+
     <span
+        v-else
         class="inline-flex shrink-0 items-center justify-center ring-1 ring-inset"
         :class="[SIZES[size], tint]"
         aria-hidden="true"

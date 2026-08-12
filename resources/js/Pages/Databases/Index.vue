@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import AppIcon from '@/Components/AppIcon.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
@@ -78,6 +79,32 @@ const closeManage = () => {
     managing.value = null;
     copied.value = '';
 };
+
+// Everything about one database as a single block of text.
+//
+// One block and one button, because the reason somebody opens this dialog is
+// usually to send the lot to a developer — and four separate copy buttons is
+// four chances to paste three of them and leave the port behind.
+const managedDetails = computed(() => {
+    if (!managing.value?.credentials) return '';
+
+    const { database } = managing.value;
+    const it = managing.value.credentials;
+
+    const lines = [
+        `Database: ${it.database}`,
+        `Engine:   ${database.engine_label}`,
+        `Host:     ${it.host}`,
+        `Port:     ${it.port}`,
+        `Username: ${it.username}`,
+        `Password: ${it.password}`,
+    ];
+
+    if (it.auth_db) lines.push(`Auth database: ${it.auth_db}`);
+    if (it.uri) lines.push(`Connection string: ${it.uri}`);
+
+    return lines.join('\n');
+});
 
 // phpMyAdmin, at its login form, with this database already named — so the
 // credentials above are pasted into a page that opens straight onto it.
@@ -161,16 +188,18 @@ const copy = async (text, which) => {
                         :href="phpMyAdminAll"
                         target="_blank"
                         rel="noopener"
-                        class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                        class="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                     >
+                        <AppIcon app-key="phpmyadmin" size="sm" bare />
                         phpMyAdmin
                     </a>
 
                     <button
                         v-if="mongodb"
                         @click="openCompass"
-                        class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                        class="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                     >
+                        <AppIcon app-key="mongodb" size="sm" bare />
                         MongoDB Compass
                     </button>
                 </div>
@@ -223,75 +252,35 @@ const copy = async (text, which) => {
                 </p>
 
                 <template v-else>
-                    <dl
-                        class="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4"
-                    >
-                        <div>
-                            <dt class="text-slate-500">Host</dt>
-                            <dd class="break-all font-mono text-slate-800">
-                                {{ managing.credentials.host }}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt class="text-slate-500">Port</dt>
-                            <dd class="font-mono text-slate-800">
-                                {{ managing.credentials.port }}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt class="text-slate-500">User</dt>
-                            <dd class="break-all font-mono text-slate-800">
-                                {{ managing.credentials.username }}
-                            </dd>
-                        </div>
-                        <div v-if="managing.credentials.auth_db">
-                            <dt class="text-slate-500">Auth database</dt>
-                            <dd class="break-all font-mono text-slate-800">
-                                {{ managing.credentials.auth_db }}
-                            </dd>
-                        </div>
-                    </dl>
-
-                    <div class="mt-4">
+                    <!--
+                        Everything in one block, copied by one button. What
+                        this dialog is usually open for is sending a developer
+                        their connection details, and a field at a time is how
+                        the port gets left behind.
+                    -->
+                    <div class="mt-5">
                         <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-medium text-slate-700">
-                                Password
+                                Connection details
                             </p>
                             <button
-                                @click="
-                                    copy(managing.credentials.password, 'password')
-                                "
+                                @click="copy(managedDetails, 'all')"
                                 class="text-xs font-medium text-brand-600 hover:underline"
                             >
-                                {{ copied === 'password' ? 'Copied' : 'Copy' }}
+                                {{ copied === 'all' ? 'Copied' : 'Copy all' }}
                             </button>
                         </div>
                         <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                            >{{ managing.credentials.password }}</pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
+                            >{{ managedDetails }}</pre
                         >
-                    </div>
-
-                    <div v-if="managing.credentials.uri" class="mt-4">
-                        <div class="flex items-center justify-between gap-3">
-                            <p class="text-sm font-medium text-slate-700">
-                                Connection string
-                            </p>
-                            <button
-                                @click="copy(managing.credentials.uri, 'uri')"
-                                class="text-xs font-medium text-brand-600 hover:underline"
-                            >
-                                {{ copied === 'uri' ? 'Copied' : 'Copy' }}
-                            </button>
-                        </div>
-                        <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                            >{{ managing.credentials.uri }}</pre
+                        <p
+                            v-if="managing.credentials.uri"
+                            class="mt-2 text-xs text-slate-500"
                         >
-                        <p class="mt-2 text-xs text-slate-500">
-                            One string, on the server's own address: it works
-                            from MongoDB Compass on your desktop and from
-                            anything running on the server.
+                            The connection string works from MongoDB Compass on
+                            your desktop and from anything running on the
+                            server.
                         </p>
                     </div>
 
