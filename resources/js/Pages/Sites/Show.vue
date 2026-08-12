@@ -14,10 +14,43 @@ const props = defineProps({
     latestTask: Object,
     certbot: Boolean,
     resolution: Object,
+    vhost: { type: String, default: null },
+    vhostPath: { type: String, default: '' },
 });
 
 const deleteFiles = ref(true);
 const showSecrets = ref(false);
+
+// Which section is on screen. Settings first, because the thing somebody
+// usually opens a site for is what it is set to.
+const tab = ref('settings');
+
+const tabs = computed(() => {
+    const entries = [{ key: 'settings', label: 'Settings' }];
+
+    entries.push({
+        key: 'data',
+        label: props.site.database ? 'Database' : 'DNS',
+    });
+
+    entries.push({ key: 'vhost', label: 'Vhost' });
+    entries.push({ key: 'logs', label: 'Logs' });
+
+    return entries;
+});
+
+const vhostCopied = ref(false);
+
+const copyVhost = async () => {
+    try {
+        await navigator.clipboard.writeText(props.vhost ?? '');
+        vhostCopied.value = true;
+    } catch {
+        // A browser that refuses the clipboard leaves the text on screen to be
+        // selected by hand, which is what it was rendered for anyway.
+        vhostCopied.value = false;
+    }
+};
 
 // A deploy runs on the queue, so the page has to go and look for the result.
 const busy = computed(() =>
@@ -346,7 +379,76 @@ const destroy = async () => {
             when the Danger zone has to be reachable. Hiding it there left a
             half-built site with no way to remove it.
         -->
-        <div v-if="!busy" class="grid gap-6 lg:grid-cols-3">
+        <!--
+            What the site is, before what can be done to it — the three facts
+            somebody reads off a site page and puts into something else.
+        -->
+        <dl
+            v-if="!busy"
+            class="mb-6 grid grid-cols-2 gap-x-8 gap-y-4 border-b border-slate-200 pb-6 text-sm sm:grid-cols-4"
+        >
+            <div class="min-w-0">
+                <dt class="text-xs uppercase tracking-wide text-slate-400">Domain</dt>
+                <dd class="mt-1 flex items-center gap-2 truncate font-medium text-slate-800">
+                    {{ site.domain }}
+                    <a
+                        :href="site.url"
+                        target="_blank"
+                        rel="noopener"
+                        class="text-xs font-normal text-brand-600 hover:underline"
+                        >open</a
+                    >
+                </dd>
+            </div>
+            <div class="min-w-0">
+                <dt class="text-xs uppercase tracking-wide text-slate-400">Type</dt>
+                <dd class="mt-1 truncate font-medium text-slate-800">
+                    {{ site.type_label }}
+                </dd>
+            </div>
+            <div class="min-w-0">
+                <dt class="text-xs uppercase tracking-wide text-slate-400">
+                    {{ site.is_proxied ? 'App port' : 'PHP' }}
+                </dt>
+                <dd class="mt-1 truncate font-medium text-slate-800">
+                    {{ site.is_proxied ? site.app_port : site.php_version }}
+                </dd>
+            </div>
+            <div class="min-w-0">
+                <dt class="text-xs uppercase tracking-wide text-slate-400">
+                    IP address
+                </dt>
+                <dd class="mt-1 truncate font-medium text-slate-800">
+                    {{ resolution?.expected || '—' }}
+                </dd>
+            </div>
+        </dl>
+
+        <!--
+            One site, several subjects. The page used to be one column of
+            everything at once — settings, credentials, DNS, the vhost, the
+            history — and finding the one you came for meant reading past the
+            other four.
+        -->
+        <div v-if="!busy" class="mb-6 border-b border-slate-200">
+            <nav class="-mb-px flex flex-wrap gap-6" aria-label="Sections">
+                <button
+                    v-for="entry in tabs"
+                    :key="entry.key"
+                    @click="tab = entry.key"
+                    class="border-b-2 px-1 pb-3 text-sm font-medium transition"
+                    :class="
+                        tab === entry.key
+                            ? 'border-brand-600 text-brand-700'
+                            : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                    "
+                >
+                    {{ entry.label }}
+                </button>
+            </nav>
+        </div>
+
+        <div v-if="!busy && tab === 'settings'" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Site</h3>
                 <dl class="mt-4 space-y-3 text-sm">
@@ -398,6 +500,30 @@ const destroy = async () => {
                 </dl>
             </div>
 
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
+                <h3 class="font-semibold text-slate-800">Danger zone</h3>
+                <p class="mt-2 text-sm text-slate-500">
+                    Deleting removes the vhost, the systemd service, the site
+                    database created by the panel, and its DNS records.
+                </p>
+                <label class="mt-4 flex items-center gap-2 text-sm">
+                    <input
+                        type="checkbox"
+                        v-model="deleteFiles"
+                        class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                    />
+                    Also delete files in {{ site.root_path }}
+                </label>
+                <button
+                    @click="destroy"
+                    class="mt-4 w-full rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                >
+                    Delete this site
+                </button>
+            </div>
+        </div>
+
+        <div v-if="!busy && tab === 'data'" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">
                     {{ site.database ? 'Database & credentials' : 'DNS' }}
@@ -530,69 +656,83 @@ const destroy = async () => {
                     </p>
                 </div>
             </div>
+        </div>
 
-            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
-                <h3 class="font-semibold text-slate-800">Danger zone</h3>
-                <p class="mt-2 text-sm text-slate-500">
-                    Deleting removes the vhost, the systemd service, the site
-                    database created by the panel, and its DNS records.
-                </p>
-                <label class="mt-4 flex items-center gap-2 text-sm">
-                    <input
-                        type="checkbox"
-                        v-model="deleteFiles"
-                        class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
-                    />
-                    Also delete files in {{ site.root_path }}
-                </label>
+        <!--
+            The vhost as it is on disk, not as the panel would render it now:
+            what is worth looking at is the file nginx is serving, which is the
+            one that can differ from what the panel thinks it wrote.
+        -->
+        <div
+            v-if="!busy && tab === 'vhost'"
+            class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h3 class="font-semibold text-slate-800">nginx configuration</h3>
+                    <p class="mt-1 break-all font-mono text-xs text-slate-500">
+                        {{ vhostPath }}
+                    </p>
+                </div>
                 <button
-                    @click="destroy"
-                    class="mt-4 w-full rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    v-if="vhost"
+                    @click="copyVhost"
+                    class="text-xs font-medium text-brand-600 hover:underline"
                 >
-                    Delete this site
+                    {{ vhostCopied ? 'Copied' : 'Copy' }}
                 </button>
             </div>
+
+            <pre
+                v-if="vhost"
+                class="mt-4 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
+                >{{ vhost }}</pre
+            >
+            <p v-else class="mt-4 text-sm text-slate-500">
+                There is no vhost on disk for this site yet. Redeploy writes
+                one.
+            </p>
         </div>
 
-        <div
-            v-if="!busy"
-            class="mt-8 rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
-        >
-            <div class="border-b border-slate-200 px-5 py-4">
-                <h3 class="font-semibold text-slate-800">Activity log</h3>
-            </div>
-            <ul class="divide-y divide-slate-100">
-                <li v-for="log in logs" :key="log.id">
-                    <!-- The output itself is on the log's own page now, so this
-                         stays a list of what happened rather than a place a
-                         thousand lines of npm can unfold in. -->
-                    <Link
-                        :href="route('logs.show', log.id)"
-                        class="flex items-start justify-between gap-3 px-5 py-3 transition hover:bg-slate-50"
+        <div v-if="!busy && tab === 'logs'">
+                <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+                <div class="border-b border-slate-200 px-5 py-4">
+                    <h3 class="font-semibold text-slate-800">Activity log</h3>
+                </div>
+                <ul class="divide-y divide-slate-100">
+                    <li v-for="log in logs" :key="log.id">
+                        <!-- The output itself is on the log's own page now, so this
+                             stays a list of what happened rather than a place a
+                             thousand lines of npm can unfold in. -->
+                        <Link
+                            :href="route('logs.show', log.id)"
+                            class="flex items-start justify-between gap-3 px-5 py-3 transition hover:bg-slate-50"
+                        >
+                            <div class="min-w-0">
+                                <p class="text-sm font-medium text-slate-800">
+                                    {{ log.action }}
+                                </p>
+                                <p class="text-xs text-slate-500">
+                                    {{ log.message }}
+                                </p>
+                            </div>
+                            <div class="shrink-0 text-right">
+                                <StatusBadge :status="log.status" />
+                                <p class="mt-1 text-xs text-slate-400">
+                                    {{ formatRelative(log.created_at) }}
+                                </p>
+                            </div>
+                        </Link>
+                    </li>
+                    <li
+                        v-if="!logs.length"
+                        class="px-5 py-8 text-center text-sm text-slate-500"
                     >
-                        <div class="min-w-0">
-                            <p class="text-sm font-medium text-slate-800">
-                                {{ log.action }}
-                            </p>
-                            <p class="text-xs text-slate-500">
-                                {{ log.message }}
-                            </p>
-                        </div>
-                        <div class="shrink-0 text-right">
-                            <StatusBadge :status="log.status" />
-                            <p class="mt-1 text-xs text-slate-400">
-                                {{ formatRelative(log.created_at) }}
-                            </p>
-                        </div>
-                    </Link>
-                </li>
-                <li
-                    v-if="!logs.length"
-                    class="px-5 py-8 text-center text-sm text-slate-500"
-                >
-                    Nothing logged yet.
-                </li>
-            </ul>
+                        Nothing logged yet.
+                    </li>
+                </ul>
+            </div>
         </div>
+
     </AuthenticatedLayout>
 </template>

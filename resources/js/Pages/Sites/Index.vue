@@ -67,35 +67,18 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                     <tr v-for="site in sites" :key="site.id">
                         <td class="px-5 py-3">
                             <!--
-                                The domain is the site, so it links to the site
-                                — in a new tab, because leaving the panel to
-                                look at a page you just deployed is not what
-                                you meant to do. The arrow says as much before
-                                you click it.
+                                The domain goes to the site's own page, not to
+                                the site. Leaving the panel is what the Visit
+                                button on that page is for; from a list, the
+                                thing you want next is nearly always the site's
+                                settings.
                             -->
-                            <a
-                                :href="site.url"
-                                target="_blank"
-                                rel="noopener"
-                                class="group inline-flex items-center gap-1.5 font-medium text-slate-800 hover:text-brand-600"
-                                :title="`Open ${site.url} in a new tab`"
+                            <Link
+                                :href="route('sites.show', site.id)"
+                                class="font-medium text-slate-800 hover:text-brand-600 hover:underline"
                             >
-                                <svg
-                                    class="h-4 w-4 shrink-0 text-slate-400 group-hover:text-brand-600"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
-                                    viewBox="0 0 24 24"
-                                    aria-hidden="true"
-                                >
-                                    <path
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
-                                    />
-                                </svg>
-                                <span>{{ site.domain }}</span>
-                            </a>
+                                {{ site.domain }}
+                            </Link>
                             <p
                                 v-if="site.aliases.length"
                                 class="text-xs text-slate-500"

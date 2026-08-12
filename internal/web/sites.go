@@ -9,8 +9,10 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
 	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
+	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
+	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 )
@@ -335,9 +337,17 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The vhost nginx is actually serving, read rather than re-rendered: the
+	// point of showing it is to see what is on disk, which is the thing that
+	// differs from what the panel thinks it wrote.
+	vhost := strings.TrimSpace(proc.Run("sudo cat "+proc.Quote(sites.AvailablePath(site))+
+		" 2>/dev/null", 15*time.Second).Output)
+
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
 		"certbot":    a.Store.ServiceInstalled("certbot"),
 		"resolution": resolution,
+		"vhost":      nullable(vhost),
+		"vhostPath":  sites.AvailablePath(site),
 		"site":       site.Summary(true),
 		"logs":       logs,
 		"activeTask": a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
