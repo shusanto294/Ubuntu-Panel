@@ -51,14 +51,43 @@ const (
 // a vhost naming an undefined variable is one nginx refuses to load, and the
 // thing it would refuse to load is the panel itself. fastcgi-php.conf sets
 // HTTPS from $https, which is right whenever TLS ends at this nginx.
-func PhpMyAdminLocation(php string) string {
+func PhpMyAdminLocation(php string, gate string, panelPort int) string {
 	if php == "" {
 		php = "8.3"
 	}
 
+	// The guard, and the internal location that answers it.
+	//
+	// phpMyAdmin is configured with a server that signs itself in as a MariaDB
+	// administrator with no password prompt. What keeps that from being every
+	// database on the machine one URL away is this: nginx asks the panel who
+	// is calling, and serves nothing under /phpmyadmin until the panel says it
+	// is somebody signed in.
+	//
+	// Empty when no gate is wanted, which is how a machine whose nginx has no
+	// auth_request module still gets phpMyAdmin — with its own login form, and
+	// without the auto-login server, which the panel then does not write.
+	guard, gateLocation := "", ""
+
+	if gate != "" {
+		guard = fmt.Sprintf("        auth_request %s;\n", gate)
+
+		gateLocation = fmt.Sprintf(
+			"    location = %s {\n"+
+				"        internal;\n"+
+				"        proxy_pass http://127.0.0.1:%d;\n"+
+				"        proxy_pass_request_body off;\n"+
+				"        proxy_set_header Content-Length \"\";\n"+
+				"        proxy_set_header Host $host;\n"+
+				"        proxy_set_header X-Forwarded-Proto $scheme;\n"+
+				"    }\n\n", gate, panelPort)
+	}
+
 	return fmt.Sprintf(
-		"    # phpMyAdmin, when it is installed. See PhpMyAdminLocation in nginx.go.\n"+
+		"%[4]s"+
+			"    # phpMyAdmin, when it is installed. See PhpMyAdminLocation in nginx.go.\n"+
 			"    location ^~ %[2]s {\n"+
+			"%[5]s"+
 			"        root %[1]s;\n"+
 			"        index index.php;\n"+
 			"        try_files $uri $uri/ =404;\n"+
@@ -75,7 +104,8 @@ func PhpMyAdminLocation(php string) string {
 			"        location ~ ^%[2]s/(libraries|templates|setup)/ {\n"+
 			"            deny all;\n"+
 			"        }\n"+
-			"    }\n", PhpMyAdminParent, PhpMyAdminPath, php)
+			"    }\n",
+		PhpMyAdminParent, PhpMyAdminPath, php, gateLocation, guard)
 }
 
 // AvailablePath, EnabledPath, CertificatePath and UnitPath are where a site's

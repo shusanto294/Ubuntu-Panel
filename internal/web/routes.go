@@ -88,6 +88,12 @@ func (a *App) routes() *router {
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
 		a.databasesMongoConnection)
 
+	// nginx asks this before it serves anything under /phpmyadmin. Public in
+	// the route table because it answers for itself: signed in is 204, and
+	// anything else is 401 — where `authenticated` would redirect to /login,
+	// and a redirect is a 302, which auth_request reads as "allowed".
+	rt.get(phpMyAdminGatePath, "", public, a.phpMyAdminGate)
+
 	// Email
 	rt.get("/email", "email.index", authenticated, a.emailIndex)
 	rt.post("/email/repair", "email.repair", authenticated, a.emailRepair)

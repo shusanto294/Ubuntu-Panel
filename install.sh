@@ -1002,7 +1002,23 @@ server {
     # phpMyAdmin, when it is installed — a 404 until then. Kept in step with
     # PhpMyAdminLocation in internal/sites/nginx.go, which is what rewrites
     # this vhost once the panel is running and knows which PHP is on the box.
+    #
+    # The subrequest is the guard: phpMyAdmin is configured with a server that
+    # signs itself in as a MariaDB administrator, and this is what keeps that
+    # from being every database on the machine one URL away. The panel answers
+    # 204 for a signed-in session and 401 for everything else, and only writes
+    # that auto-login server once it can see this block in the live vhost.
+    location = /internal/phpmyadmin-gate {
+        internal;
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     location ^~ /phpmyadmin {
+        auth_request /internal/phpmyadmin-gate;
         root /usr/share/ubuntu-panel;
         index index.php;
         try_files \$uri \$uri/ =404;

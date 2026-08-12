@@ -161,7 +161,7 @@ func TestCatchAllTakesBothSlotsWhenTheyAreFree(t *testing.T) {
 // /usr/share/ubuntu-panel/phpmyadmin/x. An `alias` here — the usual way this
 // is written — silently breaks try_files and SCRIPT_FILENAME.
 func TestPhpMyAdminIsServedByRootRatherThanAlias(t *testing.T) {
-	block := PhpMyAdminLocation("8.3")
+	block := PhpMyAdminLocation("8.3", "/internal/phpmyadmin-gate", 8088)
 
 	if strings.Contains(block, "alias") {
 		t.Error("the block uses alias, which breaks $document_root under it")
@@ -184,7 +184,7 @@ func TestPhpMyAdminIsServedByRootRatherThanAlias(t *testing.T) {
 // any of that exists. A vhost naming an undefined variable is one nginx
 // refuses to load — and it is the vhost serving the panel.
 func TestPhpMyAdminBlockNamesNoPanelVariables(t *testing.T) {
-	if strings.Contains(PhpMyAdminLocation(""), "$panel_https") {
+	if strings.Contains(PhpMyAdminLocation("", "", 8088), "$panel_https") {
 		t.Error("the block references $panel_https, which is not defined on a fresh install")
 	}
 }
@@ -192,7 +192,42 @@ func TestPhpMyAdminBlockNamesNoPanelVariables(t *testing.T) {
 // An empty version still has to produce a socket path, because the vhost is
 // written on machines where no PHP default has been chosen yet.
 func TestPhpMyAdminFallsBackToTheDefaultPHP(t *testing.T) {
-	if !strings.Contains(PhpMyAdminLocation(""), "php8.3-fpm.sock") {
+	if !strings.Contains(PhpMyAdminLocation("", "", 8088), "php8.3-fpm.sock") {
 		t.Error("no PHP version produced no socket")
+	}
+}
+
+// The auto-login server phpMyAdmin is configured with signs itself in as a
+// MariaDB administrator with no prompt. The subrequest is the only thing
+// standing in front of it, so the location has to carry it — and the internal
+// location that answers it has to be there too, or nginx refuses the file.
+func TestPhpMyAdminIsGuardedByTheSubrequest(t *testing.T) {
+	block := PhpMyAdminLocation("8.3", "/internal/phpmyadmin-gate", 8088)
+
+	for _, want := range []string{
+		"auth_request /internal/phpmyadmin-gate;",
+		"location = /internal/phpmyadmin-gate {",
+		"internal;",
+		"proxy_pass http://127.0.0.1:8088;",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the guarded block is missing %q:\n%s", want, block)
+		}
+	}
+}
+
+// And no subrequest at all when the panel could not install one, so a machine
+// whose nginx has no auth_request module still serves phpMyAdmin — with its
+// own login form, and without the auto-login server the panel then declines to
+// write.
+func TestPhpMyAdminCanBeServedWithoutTheGuard(t *testing.T) {
+	block := PhpMyAdminLocation("8.3", "", 8088)
+
+	if strings.Contains(block, "auth_request") {
+		t.Errorf("an unguarded block still names auth_request:\n%s", block)
+	}
+
+	if !strings.Contains(block, "location ^~ /phpmyadmin {") {
+		t.Errorf("the location itself went missing:\n%s", block)
 	}
 }

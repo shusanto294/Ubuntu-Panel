@@ -12,9 +12,12 @@ const props = defineProps({
     availableEngines: Array,
     engines: Object,
     phpMyAdmin: Boolean,
-    // A path, not a URL: phpMyAdmin is served from the panel's own origin, so
-    // it opens on whatever address this page was reached on.
-    phpMyAdminPath: { type: String, default: '/phpmyadmin/' },
+    // Paths, not URLs: phpMyAdmin is served from the panel's own origin, so it
+    // opens on whatever address this page was reached on. The first signs
+    // itself in and shows every database; the second stops at the login form,
+    // for signing in as one database's own user.
+    phpMyAdminAll: { type: String, default: '/phpmyadmin/' },
+    phpMyAdminManual: { type: String, default: '/phpmyadmin/' },
     mongodb: Boolean,
     activeTask: { type: Object, default: null },
 });
@@ -27,7 +30,6 @@ const busy = computed(
 
 useLiveRefresh(busy, ['databases', 'activeTask']);
 
-const revealed = ref({});
 
 const destroy = async (database) => {
     const go = await confirmDanger(
@@ -43,11 +45,46 @@ const destroy = async (database) => {
     });
 };
 
-const reveal = async (database) => {
-    const { data } = await window.axios.get(
-        route('databases.credentials', database.id),
-    );
-    revealed.value = { ...revealed.value, [database.id]: data };
+// The Manage dialog: one database's credentials, and the ways into it.
+//
+// A dialog rather than a row that unfolds underneath: what it holds is a
+// password, and a password that stays open on a page somebody scrolls past is
+// a password on a screen somebody walks past.
+const managing = ref(null);
+
+const manage = async (database) => {
+    managing.value = { database, credentials: null };
+
+    try {
+        const { data } = await window.axios.get(
+            route('databases.credentials', database.id),
+        );
+
+        // Guard against a second click having moved on while this was in
+        // flight, which would otherwise fill one database's dialog with
+        // another's password.
+        if (managing.value?.database.id === database.id)
+            managing.value = { database, credentials: data };
+    } catch {
+        if (managing.value?.database.id === database.id)
+            managing.value = {
+                database,
+                error: 'The panel could not read this database’s credentials.',
+            };
+    }
+};
+
+const closeManage = () => {
+    managing.value = null;
+    copied.value = '';
+};
+
+// phpMyAdmin, at its login form, with this database already named — so the
+// credentials above are pasted into a page that opens straight onto it.
+const phpMyAdminFor = (database) => {
+    const separator = props.phpMyAdminManual.includes('?') ? '&' : '?';
+
+    return `${props.phpMyAdminManual}${separator}db=${encodeURIComponent(database.name)}`;
 };
 
 // The server-wide MongoDB connection string, for Compass. Fetched when the
@@ -121,7 +158,7 @@ const copy = async (text, which) => {
                     -->
                     <a
                         v-if="phpMyAdmin"
-                        :href="phpMyAdminPath"
+                        :href="phpMyAdminAll"
                         target="_blank"
                         rel="noopener"
                         class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
@@ -142,6 +179,149 @@ const copy = async (text, which) => {
 
         <div v-if="activeTask" class="mb-6">
             <TaskStatus :task="activeTask" />
+        </div>
+
+        <!-- One database: what it is called, who it belongs to, and the way in. -->
+        <div
+            v-if="managing"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            @click.self="closeManage"
+        >
+            <div
+                class="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/10"
+            >
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <h3 class="text-lg font-semibold text-slate-900">
+                            {{ managing.database.name }}
+                        </h3>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ managing.database.engine_label }}
+                        </p>
+                    </div>
+                    <button
+                        @click="closeManage"
+                        class="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                        aria-label="Close"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <p
+                    v-if="managing.error"
+                    class="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                >
+                    {{ managing.error }}
+                </p>
+
+                <p
+                    v-else-if="!managing.credentials"
+                    class="mt-6 text-sm text-slate-500"
+                >
+                    Reading the credentials…
+                </p>
+
+                <template v-else>
+                    <dl
+                        class="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4"
+                    >
+                        <div>
+                            <dt class="text-slate-500">Host</dt>
+                            <dd class="break-all font-mono text-slate-800">
+                                {{ managing.credentials.host }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-slate-500">Port</dt>
+                            <dd class="font-mono text-slate-800">
+                                {{ managing.credentials.port }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-slate-500">User</dt>
+                            <dd class="break-all font-mono text-slate-800">
+                                {{ managing.credentials.username }}
+                            </dd>
+                        </div>
+                        <div v-if="managing.credentials.auth_db">
+                            <dt class="text-slate-500">Auth database</dt>
+                            <dd class="break-all font-mono text-slate-800">
+                                {{ managing.credentials.auth_db }}
+                            </dd>
+                        </div>
+                    </dl>
+
+                    <div class="mt-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <p class="text-sm font-medium text-slate-700">
+                                Password
+                            </p>
+                            <button
+                                @click="
+                                    copy(managing.credentials.password, 'password')
+                                "
+                                class="text-xs font-medium text-brand-600 hover:underline"
+                            >
+                                {{ copied === 'password' ? 'Copied' : 'Copy' }}
+                            </button>
+                        </div>
+                        <pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
+                            >{{ managing.credentials.password }}</pre
+                        >
+                    </div>
+
+                    <div v-if="managing.credentials.uri" class="mt-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <p class="text-sm font-medium text-slate-700">
+                                Connection string
+                            </p>
+                            <button
+                                @click="copy(managing.credentials.uri, 'uri')"
+                                class="text-xs font-medium text-brand-600 hover:underline"
+                            >
+                                {{ copied === 'uri' ? 'Copied' : 'Copy' }}
+                            </button>
+                        </div>
+                        <pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
+                            >{{ managing.credentials.uri }}</pre
+                        >
+                        <p class="mt-2 text-xs text-slate-500">
+                            One string, on the server's own address: it works
+                            from MongoDB Compass on your desktop and from
+                            anything running on the server.
+                        </p>
+                    </div>
+
+                    <!--
+                        The same phpMyAdmin the header button opens, stopped at
+                        its login form with this database named. The header one
+                        is already signed in as an administrator and shows
+                        everything; this one is whatever the credentials above
+                        can reach, which is this database and nothing else.
+                    -->
+                    <div
+                        v-if="phpMyAdmin && managing.database.engine === 'mysql'"
+                        class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4"
+                    >
+                        <p class="text-xs text-slate-500">
+                            Opens phpMyAdmin's login form. Sign in with the user
+                            and password above to manage this database on its
+                            own.
+                        </p>
+                        <a
+                            :href="phpMyAdminFor(managing.database)"
+                            target="_blank"
+                            rel="noopener"
+                            class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+                        >
+                            Open in phpMyAdmin
+                        </a>
+                    </div>
+                </template>
+            </div>
         </div>
 
         <!--
@@ -297,10 +477,10 @@ const copy = async (text, which) => {
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-3 text-right">
                                     <button
-                                        @click="reveal(database)"
+                                        @click="manage(database)"
                                         class="text-brand-600 hover:underline"
                                     >
-                                        Credentials
+                                        Manage
                                     </button>
                                     <button
                                         @click="destroy(database)"
@@ -308,36 +488,6 @@ const copy = async (text, which) => {
                                     >
                                         Drop
                                     </button>
-                                </td>
-                            </tr>
-                            <tr v-if="revealed[database.id]">
-                                <td colspan="4" class="bg-slate-900 px-5 py-3">
-                                    <pre
-                                        class="overflow-x-auto font-mono text-xs text-slate-200"
-                                        >host: {{ revealed[database.id].host }}
-port: {{ revealed[database.id].port }}
-database: {{ revealed[database.id].database }}
-username: {{ revealed[database.id].username }}
-password: {{ revealed[database.id].password }}<template
-                                            v-if="revealed[database.id].auth_db"
-                                        >
-auth database: {{ revealed[database.id].auth_db }}</template
-                                        ><template v-if="revealed[database.id].uri">
-connection string: {{ revealed[database.id].uri }}</template
-                                        ></pre
-                                    >
-                                    <p
-                                        v-if="revealed[database.id].uri"
-                                        class="mt-2 text-xs text-slate-400"
-                                    >
-                                        One string, on the server's own address:
-                                        it works from MongoDB Compass on your
-                                        desktop and from anything running on the
-                                        server. It reaches this machine from
-                                        anywhere, so the password is the only
-                                        thing keeping other people out — keep
-                                        it.
-                                    </p>
                                 </td>
                             </tr>
                             <tr v-if="database.last_error">

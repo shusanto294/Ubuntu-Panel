@@ -582,9 +582,9 @@ func panelVhost(names string, port int, php string) string {
 			"%s"+
 			"}\n",
 		config.Name, names, sites.ACMEWebroot,
-		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port),
+		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port),
 		names, sites.DefaultCert, sites.DefaultCert,
-		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port))
+		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port))
 }
 
 // panelTLSVhost redirects the hostname to HTTPS and keeps a plain block for the
@@ -641,7 +641,7 @@ func panelTLSVhost(domain, ip string, port int, php string) string {
 			"%s"+
 			"}\n%s",
 		config.Name, domain, sites.ACMEWebroot, domain, domain, domain,
-		sites.PhpMyAdminLocation(php)+"\n"+panelProxyBlock(port), ipBlock)
+		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port), ipBlock)
 }
 
 // panelDefaultVhost is the shape the installer writes: the catch-all on port
@@ -668,7 +668,8 @@ func panelDefaultVhost(port int, php string) string {
 			"%s\n"+
 			"%s"+
 			"}\n",
-		sites.ACMEWebroot, sites.PhpMyAdminLocation(php), panelProxyBlock(port))
+		sites.ACMEWebroot, sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port),
+		panelProxyBlock(port))
 }
 
 // refreshPanelVhost rewrites the panel's vhost in the shape it is already in,

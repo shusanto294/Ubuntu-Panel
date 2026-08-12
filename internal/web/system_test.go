@@ -35,3 +35,28 @@ func TestThePanelVhostsServePhpMyAdmin(t *testing.T) {
 		t.Error("phpMyAdmin is served over plain HTTP on the IP address")
 	}
 }
+
+// The guard has to be in every shape of the vhost that serves phpMyAdmin. A
+// shape that serves it without the subrequest is a MariaDB administrator on a
+// public URL.
+func TestEveryServedPhpMyAdminIsGuarded(t *testing.T) {
+	for name, vhost := range map[string]string{
+		"default": panelDefaultVhost(8088, "8.3"),
+		"named":   panelVhost("panel.example.com 203.0.113.9", 8088, "8.3"),
+		"tls":     panelTLSVhost("panel.example.com", "203.0.113.9", 8088, "8.3"),
+	} {
+		for _, block := range strings.Split(vhost, "server {")[1:] {
+			if !strings.Contains(block, "location ^~ /phpmyadmin {") {
+				continue
+			}
+
+			if !strings.Contains(block, "auth_request "+phpMyAdminGatePath+";") {
+				t.Errorf("a %s server block serves phpMyAdmin unguarded:\n%s", name, block)
+			}
+
+			if !strings.Contains(block, "location = "+phpMyAdminGatePath+" {") {
+				t.Errorf("a %s server block has no location answering the guard:\n%s", name, block)
+			}
+		}
+	}
+}

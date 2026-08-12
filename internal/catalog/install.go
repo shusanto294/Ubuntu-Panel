@@ -21,12 +21,12 @@ var SharedNginxConfig func(runner *tasks.Runner) error
 // configured once its packages are down.
 var ConfigureMail func(ctx context.Context, userID int64) error
 
-// RefreshPanelVhost rewrites the panel's own nginx vhost in whatever shape it
-// is currently in. Same arrangement again: the vhost is the web layer's, and
-// phpMyAdmin is the app that needs it — the location that serves it only
-// reaches a machine whose vhost was written since the panel learned to emit
-// it, and that is the vhost this rewrites.
-var RefreshPanelVhost func(runner *tasks.Runner) error
+// ConfigurePhpMyAdmin puts phpMyAdmin into the state the Databases page
+// promises: served from the panel's own vhost, guarded by the panel's session,
+// and configured with both an auto-login server and one that asks. Same
+// arrangement again — all of that is the web layer's, and this is the app that
+// needs it.
+var ConfigurePhpMyAdmin func(runner *tasks.Runner) error
 
 // packagesFor is the apt line for one app.
 func (s *Service) packagesFor(key string) string {
@@ -437,26 +437,22 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 			"sudo chown -R www-data:www-data /var/lib/ubuntu-panel/phpmyadmin-tmp && "+
 				"sudo chmod 700 /var/lib/ubuntu-panel/phpmyadmin-tmp").Group(key)
 
-		list.AddFn("Write phpMyAdmin's configuration", func(runner *tasks.Runner) (string, error) {
-			return s.writePhpMyAdminConfig()
-		}).Group(key)
+		// Serving it, guarding it and configuring both ways in — the location
+		// in the panel's own vhost, the nginx subrequest that checks for a
+		// signed-in panel session, the MariaDB account the auto-login server
+		// uses, and config.inc.php naming whichever of those actually worked.
+		list.AddFn("Serve phpMyAdmin from the panel's address",
+			func(runner *tasks.Runner) (string, error) {
+				if ConfigurePhpMyAdmin == nil {
+					return "", errors.New("the panel's phpMyAdmin writer is not wired up")
+				}
 
-		// The location that serves it lives in the panel's own vhost, and a
-		// machine installed before the panel emitted that block still has the
-		// vhost without it. Rewritten here rather than at every start: this is
-		// the moment somebody asked for phpMyAdmin, and it is the only app
-		// whose being installed changes what the panel's vhost has to serve.
-		list.AddFn("Serve it from the panel's address", func(runner *tasks.Runner) (string, error) {
-			if RefreshPanelVhost == nil {
-				return "", errors.New("the panel's vhost writer is not wired up")
-			}
+				if err := ConfigurePhpMyAdmin(runner); err != nil {
+					return "", err
+				}
 
-			if err := RefreshPanelVhost(runner); err != nil {
-				return "", err
-			}
-
-			return "phpMyAdmin is served at /phpmyadmin on the panel's own address.", nil
-		}).Optional().Group(key)
+				return "phpMyAdmin is served at /phpmyadmin on the panel's own address.", nil
+			}).Optional().Group(key)
 
 	case "mail":
 		list.Add("Start the mail server",

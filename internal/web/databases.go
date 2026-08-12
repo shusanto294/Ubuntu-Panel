@@ -13,7 +13,6 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 	"github.com/shusanto294/ubuntu-panel-go/internal/system"
 )
@@ -77,12 +76,21 @@ func (a *App) databasesIndex(w http.ResponseWriter, r *http.Request) {
 		"availableEngines": a.availableEngines(),
 		"engines":          engineLabels(),
 		"phpMyAdmin":       a.Store.ServiceInstalled("phpmyadmin"),
-		// Served from the panel's own origin, so the link is a path and not a
-		// URL: whatever address the operator reached this page on is the one
-		// phpMyAdmin should open on, hostname or bare IP, HTTP or HTTPS.
-		"phpMyAdminPath": sites.PhpMyAdminPath + "/",
-		"mongodb":        a.Store.ServiceInstalled("mongodb"),
-		"activeTask":     a.activeTask(r, "database"),
+		// Two ways in, and they are different links.
+		//
+		// The header one signs itself in as the panel's own MariaDB
+		// administrator, so it opens on every database at once. The one beside
+		// a database opens the same phpMyAdmin at its login form, with that
+		// database named — sign in with the credentials shown next to it and
+		// nothing else on the server is reachable.
+		//
+		// Paths rather than URLs: phpMyAdmin is served from the panel's own
+		// origin, so whatever address this page was reached on is the one it
+		// should open on, hostname or bare IP, HTTP or HTTPS.
+		"phpMyAdminAll":    a.phpMyAdminURL(phpMyAdminServerAll),
+		"phpMyAdminManual": a.phpMyAdminURL(phpMyAdminServerManual),
+		"mongodb":          a.Store.ServiceInstalled("mongodb"),
+		"activeTask":       a.activeTask(r, "database"),
 	})
 }
 
