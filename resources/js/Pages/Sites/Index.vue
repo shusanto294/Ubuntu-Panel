@@ -105,7 +105,30 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                         <td class="px-5 py-3 text-slate-600">
                             {{ site.dns_provider ?? (site.manage_dns ? 'managed' : 'manual') }}
                         </td>
-                        <td class="px-5 py-3 text-right">
+                        <td class="whitespace-nowrap px-5 py-3 text-right">
+                            <!--
+                                The way into the application itself, so the
+                                thing most often wanted from this list does not
+                                need the site's own page first. WordPress goes
+                                through the panel, which signs the browser in;
+                                the others open their own front door.
+                            -->
+                            <a
+                                v-if="site.type === 'wordpress'"
+                                :href="route('sites.wp-admin', site.id)"
+                                target="_blank"
+                                rel="noopener"
+                                class="mr-3 text-brand-600 hover:underline"
+                                >WP Admin</a
+                            >
+                            <a
+                                v-else-if="site.managed"
+                                :href="site.admin_url"
+                                target="_blank"
+                                rel="noopener"
+                                class="mr-3 text-brand-600 hover:underline"
+                                >Open</a
+                            >
                             <Link
                                 :href="route('sites.show', site.id)"
                                 class="text-brand-600 hover:underline"

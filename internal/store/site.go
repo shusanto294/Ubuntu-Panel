@@ -487,8 +487,13 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		"repository":    site.Repository,
 		"branch":        site.Branch,
 		"is_proxied":    site.IsProxied(),
-		"last_error":    site.LastError,
-		"created_at":    site.CreatedAt,
+		// The list needs these to offer a way into the application without
+		// opening the site's own page first: whether this type has a login the
+		// panel knows about, and where that login lives.
+		"managed":    site.IsManaged(),
+		"admin_url":  site.AdminURL(),
+		"last_error": site.LastError,
+		"created_at": site.CreatedAt,
 	}
 
 	if detailed {
@@ -507,7 +512,6 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		summary["web_directory"] = site.WebDirectory
 		summary["wp_admin_user"] = site.WPAdminUser
 		summary["wp_admin_email"] = site.WPAdminEmail
-		summary["managed"] = site.IsManaged()
 
 		// The application's own credentials, which the panel generated and
 		// nobody else has. The site page is the only place they exist.
