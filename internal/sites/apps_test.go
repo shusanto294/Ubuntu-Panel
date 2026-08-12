@@ -1,6 +1,10 @@
 package sites
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -290,5 +294,119 @@ func TestOpenClawIsNeverGivenATokenAsWellAsTrustedProxy(t *testing.T) {
 		if strings.Contains(pair[0], "TOKEN") || strings.Contains(pair[0], "PASSWORD") {
 			t.Errorf("the gateway environment carries %s, which trusted-proxy mode refuses", pair[0])
 		}
+	}
+}
+
+// runOpenClawConfigScript runs the merge script the deployment runs, on a
+// throwaway config file, and returns what it wrote.
+//
+// The script is executed rather than read: the keys in it are the whole of
+// what makes an OpenClaw dashboard open without asking for a token, and a
+// test that only grepped the source would pass just as happily on a typo.
+func runOpenClawConfigScript(t *testing.T, existing string) map[string]any {
+	t.Helper()
+
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not on this machine; the deployment runs the script on the server")
+	}
+
+	path := filepath.Join(t.TempDir(), "openclaw.json")
+
+	if existing != "" {
+		if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	command := exec.Command("python3", "-c", openClawConfigScript)
+	command.Env = append(os.Environ(),
+		"CONFIG="+path,
+		`ORIGINS=["https://openclaw.example.com"]`,
+		"PORT=18801")
+
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("the script failed: %v\n%s", err, output)
+	}
+
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]any
+
+	if err := json.Unmarshal(written, &config); err != nil {
+		t.Fatalf("the script did not write valid JSON: %v\n%s", err, written)
+	}
+
+	gateway, ok := config["gateway"].(map[string]any)
+	if !ok {
+		t.Fatalf("no gateway section:\n%s", written)
+	}
+
+	return gateway
+}
+
+// The gateway rejects a trusted-proxy request coming from loopback unless it
+// is told not to, and nginx is on loopback — so without this key the identity
+// nginx authenticated is discarded and the dashboard asks for a gateway token
+// instead, which is exactly what it did.
+func TestOpenClawTrustsTheProxyOnLoopback(t *testing.T) {
+	gateway := runOpenClawConfigScript(t, "")
+
+	auth, ok := gateway["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("no auth section: %v", gateway)
+	}
+
+	if auth["mode"] != "trusted-proxy" {
+		t.Errorf("auth mode is %v, not trusted-proxy", auth["mode"])
+	}
+
+	proxy, ok := auth["trustedProxy"].(map[string]any)
+	if !ok {
+		t.Fatalf("no trustedProxy section: %v", auth)
+	}
+
+	if proxy["userHeader"] != "x-auth-request-email" {
+		t.Errorf("the user header is %v, not the one nginx sets", proxy["userHeader"])
+	}
+
+	if proxy["allowLoopback"] != true {
+		t.Errorf("allowLoopback is %v, so the gateway refuses its own nginx", proxy["allowLoopback"])
+	}
+
+	// Scopes are cleared for a Control UI session with no paired device, so
+	// the dashboard connects and then fails every call with "missing scope".
+	control, ok := gateway["controlUi"].(map[string]any)
+	if !ok {
+		t.Fatalf("no controlUi section: %v", gateway)
+	}
+
+	if control["dangerouslyDisableDeviceAuth"] != true {
+		t.Errorf("device auth is %v, so the dashboard opens with no scopes",
+			control["dangerouslyDisableDeviceAuth"])
+	}
+}
+
+// A shared token alongside trusted-proxy mode is refused at startup, so an
+// existing one has to go — and everything the operator configured has to stay.
+func TestOpenClawKeepsTheRestOfTheConfiguration(t *testing.T) {
+	gateway := runOpenClawConfigScript(t, `{
+	  "gateway": {"auth": {"mode": "token", "token": "old"},
+	              "controlUi": {"allowedOrigins": ["https://kept.example.com"]}},
+	  "channels": {"whatsapp": {"enabled": true}}
+	}`)
+
+	auth := gateway["auth"].(map[string]any)
+
+	if _, present := auth["token"]; present {
+		t.Error("the shared token was left behind; the gateway refuses to start with both")
+	}
+
+	origins := gateway["controlUi"].(map[string]any)["allowedOrigins"].([]any)
+
+	if len(origins) != 2 || origins[0] != "https://kept.example.com" {
+		t.Errorf("the operator's own origin was not kept: %v", origins)
 	}
 }
