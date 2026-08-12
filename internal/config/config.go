@@ -20,7 +20,7 @@ const (
 
 	// Version is stamped into the page payload and reported by --version.
 	// Bumped in the same commit as the tag that builds a release from it.
-	Version = "2.5.21"
+	Version = "2.5.22"
 )
 
 // Config is the whole of the panel's settings. Every field has a working

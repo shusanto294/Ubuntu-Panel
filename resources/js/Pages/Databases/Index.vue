@@ -190,39 +190,26 @@ const copy = async (text, which) => {
                 </p>
 
                 <template v-else-if="compass.uri">
+                    <!--
+                        One string, on the server's own address. It works from
+                        Compass on a desktop and from anything running on the
+                        server, so there is nothing to choose between.
+                    -->
                     <div class="mt-5">
                         <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-medium text-slate-700">
-                                From your own machine
+                                Connection string
                             </p>
                             <button
-                                @click="copy(compass.uri, 'remote')"
+                                @click="copy(compass.uri, 'uri')"
                                 class="text-xs font-medium text-brand-600 hover:underline"
                             >
-                                {{ copied === 'remote' ? 'Copied' : 'Copy' }}
+                                {{ copied === 'uri' ? 'Copied' : 'Copy' }}
                             </button>
                         </div>
                         <pre
                             class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
                             >{{ compass.uri }}</pre
-                        >
-                    </div>
-
-                    <div class="mt-4">
-                        <div class="flex items-center justify-between gap-3">
-                            <p class="text-sm font-medium text-slate-700">
-                                From a client on this server
-                            </p>
-                            <button
-                                @click="copy(compass.local_uri, 'local')"
-                                class="text-xs font-medium text-brand-600 hover:underline"
-                            >
-                                {{ copied === 'local' ? 'Copied' : 'Copy' }}
-                            </button>
-                        </div>
-                        <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                            >{{ compass.local_uri }}</pre
                         >
                     </div>
 
@@ -337,21 +324,19 @@ password: {{ revealed[database.id].password }}<template
 auth database: {{ revealed[database.id].auth_db }}</template
                                         ><template v-if="revealed[database.id].uri">
 connection string: {{ revealed[database.id].uri }}</template
-                                        ><template
-                                            v-if="revealed[database.id].remote_uri"
-                                        >
-from your desktop: {{ revealed[database.id].remote_uri }}</template
                                         ></pre
                                     >
                                     <p
-                                        v-if="revealed[database.id].remote_uri"
+                                        v-if="revealed[database.id].uri"
                                         class="mt-2 text-xs text-slate-400"
                                     >
-                                        Paste the second string into MongoDB
-                                        Compass to browse this database. It
-                                        reaches the server from anywhere, so the
-                                        password is the only thing keeping other
-                                        people out — keep it.
+                                        One string, on the server's own address:
+                                        it works from MongoDB Compass on your
+                                        desktop and from anything running on the
+                                        server. It reaches this machine from
+                                        anywhere, so the password is the only
+                                        thing keeping other people out — keep
+                                        it.
                                     </p>
                                 </td>
                             </tr>

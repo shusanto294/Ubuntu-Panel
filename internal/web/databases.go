@@ -212,14 +212,16 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 	// hand one over is that assembling it by hand goes wrong in the same two
 	// places every time: the authentication database is the one the user was
 	// created in, not `admin`, and the password has to be escaped.
+	//
+	// One URI, on the server's own address rather than loopback. There used to
+	// be two — a loopback one and a remote one — and two connection strings for
+	// one database is a question rather than an answer. The server's address is
+	// an address on the machine's own interface, so it works from a client
+	// sitting on the server exactly as it works from a laptop.
 	if database.Engine == "mongodb" {
+		body["host"] = mongoHost()
 		body["auth_db"] = database.Name
-		body["uri"] = mongoURI("127.0.0.1", port, database.Name, database.Username, database.Password)
-
-		if ip := system.PublicIP(); ip != "" {
-			body["remote_host"] = ip
-			body["remote_uri"] = mongoURI(ip, port, database.Name, database.Username, database.Password)
-		}
+		body["uri"] = mongoURI(mongoHost(), port, database.Name, database.Username, database.Password)
 	}
 
 	a.writeJSON(w, http.StatusOK, body)
@@ -256,13 +258,7 @@ func (a *App) databasesMongoConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The address a desktop reaches this machine on, not 127.0.0.1: the whole
-	// point of this string is that it is pasted into Compass on somebody's
-	// laptop. Loopback is offered too, for a client on the server itself.
-	host := system.PublicIP()
-	if host == "" {
-		host = "127.0.0.1"
-	}
+	host := mongoHost()
 
 	// authSource=admin, not the database being browsed: the panel's account was
 	// created in admin, and Compass authenticating against anything else fails
@@ -275,9 +271,26 @@ func (a *App) databasesMongoConnection(w http.ResponseWriter, r *http.Request) {
 		"auth_db":  "admin",
 		"uri": fmt.Sprintf("mongodb://%s@%s:%d/?authSource=admin",
 			url.UserPassword(databases.MongoAdmin, password).String(), host, databases.MongoPort),
-		"local_uri": fmt.Sprintf("mongodb://%s@127.0.0.1:%d/?authSource=admin",
-			url.UserPassword(databases.MongoAdmin, password).String(), databases.MongoPort),
 	})
+}
+
+// mongoHost is the address every MongoDB string the panel hands out is built
+// on: the one this machine answers to on its own network interface.
+//
+// Not 127.0.0.1. MongoDB here listens on every interface, and this address is
+// on an interface of the machine's own — so the one string works from a laptop
+// running Compass and from a process on the server alike. Two strings for one
+// database, one of which only worked in one of those places, was a choice
+// nobody wanted to have to make.
+//
+// Loopback only when the panel cannot work out any other address, where a
+// string that works on the server is better than no string at all.
+func mongoHost() string {
+	if ip := system.PublicIP(); ip != "" {
+		return ip
+	}
+
+	return "127.0.0.1"
 }
 
 // mongoURI is the connection string a driver or MongoDB Compass is given.
