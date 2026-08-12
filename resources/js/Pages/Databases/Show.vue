@@ -18,25 +18,59 @@ const props = defineProps({
 const credentials = computed(() => props.database.credentials);
 const isMySQL = computed(() => props.database.engine === 'mysql');
 
-// Everything in one block, copied by one button. What this page is usually
-// open for is sending a developer their connection details, and a field at a
-// time is how the port gets left behind.
-const details = computed(() => {
+// One block per account, because a database with three users has three sets of
+// connection details and a page that shows one is a page somebody has to
+// assemble the other two from by hand.
+//
+// The password is only in the block it is known for. The panel stores exactly
+// one — the account the database was created with — and prints every other
+// password once, when it is set. Writing a placeholder there is the honest
+// answer: the rest of the block is still right, and pretending otherwise would
+// hand somebody a string that fails to connect for a reason the string does
+// not mention.
+const PASSWORD_PLACEHOLDER = 'the password you set for this user';
+
+const blocks = computed(() => {
     const it = credentials.value;
 
-    const lines = [
-        `Database: ${it.database}`,
-        `Engine:   ${props.database.engine_label}`,
-        `Host:     ${it.host}`,
-        `Port:     ${it.port}`,
-        `Username: ${it.username}`,
-        `Password: ${it.password}`,
-    ];
+    // A database whose users could not be listed still has the one the panel
+    // made, and that is the block worth showing.
+    const accounts = props.users.length
+        ? props.users
+        : [{ name: it.username, primary: true }];
 
-    if (it.auth_db) lines.push(`Auth database: ${it.auth_db}`);
-    if (it.uri) lines.push(`Connection string: ${it.uri}`);
+    return accounts.map((user) => {
+        const known = user.name === it.username;
+        const password = known ? it.password : PASSWORD_PLACEHOLDER;
 
-    return lines.join('\n');
+        const lines = [
+            `Database: ${it.database}`,
+            `Engine:   ${props.database.engine_label}`,
+            `Host:     ${it.host}`,
+            `Port:     ${it.port}`,
+            `Username: ${user.name}`,
+            `Password: ${password}`,
+        ];
+
+        if (it.auth_db) lines.push(`Auth database: ${it.auth_db}`);
+
+        // The URI is the same shape with this account's name in it. Built here
+        // rather than taken from the record, which only has one.
+        if (it.uri) {
+            lines.push(
+                `Connection string: mongodb://${encodeURIComponent(user.name)}:` +
+                    `${known ? encodeURIComponent(password) : PASSWORD_PLACEHOLDER}` +
+                    `@${it.host}:${it.port}/${it.database}?authSource=${it.auth_db}`,
+            );
+        }
+
+        return {
+            name: user.name,
+            primary: user.primary,
+            known,
+            text: lines.join('\n'),
+        };
+    });
 });
 
 const copied = ref('');
@@ -199,20 +233,48 @@ const destroy = async () => {
             <div
                 class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2"
             >
-                <div class="flex items-center justify-between gap-3">
-                    <h3 class="font-semibold text-slate-800">Connection details</h3>
-                    <button
-                        @click="copy(details, 'all')"
-                        class="text-xs font-medium text-brand-600 hover:underline"
-                    >
-                        {{ copied === 'all' ? 'Copied' : 'Copy all' }}
-                    </button>
-                </div>
+                <h3 class="font-semibold text-slate-800">Connection details</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    One set per account with access to this database.
+                </p>
 
-                <pre
-                    class="mt-3 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
-                    >{{ details }}</pre
-                >
+                <div class="mt-4 space-y-5">
+                    <div v-for="block in blocks" :key="block.name">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <p class="break-all font-mono text-sm text-slate-700">
+                                {{ block.name }}
+                                <span
+                                    v-if="block.primary"
+                                    class="ml-1 font-sans text-xs text-brand-600"
+                                    >created with the database</span
+                                >
+                            </p>
+                            <button
+                                @click="copy(block.text, block.name)"
+                                class="text-xs font-medium text-brand-600 hover:underline"
+                            >
+                                {{ copied === block.name ? 'Copied' : 'Copy all' }}
+                            </button>
+                        </div>
+
+                        <pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
+                            >{{ block.text }}</pre
+                        >
+
+                        <!--
+                            Said on the block it applies to rather than once at
+                            the bottom: the panel keeps one password, and which
+                            one is the thing somebody needs to know while they
+                            are looking at a block that does not have it.
+                        -->
+                        <p v-if="!block.known" class="mt-2 text-xs text-slate-500">
+                            The panel does not store this account's password — it
+                            showed it once, when it was set. Set a new one from
+                            Users if it has been lost.
+                        </p>
+                    </div>
+                </div>
 
                 <!--
                     The address is the server's own, not loopback: both engines
@@ -220,13 +282,12 @@ const destroy = async () => {
                     credentials work from an application on this machine and
                     from one somewhere else.
                 -->
-                <p class="mt-3 text-xs text-slate-500">
+                <p class="mt-5 border-t border-slate-200 pt-4 text-xs text-slate-500">
                     <template v-if="isMySQL || database.engine === 'mongodb'">
                         These work from an application on this server and from
                         one anywhere else — the engine listens on every
-                        interface, so the password is the only thing keeping
-                        other people out. Change it below if it has been
-                        anywhere it should not.
+                        interface, so a password is the only thing keeping other
+                        people out.
                     </template>
                     <template v-else>
                         PostgreSQL listens on this machine only, so these work
