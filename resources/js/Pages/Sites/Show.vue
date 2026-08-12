@@ -635,18 +635,6 @@ const destroy = async () => {
                 </template>
             </p>
 
-            <p v-if="site.app" class="mt-4 text-xs text-slate-500">
-                <template v-if="site.app.token">
-                    {{ site.app.label }} — it is below.
-                </template>
-                <template v-else>
-                    {{ site.app.label }}
-                    <span class="font-mono text-slate-700">{{
-                        site.app.user
-                    }}</span>
-                    — the password is below.
-                </template>
-            </p>
         </div>
 
         <div
@@ -788,31 +776,86 @@ const destroy = async () => {
                 </dl>
             </div>
 
+            <!--
+                The login the panel generated when it installed the
+                application, which nobody else has a copy of. It used to be a
+                line under the live card saying the password was "below", and
+                then further down the page — so the page said where the thing
+                was instead of being where it was.
+            -->
             <div
-                v-if="site.manage_dns"
+                v-if="site.app"
                 class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6"
             >
-                <h3 class="font-semibold text-slate-800">DNS</h3>
-                <div v-if="site.manage_dns" class="mt-4 space-y-3 text-sm">
-                    <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Account</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_account }}
+                <h3 class="font-semibold text-slate-800">{{ site.app.label }}</h3>
+
+                <dl class="mt-4 space-y-3 text-sm">
+                    <div v-if="!site.app.token" class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Username</dt>
+                        <dd class="break-all text-right font-mono text-slate-800">
+                            {{ site.app.user }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Record</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_type }} to {{ site.dns_content }}
+                        <dt class="text-slate-500">
+                            {{ site.app.token ? 'Token' : 'Password' }}
+                        </dt>
+                        <dd class="min-w-0 break-all text-right">
+                            <span v-if="showSecrets" class="font-mono text-slate-800">{{
+                                site.app.password
+                            }}</span>
+                            <button
+                                v-else
+                                @click="showSecrets = true"
+                                class="text-brand-600 hover:underline"
+                            >
+                                reveal
+                            </button>
                         </dd>
                     </div>
-                    <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Proxied</dt>
-                        <dd class="text-slate-800">
-                            {{ site.dns_proxied ? 'yes' : 'no' }}
+                    <div v-if="site.app.websocket" class="flex justify-between gap-4">
+                        <dt class="text-slate-500">WebSocket</dt>
+                        <dd class="break-all text-right font-mono text-xs text-slate-700">
+                            {{ site.app.websocket }}
                         </dd>
                     </div>
-                </div>
+                </dl>
+
+                <a
+                    :href="site.app.url"
+                    target="_blank"
+                    rel="noopener"
+                    class="mt-4 inline-block rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+                >
+                    Open {{ site.type_label }}
+                </a>
+
+                <p v-if="site.app.websocket" class="mt-4 text-xs text-slate-500">
+                    Sign in with these and the dashboard connects on its own —
+                    nginx does the authenticating and tells the gateway who you
+                    are, so there is no token to paste. The WebSocket address is
+                    only needed if you point some other client at the gateway.
+                </p>
+
+                <!--
+                    Said here because OpenClaw's own dialog cannot say it:
+                    "Connect to mobile" fails with GatewayRequestError, which
+                    reads as a broken install rather than as the one thing this
+                    arrangement gives up.
+                -->
+                <p
+                    v-if="site.app.websocket"
+                    class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500"
+                >
+                    <span class="font-medium text-slate-700"
+                        >Connect to mobile does not work here.</span
+                    >
+                    A setup code has to carry a gateway token or password for the
+                    phone to log in with, and this gateway has neither on purpose
+                    — the password above is checked by nginx in front of it,
+                    which is what lets the dashboard open without asking you for
+                    anything.
+                </p>
             </div>
 
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
