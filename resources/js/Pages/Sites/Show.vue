@@ -72,10 +72,78 @@ const savePHP = () =>
     });
 
 // ---- Cron: the whole list is posted, so removing a row removes the line.
+//
+// Five fields separated by spaces is a language, and somebody who wants a
+// backup at three in the morning should not have to learn it. So the schedule
+// is a menu of the ones people actually ask for, and the five boxes are still
+// there behind Custom for the ones they do not.
+const SCHEDULES = [
+    { label: 'Every minute', value: '* * * * *' },
+    { label: 'Every 5 minutes', value: '*/5 * * * *' },
+    { label: 'Every 15 minutes', value: '*/15 * * * *' },
+    { label: 'Every 30 minutes', value: '*/30 * * * *' },
+    { label: 'Every hour', value: '0 * * * *' },
+    { label: 'Every 6 hours', value: '0 */6 * * *' },
+    { label: 'Every day at midnight', value: '0 0 * * *' },
+    { label: 'Every day at 3am', value: '0 3 * * *' },
+    { label: 'Every Monday at 3am', value: '0 3 * * 1' },
+    { label: 'Every Sunday at midnight', value: '0 0 * * 0' },
+    { label: 'First of the month at 3am', value: '0 3 1 * *' },
+];
+
 const jobs = ref(props.cronJobs.map((job) => ({ ...job })));
 
 const addJob = () => jobs.value.push({ schedule: '0 3 * * *', command: '' });
 const removeJob = (index) => jobs.value.splice(index, 1);
+
+// A row is on a preset when its expression is one of them, and custom
+// otherwise — including a line somebody wrote into the file by hand, which
+// keeps its own schedule and shows the boxes.
+const presetFor = (job) =>
+    SCHEDULES.some((entry) => entry.value === job.schedule) ? job.schedule : 'custom';
+
+const pickPreset = (job, value) => {
+    if (value === 'custom') return;
+
+    job.schedule = value;
+};
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// The expression back in words, so the row says what it will do rather than
+// what it is set to. Only the shapes people write: anything else is left as it
+// is, which is more honest than guessing at it.
+const describe = (schedule) => {
+    const parts = String(schedule ?? '').trim().split(/\s+/);
+
+    if (parts.length !== 5) return 'Five fields: minute, hour, day, month, weekday.';
+
+    const [minute, hour, day, month, weekday] = parts;
+    const known = SCHEDULES.find((entry) => entry.value === parts.join(' '));
+
+    if (known) return known.label;
+
+    const at = (h, m) =>
+        `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+    const every = /^\*\/(\d+)$/;
+
+    if (every.test(minute) && hour === '*' && day === '*' && month === '*' && weekday === '*')
+        return `Every ${minute.match(every)[1]} minutes`;
+
+    if (/^\d+$/.test(minute) && hour === '*' && day === '*' && month === '*' && weekday === '*')
+        return `Every hour, at ${minute} minutes past`;
+
+    if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && month === '*') {
+        if (day === '*' && weekday === '*') return `Every day at ${at(hour, minute)}`;
+        if (day === '*' && /^[0-6]$/.test(weekday))
+            return `Every ${DAYS[Number(weekday)]} at ${at(hour, minute)}`;
+        if (weekday === '*' && /^\d+$/.test(day))
+            return `Day ${day} of each month, at ${at(hour, minute)}`;
+    }
+
+    return 'Custom schedule.';
+};
 
 const saveJobs = () =>
     router.post(
@@ -83,275 +151,6 @@ const saveJobs = () =>
         { jobs: JSON.stringify(jobs.value) },
         { preserveScroll: true },
     );
-
-// ---- File manager.
-//
-// Everything here names a path relative to the site's own directory, and the
-// panel resolves it against that root and refuses anything that leaves — so a
-// path typed into this page cannot reach the rest of the machine.
-const files = ref({ path: '/', entries: [], error: null });
-const filesLoading = ref(false);
-const editing = ref(null);
-
-const loadFiles = async (where = '/') => {
-    filesLoading.value = true;
-
-    try {
-        const { data } = await window.axios.get(route('sites.files', props.site.id), {
-            params: { path: where },
-        });
-
-        files.value = { path: data.path ?? where, entries: data.entries ?? [], error: data.error ?? null };
-        selected.value = [];
-        anchor.value = null;
-    } catch {
-        files.value = { path: where, entries: [], error: 'The folder could not be read.' };
-    } finally {
-        filesLoading.value = false;
-    }
-};
-
-// The path split into the links above the listing.
-const crumbs = computed(() => {
-    const parts = files.value.path.split('/').filter(Boolean);
-    const trail = [{ name: props.site.domain, path: '/' }];
-
-    parts.forEach((part, index) => {
-        trail.push({ name: part, path: '/' + parts.slice(0, index + 1).join('/') });
-    });
-
-    return trail;
-});
-
-const parentPath = computed(() => {
-    const parts = files.value.path.split('/').filter(Boolean);
-    parts.pop();
-
-    return '/' + parts.join('/');
-});
-
-const openEntry = (entry) => {
-    if (entry.directory) return loadFiles(entry.path);
-
-    return openEditor(entry);
-};
-
-const openEditor = async (entry) => {
-    editing.value = { path: entry.path, contents: '', loading: true, error: null };
-
-    try {
-        const { data } = await window.axios.get(route('sites.file', props.site.id), {
-            params: { path: entry.path },
-        });
-
-        editing.value = {
-            path: entry.path,
-            contents: data.contents ?? '',
-            loading: false,
-            error: data.error ?? null,
-        };
-    } catch {
-        editing.value = { path: entry.path, contents: '', loading: false,
-            error: 'That file could not be opened.' };
-    }
-};
-
-const saveFile = async () => {
-    const { data } = await window.axios.post(route('sites.file.save', props.site.id), {
-        path: editing.value.path,
-        contents: editing.value.contents,
-    });
-
-    if (data.error) {
-        editing.value.error = data.error;
-
-        return;
-    }
-
-    editing.value = null;
-    loadFiles(files.value.path);
-};
-
-// One endpoint for new, rename and delete: three verbs against one path, and
-// three routes would be three places to get the path check wrong.
-const fileAction = async (action, entry, extra = {}) => {
-    const { data } = await window.axios.post(route('sites.files.action', props.site.id), {
-        action,
-        path: entry,
-        ...extra,
-    });
-
-    if (data.error) {
-        files.value.error = data.error;
-
-        return;
-    }
-
-    files.value.error = null;
-    loadFiles(files.value.path);
-};
-
-const newFolder = () => {
-    const name = window.prompt('Name for the new folder');
-    if (!name) return;
-
-    fileAction('folder', `${files.value.path}/${name}`);
-};
-
-const newFile = () => {
-    const name = window.prompt('Name for the new file');
-    if (!name) return;
-
-    fileAction('file', `${files.value.path}/${name}`);
-};
-
-const renameEntry = (entry) => {
-    const name = window.prompt(`Rename ${entry.name} to`, entry.name);
-    if (!name || name === entry.name) return;
-
-    fileAction('rename', entry.path, { to: `${files.value.path}/${name}` });
-};
-
-const deleteEntry = async (entry) => {
-    const go = await confirmDanger(
-        `Delete ${entry.name}?`,
-        entry.directory
-            ? 'The folder and everything in it is removed.'
-            : 'The file is removed.',
-        'Delete',
-    );
-
-    if (!go) return;
-
-    fileAction('delete', entry.path);
-};
-
-const humanSize = (bytes) => {
-    if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
-    if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
-    if (bytes >= 1 << 10) return `${Math.round(bytes / (1 << 10))} KB`;
-
-    return `${bytes} B`;
-};
-
-// ---- Selection, the way a file manager does it: a click picks one, a
-// modifier adds or extends, and a double click opens. No checkbox column —
-// Finder has none, and the toolbar reads the selection just as well without.
-const selected = ref([]);
-const anchor = ref(null);
-
-const isSelected = (entry) => selected.value.includes(entry.name);
-
-const selectEntry = (entry, event) => {
-    const names = files.value.entries.map((one) => one.name);
-
-    if (event.shiftKey && anchor.value !== null) {
-        const from = names.indexOf(anchor.value);
-        const to = names.indexOf(entry.name);
-
-        if (from !== -1 && to !== -1) {
-            const [start, end] = from < to ? [from, to] : [to, from];
-            selected.value = names.slice(start, end + 1);
-
-            return;
-        }
-    }
-
-    if (event.metaKey || event.ctrlKey) {
-        selected.value = isSelected(entry)
-            ? selected.value.filter((name) => name !== entry.name)
-            : [...selected.value, entry.name];
-        anchor.value = entry.name;
-
-        return;
-    }
-
-    selected.value = [entry.name];
-    anchor.value = entry.name;
-};
-
-const downloadURL = (entry) =>
-    `${route('sites.download', props.site.id)}?path=${encodeURIComponent(entry.path)}`;
-
-const zipSelected = async () => {
-    if (!selected.value.length) return;
-
-    const name = window.prompt(
-        'Name for the archive',
-        selected.value.length === 1 ? selected.value[0] : 'archive',
-    );
-
-    if (!name) return;
-
-    await fileAction('zip', files.value.path, {
-        names: JSON.stringify(selected.value),
-        name,
-    });
-
-    selected.value = [];
-};
-
-const deleteSelected = async () => {
-    if (!selected.value.length) return;
-
-    const go = await confirmDanger(
-        `Delete ${selected.value.length} item${selected.value.length === 1 ? '' : 's'}?`,
-        'Folders are removed with everything in them.',
-        'Delete',
-    );
-
-    if (!go) return;
-
-    for (const name of selected.value) {
-        await fileAction('delete', `${files.value.path}/${name}`);
-    }
-
-    selected.value = [];
-};
-
-// What the toolbar acts on when exactly one thing is picked.
-const onlySelected = computed(() =>
-    selected.value.length === 1
-        ? files.value.entries.find((entry) => entry.name === selected.value[0])
-        : null,
-);
-
-// ---- Upload. Streamed as multipart so a large file is not held in memory at
-// either end, and the folder it lands in is the one on screen.
-const uploading = ref(false);
-const uploadInput = ref(null);
-const dragging = ref(false);
-
-const uploadFiles = async (list) => {
-    if (!list || !list.length) return;
-
-    const body = new FormData();
-    body.append('path', files.value.path);
-
-    for (const file of list) body.append('files[]', file, file.name);
-
-    uploading.value = true;
-
-    try {
-        const { data } = await window.axios.post(
-            route('sites.upload', props.site.id),
-            body,
-        );
-
-        files.value.error = data.error ?? null;
-    } catch {
-        files.value.error = 'The upload did not finish.';
-    } finally {
-        uploading.value = false;
-        if (uploadInput.value) uploadInput.value.value = '';
-        loadFiles(files.value.path);
-    }
-};
-
-const onDrop = (event) => {
-    dragging.value = false;
-    uploadFiles(event.dataTransfer?.files);
-};
 
 // ---- SSH and SFTP accounts.
 //
@@ -1289,30 +1088,67 @@ const destroy = async () => {
                 </button>
             </div>
 
-            <div v-if="jobs.length" class="mt-5 space-y-3">
+            <div v-if="jobs.length" class="mt-5 space-y-4">
                 <div
                     v-for="(job, index) in jobs"
                     :key="index"
-                    class="flex flex-wrap items-start gap-2"
+                    class="rounded-xl border border-slate-200 p-4"
                 >
-                    <input
-                        v-model="job.schedule"
-                        type="text"
-                        placeholder="0 3 * * *"
-                        class="w-40 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
-                    <input
-                        v-model="job.command"
-                        type="text"
-                        placeholder="php artisan schedule:run"
-                        class="min-w-0 flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
-                    <button
-                        @click="removeJob(index)"
-                        class="px-2 py-2 text-sm text-rose-600 hover:underline"
+                    <div class="flex flex-wrap items-center gap-2">
+                        <select
+                            :value="presetFor(job)"
+                            @change="pickPreset(job, $event.target.value)"
+                            class="w-56 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        >
+                            <option
+                                v-for="entry in SCHEDULES"
+                                :key="entry.value"
+                                :value="entry.value"
+                            >
+                                {{ entry.label }}
+                            </option>
+                            <option value="custom">Custom…</option>
+                        </select>
+
+                        <input
+                            v-model="job.command"
+                            type="text"
+                            placeholder="php artisan schedule:run"
+                            class="min-w-0 flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+
+                        <button
+                            @click="removeJob(index)"
+                            class="px-2 py-2 text-sm text-rose-600 hover:underline"
+                        >
+                            Remove
+                        </button>
+                    </div>
+
+                    <!--
+                        The five fields, for the schedules the menu does not
+                        have. Shown only when the row is on one of those, so the
+                        common case is a sentence and not a puzzle.
+                    -->
+                    <div
+                        v-if="presetFor(job) === 'custom'"
+                        class="mt-3 flex flex-wrap items-center gap-2"
                     >
-                        Remove
-                    </button>
+                        <input
+                            v-model="job.schedule"
+                            type="text"
+                            placeholder="0 3 * * *"
+                            class="w-56 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                        <span class="text-xs text-slate-500">
+                            minute · hour · day of month · month · day of week
+                        </span>
+                    </div>
+
+                    <p class="mt-2 text-xs text-slate-500">
+                        {{ describe(job.schedule) }}
+                        <span class="font-mono text-slate-400">{{ job.schedule }}</span>
+                    </p>
                 </div>
             </div>
 
@@ -1328,7 +1164,6 @@ const destroy = async () => {
             </button>
 
             <p class="mt-3 text-xs text-slate-500">
-                Five fields — minute, hour, day of month, month, day of week.
                 The whole list is written at once, so removing a row here
                 removes the line on the machine.
             </p>
