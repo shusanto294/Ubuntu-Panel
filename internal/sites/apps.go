@@ -1088,8 +1088,19 @@ proxy["userHeader"] = "x-auth-request-email"
 # token. Which is what an operator was being asked for.
 proxy["allowLoopback"] = True
 
-# Mutually exclusive with trusted-proxy. A gateway configured with both says
-# so and exits, once every ten seconds, for ever.
+# A token is mutually exclusive with trusted-proxy: a gateway configured with
+# both says so and exits, once every ten seconds, for ever.
+#
+# A password is allowed alongside it, and setting one would stop the mobile
+# pairing dialog failing with "Gateway auth is not configured (no token or
+# password)" — the setup code only checks that one of the two exists. Do not.
+# The phone it hands the code to would still be refused: the gateway only
+# accepts that password on a request it judges local and direct, which means
+# loopback and no forwarded headers, and every request through this nginx
+# carries X-Forwarded-For. The code would be a QR nobody can use.
+#
+# Mobile pairing and a browser that never asks for a token are one gateway's
+# two mutually exclusive settings, and this one is set for the browser.
 auth.pop("token", None)
 auth.pop("password", None)
 

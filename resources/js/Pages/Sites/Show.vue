@@ -503,6 +503,31 @@ const destroy = async () => {
                         paste. The WebSocket URL above is only needed if you
                         point some other client at the gateway.
                     </p>
+
+                    <!--
+                        Said here because OpenClaw's own dialog cannot say it:
+                        "Connect to mobile" fails with GatewayRequestError:
+                        Gateway auth is not configured (no token or password),
+                        which reads as a broken install rather than as the one
+                        thing this arrangement gives up.
+                    -->
+                    <p
+                        v-if="site.app.websocket"
+                        class="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500"
+                    >
+                        <span class="font-medium text-slate-700"
+                            >Connect to mobile does not work on this site.</span
+                        >
+                        A setup code has to carry a gateway token or password for
+                        the phone to log in with, and this gateway has neither on
+                        purpose — the site password you just used is checked by
+                        nginx in front of it, which is what lets the dashboard
+                        open without asking you for anything. The error the
+                        dialog shows,
+                        <span class="font-mono">Gateway auth is not configured</span
+                        >, is that and nothing worse. The dashboard, and
+                        everything in it, is unaffected.
+                    </p>
                 </div>
             </div>
 
