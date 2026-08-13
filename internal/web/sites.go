@@ -1095,26 +1095,9 @@ func (a *App) sitesOpenClaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Any browser waiting to pair, approved first.
-	//
-	// The gateway asks a browser it has not seen before to be approved at a
-	// terminal on the host — which is a terminal whoever is reading the panel
-	// was never sent to. Pressing this button is that approval: it approves
-	// what is waiting at the moment it is pressed, which is the request the
-	// last press of it caused, and nothing else.
-	approved := a.Sites.ApproveOpenClawDevices(site)
-
 	result := proc.Run(sites.OpenClawDashboardCommand(site), 90*time.Second)
 
 	if link := sites.OpenClawDashboardURL(site, result.Output); link != "" {
-		if approved > 0 {
-			if sess := session.FromContext(r.Context()); sess != nil {
-				sess.Flash("success", fmt.Sprintf(
-					"Approved %d browser%s waiting to pair with the gateway.",
-					approved, plural(approved)))
-			}
-		}
-
 		http.Redirect(w, r, link, http.StatusSeeOther)
 
 		return
@@ -1136,44 +1119,6 @@ func (a *App) sitesOpenClaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/sites/"+itoa(site.ID), http.StatusSeeOther)
-}
-
-// sitesOpenClawApprove approves the browsers waiting to pair, without opening
-// anything.
-//
-// For the case the dashboard puts somebody in: its pairing screen is on one
-// tab, the panel on another, and what is needed is the approval and then
-// Reconnect on the screen already open — not a second dashboard.
-func (a *App) sitesOpenClawApprove(w http.ResponseWriter, r *http.Request) {
-	sess := session.FromContext(r.Context())
-
-	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
-	if err != nil || site.Type != "openclaw" {
-		a.notFoundError(w, r, "No such site.")
-
-		return
-	}
-
-	if approved := a.Sites.ApproveOpenClawDevices(site); approved > 0 {
-		sess.Flash("success", fmt.Sprintf(
-			"Approved %d browser%s. Press Reconnect on the dashboard.",
-			approved, plural(approved)))
-	} else {
-		sess.Flash("status", "No browser is waiting to pair. Open the dashboard first — "+
-			"the gateway asks for approval the moment a browser it has not seen tries to "+
-			"connect.")
-	}
-
-	inertia.Back(w, r, "/sites/"+itoa(site.ID))
-}
-
-// plural is an s, or nothing.
-func plural(count int) string {
-	if count == 1 {
-		return ""
-	}
-
-	return "s"
 }
 
 // lastLines is the tail of a command's output, for a log line that has to say

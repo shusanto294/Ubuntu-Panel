@@ -533,33 +533,3 @@ func TestOpenClawDashboardLinkIsReadThroughTerminalColour(t *testing.T) {
 	}
 }
 
-// The gateway asks a browser it has not seen before to be approved at a
-// terminal on the host. The panel is a terminal, and the browser asking is the
-// one the operator just opened — but only the ones actually waiting may be
-// approved, and nothing else in the list.
-func TestOnlyWaitingBrowsersAreApproved(t *testing.T) {
-	output := "ID                                    STATUS    LAST SEEN\n" +
-		"6831c46d-3188-43be-90b8-0d51264c5ac1  pending   just now\n" +
-		"11111111-2222-3333-4444-555555555555  approved  2 days ago\n" +
-		"99999999-8888-7777-6666-555555555555  revoked   last week\n"
-
-	ids := PendingDeviceIDs(output)
-
-	if len(ids) != 1 || ids[0] != "6831c46d-3188-43be-90b8-0d51264c5ac1" {
-		t.Fatalf("pending devices are %v", ids)
-	}
-
-	// The same list in prose, in colour, saying it a different way.
-	prose := "\x1b[33mDevice 6831c46d-3188-43be-90b8-0d51264c5ac1 is waiting for approval\x1b[0m\n" +
-		"Device 11111111-2222-3333-4444-555555555555 approved on 2026-08-01\n"
-
-	if ids := PendingDeviceIDs(prose); len(ids) != 1 ||
-		ids[0] != "6831c46d-3188-43be-90b8-0d51264c5ac1" {
-		t.Fatalf("pending devices are %v", ids)
-	}
-
-	// Nothing waiting is nothing approved, not everything approved.
-	if ids := PendingDeviceIDs("No devices.\n"); len(ids) != 0 {
-		t.Fatalf("an empty list produced %v", ids)
-	}
-}
