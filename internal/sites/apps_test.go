@@ -532,4 +532,3 @@ func TestOpenClawDashboardLinkIsReadThroughTerminalColour(t *testing.T) {
 		t.Fatalf("link is %q", link)
 	}
 }
-
