@@ -50,10 +50,15 @@ type Site struct {
 	// defaults are what the pool was configured with.
 	PHPSettings string
 
-	// CacheEnabled turns on nginx's page cache for this site, and CacheTTL is
-	// how long a cached page is served before nginx asks the application
-	// again. Off unless somebody asked for it: a cache in front of a site
-	// whose pages are personal serves one visitor's page to the next.
+	// CacheMode is which cache this site was given: "off", "nginx" for the
+	// page cache in front of the application, or "redis" for the object cache
+	// behind it. CacheEnabled is the nginx half of that, kept as its own
+	// column because the vhost is written from it.
+	//
+	// CacheTTL is how long a cached page is served before nginx asks the
+	// application again, and means nothing to Redis, which holds what it is
+	// given until the application replaces it.
+	CacheMode    string
 	CacheEnabled bool
 	CacheTTL     string
 
@@ -69,7 +74,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	app_port, start_command, build_command, repository, branch,
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
 	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
-	php_settings, cache_enabled, cache_ttl, created_at`
+	php_settings, cache_enabled, cache_ttl, cache_mode, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -81,7 +86,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var dnsAccountID, databaseID, userID, appPort nullInt
 	var aliases, nodeVersion, lastError, startCommand, buildCommand text
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
-	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL text
+	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL, cacheMode text
 	var cacheEnabled nullInt
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
@@ -90,7 +95,8 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&startCommand, &buildCommand, &repository, &site.Branch,
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
-		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &site.CreatedAt)
+		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode,
+		&site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -114,6 +120,17 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.PHPSettings = phpSettings.String()
 	site.CacheEnabled = cacheEnabled.Int64 == 1
 	site.CacheTTL = cacheTTL.String()
+	site.CacheMode = cacheMode.String()
+
+	// A site from before the choice existed has the page cache or nothing, and
+	// says so rather than reading as "off" with the cache running.
+	if site.CacheMode == "" {
+		site.CacheMode = "off"
+
+		if site.CacheEnabled {
+			site.CacheMode = "nginx"
+		}
+	}
 
 	site.Aliases = decodeStringList(aliases.String())
 
@@ -241,12 +258,13 @@ func (s *Store) SetSitePHPSettings(id int64, encoded string) {
 	           WHERE id = ?`, nullText(encoded), id)
 }
 
-// SetSiteCache stores whether nginx caches this site's pages, and for how
-// long. The vhost and the cache's own conf.d file are written from it, so this
-// is only part of the change.
-func (s *Store) SetSiteCache(id int64, enabled bool, ttl string) {
-	s.db.Exec(`UPDATE sites SET cache_enabled = ?, cache_ttl = ?, updated_at = datetime('now')
-	           WHERE id = ?`, enabled, nullText(ttl), id)
+// SetSiteCache stores which cache the site was given and how long a page
+// lives. The vhost, the conf.d zone and — for Redis — the site's own
+// configuration are written from it, so this is only part of the change.
+func (s *Store) SetSiteCache(id int64, mode, ttl string) {
+	s.db.Exec(`UPDATE sites SET cache_mode = ?, cache_enabled = ?, cache_ttl = ?,
+	           updated_at = datetime('now') WHERE id = ?`,
+		mode, mode == "nginx", nullText(ttl), id)
 }
 
 // SetSiteWebDirectory moves the document root inside the site directory.
@@ -528,6 +546,7 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		summary["build_command"] = site.BuildCommand
 		summary["service_name"] = serviceName
 		summary["web_directory"] = site.WebDirectory
+		summary["cache_mode"] = site.CacheMode
 		summary["cache_enabled"] = site.CacheEnabled
 		summary["cache_ttl"] = site.CacheTTL
 		summary["wp_admin_user"] = site.WPAdminUser

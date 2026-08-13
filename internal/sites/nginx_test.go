@@ -349,3 +349,52 @@ func TestCacheConfigDeclaresTheZoneTheVhostNames(t *testing.T) {
 		t.Fatalf("the zone name %q is not one nginx will accept", CacheZone(site))
 	}
 }
+
+func TestCacheDefaultsToTwelveHours(t *testing.T) {
+	site := wordpress()
+
+	if CacheTTLOf(site) != "12h" {
+		t.Fatalf("a site with no lifetime set caches for %s", CacheTTLOf(site))
+	}
+
+	// A value that is no longer offered falls back rather than reaching nginx.
+	site.CacheTTL = "3 hours"
+
+	if CacheTTLOf(site) != DefaultCacheTTL {
+		t.Fatal("a lifetime nginx would refuse was passed through to the vhost")
+	}
+}
+
+// Every site on the machine shares one Redis. Without a prefix the second
+// WordPress install reads the first one's cached options.
+func TestRedisKeysAreNamespacedPerSite(t *testing.T) {
+	one, two := wordpress(), wordpress()
+	two.Domain = "other.example.com"
+
+	if RedisPrefix(one) == RedisPrefix(two) {
+		t.Fatal("two sites share one Redis namespace")
+	}
+
+	if strings.Contains(RedisPrefix(one), ".") {
+		t.Fatalf("the prefix %q carries the domain's dots into a Redis key", RedisPrefix(one))
+	}
+}
+
+// The panel wires WordPress into Redis because WordPress has a documented
+// drop-in for it. Editing somebody's Laravel .env or Node source to do the
+// same is how a site boots into a stack trace.
+func TestRedisIsOfferedOnlyWherePanelCanWireIt(t *testing.T) {
+	site := wordpress()
+
+	if !RedisSupported(site) {
+		t.Fatal("WordPress is not offered the object cache")
+	}
+
+	for _, kind := range []string{"laravel", "nextjs", "static", "php"} {
+		site.Type = kind
+
+		if RedisSupported(site) {
+			t.Fatalf("a %s site is offered an object cache the panel cannot wire", kind)
+		}
+	}
+}

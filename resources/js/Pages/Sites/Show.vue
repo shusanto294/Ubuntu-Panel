@@ -78,8 +78,8 @@ const savePHP = () =>
 // nginx keeps the page it built and serves the copy to the next visitor, so a
 // second request for the same page never reaches PHP or the application at
 // all. The two things worth deciding are whether it happens and for how long.
-const cacheOn = ref(!!props.cache.enabled);
-const cacheTTL = ref(props.cache.ttl ?? '10m');
+const cacheMode = ref(props.cache.mode ?? 'off');
+const cacheTTL = ref(props.cache.ttl ?? '12h');
 const cacheWorking = ref(false);
 
 const cacheSubmit = (extra) => {
@@ -92,7 +92,7 @@ const cacheSubmit = (extra) => {
 };
 
 const saveCache = () =>
-    cacheSubmit({ action: 'save', enabled: cacheOn.value ? '1' : '0', ttl: cacheTTL.value });
+    cacheSubmit({ action: 'save', mode: cacheMode.value, ttl: cacheTTL.value });
 
 // Turning the cache off does not empty it, and publishing a change is exactly
 // when somebody wants it gone — so this is its own button rather than a
@@ -1436,55 +1436,155 @@ const destroy = async () => {
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
                 <h3 class="font-semibold text-slate-800">Page cache</h3>
 
-                <template v-if="cache.supported">
+                <template v-if="cache.supported || cache.redis_supported">
                     <p class="mt-2 text-sm text-slate-500">
-                        nginx stores the page
-                        {{ cache.proxied ? 'the application' : 'PHP' }} built and
-                        serves that copy to whoever asks for it next. A page
-                        already in the cache costs a file read instead of a
-                        render.
+                        Two caches, and they are not the same thing. One keeps
+                        the finished page; the other keeps what the site looked
+                        up while building it.
                     </p>
 
-                    <label class="mt-5 flex items-start gap-3 text-sm">
-                        <input
-                            type="checkbox"
-                            v-model="cacheOn"
-                            class="mt-0.5 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
-                        />
-                        <span>
-                            <span class="font-medium text-slate-800">
-                                Cache this site's pages
-                            </span>
-                            <span class="block text-xs text-slate-500">
-                                Off by default, because a cache in front of a
-                                site that shows people their own account is a
-                                cache that shows them somebody else's.
-                            </span>
-                        </span>
-                    </label>
-
-                    <div class="mt-5">
-                        <label class="block text-sm font-medium text-slate-700">
-                            Keep a page for
-                        </label>
-                        <select
-                            v-model="cacheTTL"
-                            class="mt-1 w-56 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    <div class="mt-5 space-y-3">
+                        <!--
+                            Radio buttons, not two switches. Running both means
+                            the page cache answers first and the object cache
+                            never gets asked — so the second one would be a
+                            setting that quietly did nothing.
+                        -->
+                        <label
+                            class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
+                            :class="
+                                cacheMode === 'off'
+                                    ? 'border-brand-300 bg-brand-50/60'
+                                    : 'border-slate-200 hover:bg-slate-50'
+                            "
                         >
-                            <option
-                                v-for="entry in cache.lifetimes"
-                                :key="entry.value"
-                                :value="entry.value"
-                            >
-                                {{ entry.label }}
-                            </option>
-                        </select>
-                        <p class="mt-2 text-xs text-slate-500">
-                            How long before nginx asks the site to build the
-                            page again. An expired page is still served
-                            immediately and refreshed behind the visitor, so
-                            nobody waits for it.
-                        </p>
+                            <input
+                                type="radio"
+                                value="off"
+                                v-model="cacheMode"
+                                class="mt-0.5 border-slate-300 text-brand-500 focus:ring-brand-500"
+                            />
+                            <span>
+                                <span class="font-medium text-slate-800">No cache</span>
+                                <span class="block text-xs text-slate-500">
+                                    Every request is built from scratch. Right
+                                    while a site is being worked on, and for one
+                                    that changes on every view.
+                                </span>
+                            </span>
+                        </label>
+
+                        <label
+                            v-if="cache.supported"
+                            class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
+                            :class="
+                                cacheMode === 'nginx'
+                                    ? 'border-brand-300 bg-brand-50/60'
+                                    : 'border-slate-200 hover:bg-slate-50'
+                            "
+                        >
+                            <input
+                                type="radio"
+                                value="nginx"
+                                v-model="cacheMode"
+                                class="mt-0.5 border-slate-300 text-brand-500 focus:ring-brand-500"
+                            />
+                            <span class="min-w-0">
+                                <span class="font-medium text-slate-800">
+                                    nginx page cache
+                                </span>
+                                <span class="block text-xs text-slate-500">
+                                    nginx stores the page
+                                    {{ cache.proxied ? 'the application' : 'PHP' }}
+                                    built and serves that copy to whoever asks
+                                    next, so the second request never reaches
+                                    the site at all. The fastest of the two, and
+                                    the one with rules about who may not have it.
+                                </span>
+
+                                <span
+                                    v-if="cacheMode === 'nginx'"
+                                    class="mt-3 block"
+                                >
+                                    <span class="block text-xs font-medium text-slate-600">
+                                        Keep a page for
+                                    </span>
+                                    <select
+                                        v-model="cacheTTL"
+                                        class="mt-1 w-52 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                                    >
+                                        <option
+                                            v-for="entry in cache.lifetimes"
+                                            :key="entry.value"
+                                            :value="entry.value"
+                                        >
+                                            {{ entry.label }}
+                                        </option>
+                                    </select>
+                                    <span class="mt-2 block text-xs text-slate-500">
+                                        How long before nginx asks the site to
+                                        build the page again. An expired page is
+                                        still served immediately and refreshed
+                                        behind the visitor, so nobody waits for
+                                        it — and Empty the cache is there for
+                                        when you have just published something.
+                                    </span>
+                                </span>
+                            </span>
+                        </label>
+
+                        <label
+                            v-if="cache.redis_supported"
+                            class="flex items-start gap-3 rounded-xl border p-4 transition"
+                            :class="[
+                                cacheMode === 'redis'
+                                    ? 'border-brand-300 bg-brand-50/60'
+                                    : 'border-slate-200 hover:bg-slate-50',
+                                cache.redis_installed
+                                    ? 'cursor-pointer'
+                                    : 'cursor-not-allowed opacity-60',
+                            ]"
+                        >
+                            <input
+                                type="radio"
+                                value="redis"
+                                v-model="cacheMode"
+                                :disabled="!cache.redis_installed"
+                                class="mt-0.5 border-slate-300 text-brand-500 focus:ring-brand-500"
+                            />
+                            <span class="min-w-0">
+                                <span class="font-medium text-slate-800">
+                                    Redis object cache
+                                </span>
+                                <span class="block text-xs text-slate-500">
+                                    WordPress keeps what it looked up — options,
+                                    queries, transients — in Redis instead of
+                                    asking MariaDB the same questions on every
+                                    view. Every visitor still gets their own
+                                    page, so this is the one for a shop, a
+                                    members' area, or anything behind a login.
+                                </span>
+                                <span
+                                    v-if="!cache.redis_installed"
+                                    class="mt-2 block text-xs font-medium text-amber-700"
+                                >
+                                    Redis is not installed on this machine.
+                                    Install it from the Apps page first.
+                                </span>
+                                <span
+                                    v-else-if="cacheMode === 'redis'"
+                                    class="mt-2 block text-xs text-slate-500"
+                                >
+                                    The panel installs the Redis Object Cache
+                                    plugin, points wp-config.php at Redis with
+                                    the password it was configured with, and
+                                    installs the drop-in. This site's keys are
+                                    prefixed
+                                    <span class="font-mono">{{ cache.redis_prefix }}</span>
+                                    so they cannot be read by another site.
+                                </span>
+                            </span>
+                        </label>
                     </div>
 
                     <div class="mt-6 flex flex-wrap items-center gap-2">
@@ -1533,7 +1633,36 @@ const destroy = async () => {
             </div>
 
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                <h3 class="font-semibold text-slate-800">What is not cached</h3>
+                <h3 class="font-semibold text-slate-800">
+                    {{ cache.mode === 'redis' ? 'About the object cache' : 'What is not cached' }}
+                </h3>
+
+                <template v-if="cache.mode === 'redis'">
+                    <ul class="mt-4 space-y-3 text-sm text-slate-600">
+                        <li>
+                            Every page is still built for the visitor who asked
+                            for it, so nothing personal is ever served to
+                            somebody else.
+                        </li>
+                        <li>
+                            What is kept is what WordPress looked up on the way:
+                            options, meta, and the results of queries it marks
+                            as cacheable.
+                        </li>
+                        <li>
+                            Keys are prefixed
+                            <span class="font-mono">{{ cache.redis_prefix }}</span
+                            >, so Empty the cache clears this site and leaves
+                            every other site on the machine alone.
+                        </li>
+                        <li>
+                            Redis holds what it is given until the application
+                            replaces it — there is no lifetime to set.
+                        </li>
+                    </ul>
+                </template>
+
+                <template v-else>
 
                 <ul class="mt-4 space-y-3 text-sm text-slate-600">
                     <li>Anything posted — every form, every comment, every login.</li>
@@ -1552,22 +1681,35 @@ const destroy = async () => {
                     stored, <span class="font-mono">BYPASS</span> was one of the
                     above.
                 </p>
+                </template>
 
                 <dl class="mt-5 space-y-3 border-t border-slate-200 pt-4 text-sm">
                     <div class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Status</dt>
+                        <dt class="text-slate-500">Cache</dt>
                         <dd class="text-slate-800">
-                            {{ cache.enabled ? 'On' : 'Off' }}
+                            {{
+                                cache.mode === 'nginx'
+                                    ? 'nginx page cache'
+                                    : cache.mode === 'redis'
+                                      ? 'Redis object cache'
+                                      : 'None'
+                            }}
                         </dd>
                     </div>
-                    <div v-if="cache.enabled" class="flex justify-between gap-4">
+                    <div v-if="cache.mode === 'nginx'" class="flex justify-between gap-4">
                         <dt class="text-slate-500">Lifetime</dt>
                         <dd class="text-slate-800">{{ cache.ttl }}</dd>
                     </div>
-                    <div class="min-w-0">
+                    <div v-if="cache.mode !== 'redis'" class="min-w-0">
                         <dt class="text-slate-500">Stored in</dt>
                         <dd class="mt-1 break-all font-mono text-xs text-slate-700">
                             {{ cache.path }}
+                        </dd>
+                    </div>
+                    <div v-else class="min-w-0">
+                        <dt class="text-slate-500">Stored in</dt>
+                        <dd class="mt-1 break-all font-mono text-xs text-slate-700">
+                            redis://127.0.0.1:6379 · {{ cache.redis_prefix }}*
                         </dd>
                     </div>
                 </dl>

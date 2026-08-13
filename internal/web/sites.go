@@ -377,7 +377,7 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"resolution":    resolution,
 		"phpDirectives": directives,
 		"accessUsers":   a.Sites.AccessUsers(site),
-		"cache":         cacheSummary(site),
+		"cache":         a.cacheSummary(site),
 		"cronJobs":      a.Sites.CronJobs(site),
 		"certificate":   a.certificateSummary(site),
 		"site":          site.Summary(true),
@@ -628,7 +628,7 @@ func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
 //
 // `supported` rather than hiding the tab: a static site has a Cache tab that
 // says why it has no cache, which is an answer. A missing tab is a question.
-func cacheSummary(site *store.Site) map[string]any {
+func (a *App) cacheSummary(site *store.Site) map[string]any {
 	lifetimes := make([]map[string]string, 0, len(sites.CacheTTLs))
 
 	for _, entry := range sites.CacheTTLs {
@@ -639,12 +639,16 @@ func cacheSummary(site *store.Site) map[string]any {
 	}
 
 	return map[string]any{
-		"enabled":   site.CacheEnabled,
-		"ttl":       sites.CacheTTLOf(site),
-		"supported": sites.Cacheable(site),
-		"proxied":   site.IsProxied(),
-		"path":      sites.CacheDir(site),
-		"lifetimes": lifetimes,
+		"mode":            site.CacheMode,
+		"enabled":         site.CacheEnabled,
+		"ttl":             sites.CacheTTLOf(site),
+		"supported":       sites.Cacheable(site),
+		"redis_supported": sites.RedisSupported(site),
+		"redis_installed": a.Store.ServiceInstalled("redis"),
+		"redis_prefix":    sites.RedisPrefix(site),
+		"proxied":         site.IsProxied(),
+		"path":            sites.CacheDir(site),
+		"lifetimes":       lifetimes,
 	}
 }
 
@@ -681,17 +685,21 @@ func (a *App) sitesCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enabled := input["enabled"] == "1" || input["enabled"] == "true"
+	mode := input["mode"]
 
-	if err := a.Sites.SetCache(r.Context(), id, enabled, input["ttl"]); err != nil {
+	if err := a.Sites.SetCache(r.Context(), id, mode, input["ttl"]); err != nil {
 		a.failBack(w, r, err.Error())
 		return
 	}
 
-	if enabled {
+	switch mode {
+	case "nginx":
 		sess.Flash("success", "The page cache is on and nginx was reloaded.")
-	} else {
-		sess.Flash("success", "The page cache is off. Every request goes to the site again.")
+	case "redis":
+		sess.Flash("success", "This site's object cache is Redis. WordPress was pointed at it "+
+			"and the drop-in installed.")
+	default:
+		sess.Flash("success", "Caching is off. Every request is built by the site again.")
 	}
 
 	inertia.Back(w, r, "/sites")

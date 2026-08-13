@@ -150,7 +150,7 @@ var CacheTTLs = []struct {
 // DefaultCacheTTL is what a site that has never been configured caches for.
 // Ten minutes is long enough to take the repeat visitors off PHP and short
 // enough that a published change appears while somebody is still looking.
-const DefaultCacheTTL = "10m"
+const DefaultCacheTTL = "12h"
 
 // ValidCacheTTL reports whether a lifetime is one of the offered ones.
 func ValidCacheTTL(ttl string) bool {

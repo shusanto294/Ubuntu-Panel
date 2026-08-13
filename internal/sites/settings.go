@@ -131,22 +131,40 @@ func (s *Service) SetWebDirectory(ctx context.Context, siteID int64, directory s
 
 // ---------------------------------------------------------------- the cache
 
-// SetCache turns nginx's page cache on or off for a site and sets how long a
-// cached page lives.
+// SetCache gives a site one cache, or none.
 //
-// Both halves are written before nginx is asked to take them: the zone in
-// conf.d, then the vhost that names it. A vhost naming a zone that does not
-// exist is a configuration nginx refuses — and it refuses the whole of it, for
-// every site on the machine, so the order matters more than it looks.
-func (s *Service) SetCache(ctx context.Context, siteID int64, enabled bool, ttl string) error {
+// One rather than both, because the two answer different problems and the
+// choice between them is the interesting part: the page cache serves the same
+// finished HTML to everybody and cannot be put in front of pages that are
+// personal; the object cache keeps what the application looked up while
+// building a page, so every visitor still gets their own page and the database
+// is asked once instead of once each.
+//
+// Both halves of a change are written before nginx is asked to take them: the
+// zone in conf.d, then the vhost that names it. A vhost naming a zone that
+// does not exist is a configuration nginx refuses — and it refuses the whole
+// of it, for every site on the machine, so the order matters more than it
+// looks.
+func (s *Service) SetCache(ctx context.Context, siteID int64, mode, ttl string) error {
 	site, err := s.Store.FindSite(ctx, siteID)
 	if err != nil {
 		return errors.New("that site no longer exists")
 	}
 
-	if enabled && !Cacheable(site) {
-		return fmt.Errorf("the panel does not cache a %s site — see the Cache tab for why",
-			strings.ToLower(site.TypeLabel()))
+	switch mode {
+	case "off":
+	case "nginx":
+		if !Cacheable(site) {
+			return fmt.Errorf("the panel does not put a page cache in front of a %s site — "+
+				"the Cache tab says why", strings.ToLower(site.TypeLabel()))
+		}
+	case "redis":
+		if !RedisSupported(site) {
+			return fmt.Errorf("the panel cannot wire a %s site into Redis by itself — "+
+				"the Cache tab says why", strings.ToLower(site.TypeLabel()))
+		}
+	default:
+		return errors.New("that is not a cache the panel offers")
 	}
 
 	if strings.TrimSpace(ttl) == "" {
@@ -157,7 +175,18 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, enabled bool, ttl 
 		return fmt.Errorf("%q is not one of the lifetimes the panel offers", ttl)
 	}
 
-	s.Store.SetSiteCache(site.ID, enabled, ttl)
+	previous := site.CacheMode
+
+	// Redis first, while nothing has been written: the failures here are a
+	// server that is not installed and a plugin that will not download, and
+	// both should leave the site exactly as it was.
+	if mode == "redis" && previous != "redis" {
+		if err := s.EnableRedisCache(ctx, site); err != nil {
+			return err
+		}
+	}
+
+	s.Store.SetSiteCache(site.ID, mode, ttl)
 
 	updated, err := s.Store.FindSite(ctx, site.ID)
 	if err != nil {
@@ -165,10 +194,10 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, enabled bool, ttl 
 	}
 
 	restore := func() {
-		s.Store.SetSiteCache(site.ID, site.CacheEnabled, site.CacheTTL)
+		s.Store.SetSiteCache(site.ID, previous, site.CacheTTL)
 
-		if previous, err := s.Store.FindSite(ctx, site.ID); err == nil {
-			s.writeCacheConfig(previous)
+		if before, err := s.Store.FindSite(ctx, site.ID); err == nil {
+			s.writeCacheConfig(before)
 		}
 	}
 
@@ -182,6 +211,12 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, enabled bool, ttl 
 		restore()
 
 		return err
+	}
+
+	// Only once the rest of it stuck. A site left with the drop-in removed and
+	// the record still saying Redis would be a cache nobody could see was off.
+	if previous == "redis" && mode != "redis" {
+		s.DisableRedisCache(ctx, updated)
 	}
 
 	return nil
@@ -211,16 +246,22 @@ func (s *Service) writeCacheConfig(site *store.Site) error {
 	return proc.PutFile(CacheConfigPath(site), RenderCacheConfig(site), true)
 }
 
-// PurgeCache throws away everything nginx has stored for a site.
+// PurgeCache throws away whatever this site has cached, in whichever cache it
+// has.
 //
-// The files are the cache: nginx notices they are gone and renders the next
-// request from the application. This is what somebody publishes a change and
-// then reaches for, so it works whether or not the cache is currently on —
-// turning it off does not empty it.
+// For nginx the files are the cache: it notices they are gone and renders the
+// next request from the application. For Redis it is this site's keys and
+// nobody else's, which is what the per-site prefix is for. This is what
+// somebody publishes a change and then reaches for, so it works whether or not
+// a cache is currently on — turning one off does not empty it.
 func (s *Service) PurgeCache(ctx context.Context, siteID int64) error {
 	site, err := s.Store.FindSite(ctx, siteID)
 	if err != nil {
 		return errors.New("that site no longer exists")
+	}
+
+	if site.CacheMode == "redis" {
+		return s.FlushRedisCache(site)
 	}
 
 	directory := proc.Quote(CacheDir(site))
