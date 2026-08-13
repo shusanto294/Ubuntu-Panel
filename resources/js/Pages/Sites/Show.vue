@@ -1377,8 +1377,8 @@ const destroy = async () => {
                                 <p class="break-all font-mono text-slate-800">
                                     {{ user.name }}
                                 </p>
-                                <p class="text-xs text-slate-500">
-                                    <span class="font-mono">{{ user.shell }}</span>
+                                <p class="break-all font-mono text-xs text-slate-500">
+                                    {{ user.home }}
                                 </p>
                             </div>
                             <div class="flex shrink-0 items-center gap-3">
@@ -1448,8 +1448,8 @@ const destroy = async () => {
                                 <p class="break-all font-mono text-slate-800">
                                     {{ user.name }}
                                 </p>
-                                <p class="text-xs text-slate-500">
-                                    <span class="font-mono">{{ user.shell }}</span>
+                                <p class="break-all font-mono text-xs text-slate-500">
+                                    {{ user.home }}
                                 </p>
                             </div>
                             <div class="flex shrink-0 items-center gap-3">
