@@ -1167,3 +1167,63 @@ func OpenClawDashboardCommand(site *store.Site) string {
 		"sudo -u www-data HOME=%[1]s openclaw dashboard --no-open 2>&1 || "+
 			"sudo -u www-data HOME=%[1]s openclaw dashboard 2>&1", home)
 }
+
+// devicePattern is the identifier the gateway gives a browser asking to pair.
+var devicePattern = regexp.MustCompile(
+	`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+
+// PendingDeviceIDs are the browsers waiting for approval in `openclaw devices
+// list`.
+//
+// Only the waiting ones. The list holds every device the gateway knows about,
+// and approving one that is already approved is at best a no-op and at worst
+// an error the operator then has to read past — so a line has to say it is
+// pending before its identifier is taken from it.
+func PendingDeviceIDs(output string) []string {
+	seen := map[string]bool{}
+	ids := []string{}
+
+	for _, line := range strings.Split(ansiPattern.ReplaceAllString(output, ""), "\n") {
+		lower := strings.ToLower(line)
+
+		if !strings.Contains(lower, "pending") && !strings.Contains(lower, "waiting") &&
+			!strings.Contains(lower, "requested") {
+			continue
+		}
+
+		for _, id := range devicePattern.FindAllString(line, -1) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	return ids
+}
+
+// ApproveOpenClawDevices approves every browser waiting to pair with this
+// site's gateway, and says how many it approved.
+//
+// This is the gateway's own pairing, run for the operator rather than around
+// them: the Control UI asks the browser to be approved at a terminal they were
+// never sent to, and the panel is a terminal they are already sitting at. It
+// approves what is waiting at the moment it is asked — a request the operator
+// just caused by opening the dashboard — and nothing that is not.
+func (s *Service) ApproveOpenClawDevices(site *store.Site) int {
+	home := proc.Quote(site.RootPath)
+
+	list := proc.Run(fmt.Sprintf(
+		"sudo -u www-data HOME=%s openclaw devices list 2>&1", home), 2*time.Minute)
+
+	approved := 0
+
+	for _, id := range PendingDeviceIDs(list.Output) {
+		if proc.Ok(fmt.Sprintf("sudo -u www-data HOME=%s openclaw devices approve %s",
+			home, proc.Quote(id))) {
+			approved++
+		}
+	}
+
+	return approved
+}

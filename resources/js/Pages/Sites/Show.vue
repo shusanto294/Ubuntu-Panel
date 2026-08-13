@@ -1205,6 +1205,14 @@ const destroy = async () => {
                     }}
                 </a>
 
+                <button
+                    v-if="site.type === 'openclaw'"
+                    @click="post('sites.openclaw.approve')"
+                    class="ml-2 mt-4 rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                >
+                    Approve waiting browser
+                </button>
+
                 <p v-if="site.app.websocket" class="mt-4 text-xs text-slate-500">
                     Open dashboard asks the gateway for a tokenized link and
                     sends you straight in — no address to paste, and no
@@ -1212,6 +1220,21 @@ const destroy = async () => {
                     has been a systemd service since the deployment. The token
                     and the WebSocket address are here for a phone's setup code
                     or any other client you point at the gateway.
+                </p>
+
+                <!--
+                    Said here because the dashboard says it in commands: it
+                    asks for a browser it has not seen to be approved at a
+                    terminal on the host, which is not where the person reading
+                    this is.
+                -->
+                <p v-if="site.type === 'openclaw'" class="mt-3 text-xs text-slate-500">
+                    The first time a browser connects, the gateway asks for it
+                    to be approved. Either button does that: Open dashboard
+                    approves whatever is waiting before it sends you back in,
+                    and Approve waiting browser does it on its own for a pairing
+                    screen already open on another tab — approve, then Reconnect
+                    there. Once approved, that browser is remembered.
                 </p>
 
             </div>
