@@ -816,25 +816,78 @@ const destroy = async () => {
             v-if="live"
             class="mb-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
         >
-            <div class="flex flex-wrap items-start justify-between gap-4">
+            <!--
+                One row, not two. The card used to say the domain is live, then
+                print the URL, then print the domain again under a heading — a
+                block of white saying one thing three times, with the tabs
+                below the fold. The domain is the link now, the dot beside it
+                is the state, and the way into the application is the last
+                column rather than a row of its own.
+            -->
+            <dl
+                class="grid grid-cols-2 items-center gap-x-8 gap-y-4 text-sm sm:grid-cols-5"
+            >
                 <div class="min-w-0">
-                    <p class="flex items-center gap-2 font-semibold text-slate-900">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        Domain
+                    </dt>
+                    <dd class="mt-1 flex min-w-0 items-center gap-1.5">
                         <span
-                            class="h-2.5 w-2.5 rounded-full"
+                            class="h-2 w-2 shrink-0 rounded-full"
                             :class="unreachable ? 'bg-rose-500' : 'bg-emerald-500'"
+                            :title="
+                                unreachable
+                                    ? `${site.domain} is built, but nothing resolves it`
+                                    : `${site.domain} is live`
+                            "
                         />
-                        <template v-if="unreachable">
-                            {{ site.domain }} is built, but nothing resolves it
-                        </template>
-                        <template v-else>{{ site.domain }} is live</template>
-                    </p>
-                    <a
-                        :href="site.url"
-                        target="_blank"
-                        rel="noopener"
-                        class="mt-1 block break-all font-mono text-sm text-brand-600 hover:underline"
-                        >{{ site.url }}</a
-                    >
+                        <a
+                            :href="site.url"
+                            target="_blank"
+                            rel="noopener"
+                            class="inline-flex min-w-0 items-center gap-1 font-medium text-brand-600 hover:underline"
+                            :title="`Open ${site.url} in a new tab`"
+                        >
+                            <span class="truncate">{{ site.domain }}</span>
+                            <!-- The mark that says this leaves the panel. -->
+                            <svg
+                                class="h-3.5 w-3.5 shrink-0"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M14 4h6v6" />
+                                <path d="M20 4l-8.5 8.5" />
+                                <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+                            </svg>
+                        </a>
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">Type</dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ site.type_label }}
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        {{ site.is_proxied ? 'App port' : 'PHP' }}
+                    </dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ site.is_proxied ? site.app_port : site.php_version }}
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        IP address
+                    </dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ resolution?.expected || '—' }}
+                    </dd>
                 </div>
 
                 <!--
@@ -842,25 +895,27 @@ const destroy = async () => {
                     one-time token and sends the browser on already signed in.
                     Everything else opens the application's own front door.
                 -->
-                <a
-                    v-if="site.type === 'wordpress'"
-                    :href="route('sites.wp-admin', site.id)"
-                    target="_blank"
-                    rel="noopener"
-                    class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                >
-                    WP Admin
-                </a>
-                <a
-                    v-else-if="site.app"
-                    :href="site.app.url"
-                    target="_blank"
-                    rel="noopener"
-                    class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                >
-                    Open {{ site.type_label }}
-                </a>
-            </div>
+                <div class="sm:justify-self-end">
+                    <a
+                        v-if="site.type === 'wordpress'"
+                        :href="route('sites.wp-admin', site.id)"
+                        target="_blank"
+                        rel="noopener"
+                        class="inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+                    >
+                        WP Admin
+                    </a>
+                    <a
+                        v-else-if="site.app"
+                        :href="site.app.url"
+                        target="_blank"
+                        rel="noopener"
+                        class="inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+                    >
+                        Open {{ site.type_label }}
+                    </a>
+                </div>
+            </dl>
 
             <!--
                 The deployment checks the application on its port and nginx
@@ -905,47 +960,6 @@ const destroy = async () => {
                     waiting for it.
                 </template>
             </div>
-
-            <!--
-                The three facts somebody reads off a site page and puts into
-                something else. They were a row of their own under this card,
-                which made the top of the page two blocks saying one thing
-                between them — and pushed the tabs off the first screen.
-            -->
-            <dl
-                class="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 border-t border-slate-100 pt-5 text-sm sm:grid-cols-4"
-            >
-                <div class="min-w-0">
-                    <dt class="text-xs uppercase tracking-wide text-slate-400">
-                        Domain
-                    </dt>
-                    <dd class="mt-1 truncate font-medium text-slate-800">
-                        {{ site.domain }}
-                    </dd>
-                </div>
-                <div class="min-w-0">
-                    <dt class="text-xs uppercase tracking-wide text-slate-400">Type</dt>
-                    <dd class="mt-1 truncate font-medium text-slate-800">
-                        {{ site.type_label }}
-                    </dd>
-                </div>
-                <div class="min-w-0">
-                    <dt class="text-xs uppercase tracking-wide text-slate-400">
-                        {{ site.is_proxied ? 'App port' : 'PHP' }}
-                    </dt>
-                    <dd class="mt-1 truncate font-medium text-slate-800">
-                        {{ site.is_proxied ? site.app_port : site.php_version }}
-                    </dd>
-                </div>
-                <div class="min-w-0">
-                    <dt class="text-xs uppercase tracking-wide text-slate-400">
-                        IP address
-                    </dt>
-                    <dd class="mt-1 truncate font-medium text-slate-800">
-                        {{ resolution?.expected || '—' }}
-                    </dd>
-                </div>
-            </dl>
 
             <p
                 v-if="!site.ssl"
