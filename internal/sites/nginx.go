@@ -820,6 +820,16 @@ func RenderUnit(site *store.Site) string {
 		start = "npm run start"
 	}
 
+	// `gateway` on its own is not the foreground form, and a unit of
+	// Type=simple wants the process it started to be the gateway itself. A
+	// site deployed before the catalogue said `gateway run` has the older
+	// command stored against it, so it is corrected here rather than left for
+	// somebody to notice.
+	if site.Type == "openclaw" && strings.Contains(start, "gateway") &&
+		!strings.Contains(start, "gateway run") {
+		start = strings.Replace(start, "gateway", "gateway run", 1)
+	}
+
 	// The port on the command line, not only in the environment.
 	//
 	// OpenClaw takes it from `--port`, then OPENCLAW_GATEWAY_PORT, then its

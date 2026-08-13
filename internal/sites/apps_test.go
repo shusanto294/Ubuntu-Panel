@@ -101,17 +101,17 @@ func TestOpenClawUnitCarriesThePortOnTheCommandLine(t *testing.T) {
 	site := &store.Site{
 		ID: 5, Domain: "agent.example.com", Type: "openclaw",
 		RootPath: "/var/www/agent.example.com", AppPort: 3007,
-		StartCommand: "openclaw gateway",
+		StartCommand: "openclaw gateway run",
 	}
 
 	unit := RenderUnit(site)
 
-	if !strings.Contains(unit, "openclaw gateway --port 3007") {
+	if !strings.Contains(unit, "openclaw gateway run --port 3007") {
 		t.Errorf("the unit does not pass the port on the command line:\n%s", unit)
 	}
 
 	// An operator who put the flag there themselves does not get a second one.
-	site.StartCommand = "openclaw gateway --port 4000"
+	site.StartCommand = "openclaw gateway run --port 4000"
 
 	if strings.Count(RenderUnit(site), "--port") != 1 {
 		t.Error("the panel added a second --port to a command that already had one")
@@ -558,5 +558,29 @@ func TestOpenClawCanTalkToItsOwnGateway(t *testing.T) {
 
 	if gateway["remote"].(map[string]any)["token"] != "chosen-by-hand" {
 		t.Fatal("the operator's own token was not carried to the client half")
+	}
+}
+
+// `openclaw gateway` is not the foreground form, and a unit of Type=simple
+// wants the process it started to be the gateway. A site deployed before the
+// catalogue said so has the older command stored against it.
+func TestOpenClawUnitRunsTheGatewayInTheForeground(t *testing.T) {
+	site := &store.Site{
+		ID: 14, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 18801,
+		StartCommand: "openclaw gateway",
+	}
+
+	unit := RenderUnit(site)
+
+	if !strings.Contains(unit, "openclaw gateway run --port 18801") {
+		t.Fatalf("the stored command was not corrected:\n%s", unit)
+	}
+
+	// And one that already says it is left exactly as it is.
+	site.StartCommand = "openclaw gateway run --port 18801"
+
+	if strings.Count(RenderUnit(site), "gateway run") != 1 {
+		t.Error("the correction was applied twice")
 	}
 }

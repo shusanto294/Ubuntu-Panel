@@ -101,7 +101,12 @@ var SiteTypes = []SiteType{
 		// 24 rather than the 22.22.3 OpenClaw's own notes allow: the panel
 		// checks the major version only, and a machine on 22.5 would pass a
 		// check for 22 and then be refused by OpenClaw itself.
-		Start: "openclaw gateway", NodeMinimum: 24,
+		// `gateway run` rather than `gateway`: run is the foreground form, and
+		// a systemd unit of Type=simple wants the process it started to be the
+		// gateway rather than something that goes away having arranged for one
+		// elsewhere. It is also what openclaw itself suggests — "run `openclaw
+		// gateway run` for a foreground gateway".
+		Start: "openclaw gateway run", NodeMinimum: 24,
 	},
 	{
 		Key: "php", Label: "PHP", WebDirectory: "public",
