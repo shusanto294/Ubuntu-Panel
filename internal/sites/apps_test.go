@@ -503,9 +503,32 @@ func TestOpenClawDashboardCommandAsksThisSitesGateway(t *testing.T) {
 	command := OpenClawDashboardCommand(site)
 
 	for _, needed := range []string{"sudo -u www-data", "HOME='/var/www/agent.example.com'",
-		"openclaw dashboard"} {
+		"openclaw dashboard --no-open"} {
 		if !strings.Contains(command, needed) {
 			t.Errorf("the command is missing %q: %s", needed, command)
 		}
+	}
+
+	// Without --no-open the command's job is to open a browser, and on a
+	// server there is none: the link never reaches stdout. The plain form is
+	// the fallback for a version that predates the flag.
+	if strings.Count(command, "openclaw dashboard") != 2 {
+		t.Errorf("there is no fallback for a version without the flag: %s", command)
+	}
+}
+
+// The link comes out of a terminal command, wrapped in the colour it writes
+// for a terminal. A token with an escape sequence through it is a token the
+// gateway does not recognise.
+func TestOpenClawDashboardLinkIsReadThroughTerminalColour(t *testing.T) {
+	site := &store.Site{
+		ID: 13, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 18801, SSL: true,
+	}
+
+	output := "\x1b[32mDashboard:\x1b[0m \x1b[4mhttp://127.0.0.1:18801/?token=abc123\x1b[0m\n"
+
+	if link := OpenClawDashboardURL(site, output); link != "https://agent.example.com/?token=abc123" {
+		t.Fatalf("link is %q", link)
 	}
 }

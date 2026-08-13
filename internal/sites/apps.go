@@ -1092,6 +1092,9 @@ func openClawEnvironment(site *store.Site, token string) [][2]string {
 // does not.
 var dashboardURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
+// ansiPattern is the colour a command writes for a terminal.
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
 // localHostPattern is any way the gateway names this machine to itself, with
 // the port that follows it — percent-encoded too, because the address inside a
 // query parameter is escaped and `agent.example.com%3A18801` is a host that
@@ -1113,7 +1116,10 @@ var localHostPattern = regexp.MustCompile(
 // over the host alone — and ws:// becomes wss:// on a site served over HTTPS,
 // which a browser on an https page will not open otherwise.
 func OpenClawDashboardURL(site *store.Site, output string) string {
-	found := dashboardURLPattern.FindString(output)
+	// A terminal command writes for a terminal: the link comes wrapped in
+	// colour codes, and a token with an escape sequence in the middle of it is
+	// a token the gateway does not recognise.
+	found := dashboardURLPattern.FindString(ansiPattern.ReplaceAllString(output, ""))
 	if found == "" {
 		return ""
 	}
@@ -1144,7 +1150,20 @@ func OpenClawDashboardURL(site *store.Site, output string) string {
 // OpenClawDashboardCommand asks the gateway for that link, as the user it runs
 // as and with the HOME its configuration lives under — the two things that
 // decide which site's gateway answers.
+//
+// `--no-open` is the whole of it working. Without the flag the command's job
+// is to open a browser, and on a server there is no browser to open: it prints
+// its prose, tries, and the link either never appears on stdout or appears
+// after something that does not return. The dashboard's own error box says as
+// much — "reopen the dashboard with openclaw dashboard --no-open to recopy the
+// current URL and auth details".
+//
+// The plain form is still run if the flag is not understood, for a version
+// that predates it.
 func OpenClawDashboardCommand(site *store.Site) string {
-	return fmt.Sprintf("sudo -u www-data HOME=%s openclaw dashboard 2>&1",
-		proc.Quote(site.RootPath))
+	home := proc.Quote(site.RootPath)
+
+	return fmt.Sprintf(
+		"sudo -u www-data HOME=%[1]s openclaw dashboard --no-open 2>&1 || "+
+			"sudo -u www-data HOME=%[1]s openclaw dashboard 2>&1", home)
 }

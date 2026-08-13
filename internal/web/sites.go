@@ -1103,13 +1103,22 @@ func (a *App) sitesOpenClaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The dashboard itself, which is where they were going. It asks for the
-	// token, which is on the site's page — a screen with a question on it
-	// beats a dead end.
+	// Back to the panel rather than on to the dashboard.
+	//
+	// Sending them there was worse than useless: its connect screen asks for a
+	// token, the panel is where the token is, and a browser tab showing a
+	// refused connection says nothing about which of the two ends failed. The
+	// site page says what the command printed, and has the token on it.
 	a.Log.Warn("openclaw dashboard printed no link",
 		"site", site.Domain, "output", lastLines(result.Output, 5))
 
-	http.Redirect(w, r, site.URL(), http.StatusSeeOther)
+	if sess := session.FromContext(r.Context()); sess != nil {
+		sess.Flash("danger", "The gateway did not hand back a dashboard link, so there was "+
+			"nowhere to send you. Paste the token below into the dashboard's own form. "+
+			"It said: "+lastLines(result.Output, 3))
+	}
+
+	http.Redirect(w, r, "/sites/"+itoa(site.ID), http.StatusSeeOther)
 }
 
 // lastLines is the tail of a command's output, for a log line that has to say
