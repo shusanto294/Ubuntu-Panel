@@ -247,7 +247,7 @@ func TestManagedTypesAreTheOnesThePanelInstalls(t *testing.T) {
 // nginx authenticates instead and tells the gateway who it let through. The
 // header is set rather than forwarded: a visitor must not be able to name
 // themselves.
-func TestOpenClawIsAuthenticatedByNginx(t *testing.T) {
+func TestNoSiteIsPutBehindAPanelLogin(t *testing.T) {
 	site := &store.Site{
 		ID: 8, Domain: "agent.example.com", Type: "openclaw",
 		RootPath: "/var/www/agent.example.com", AppPort: 3011, SSL: true,
@@ -255,45 +255,51 @@ func TestOpenClawIsAuthenticatedByNginx(t *testing.T) {
 
 	vhost := RenderVhost(site, true, true)
 
+	// OpenClaw authenticates for itself. The panel asking first meant the
+	// gateway could not hold the token its own mobile pairing needs.
+	for _, unwanted := range []string{
+		"auth_basic",
+		"auth_basic_user_file",
+		"X-Auth-Request-Email",
+	} {
+		if strings.Contains(vhost, unwanted) {
+			t.Errorf("the OpenClaw vhost still carries %q", unwanted)
+		}
+	}
+
+	// And the proxy is otherwise the same one every proxied site gets.
 	for _, needed := range []string{
-		"auth_basic \"agent.example.com\";",
-		"auth_basic_user_file /etc/nginx/panel-auth/agent.example.com;",
-		"proxy_set_header X-Auth-Request-Email $remote_user;",
+		"proxy_pass http://ubuntu-panel-agent-example-com_upstream;",
+		"proxy_set_header Upgrade $http_upgrade;",
 	} {
 		if !strings.Contains(vhost, needed) {
 			t.Errorf("the OpenClaw vhost is missing %q", needed)
 		}
 	}
-
-	// The challenge has to stay reachable or the certificate can never be
-	// renewed.
-	if strings.Contains(vhost, "auth_basic") &&
-		!strings.Contains(vhost, "location ^~ /.well-known/acme-challenge/") {
-		t.Error("the ACME challenge is behind the login")
-	}
-
-	// Nothing else gets a password prompt it was never told about.
-	site.Type = "n8n"
-
-	if strings.Contains(RenderVhost(site, true, true), "auth_basic") {
-		t.Error("an n8n site was put behind HTTP basic authentication")
-	}
 }
 
-// trusted-proxy auth and a shared token are mutually exclusive: a gateway told
-// about both refuses to start, once every ten seconds, saying so. The panel
-// puts the secret in nginx's password file and must not also hand it to the
-// gateway.
-func TestOpenClawIsNeverGivenATokenAsWellAsTrustedProxy(t *testing.T) {
+// The token is the whole of what stands in front of the gateway now, so it has
+// to reach it. It was deliberately withheld while nginx did the
+// authenticating: trusted-proxy mode and a shared token together are refused
+// at startup.
+func TestOpenClawIsGivenItsOwnToken(t *testing.T) {
 	site := &store.Site{
 		ID: 9, Domain: "agent.example.com", Type: "openclaw",
 		RootPath: "/var/www/agent.example.com", AppPort: 3013,
 	}
 
-	for _, pair := range openClawEnvironment(site) {
-		if strings.Contains(pair[0], "TOKEN") || strings.Contains(pair[0], "PASSWORD") {
-			t.Errorf("the gateway environment carries %s, which trusted-proxy mode refuses", pair[0])
+	environment := openClawEnvironment(site, "s3cret-token")
+
+	found := ""
+
+	for _, pair := range environment {
+		if pair[0] == "OPENCLAW_GATEWAY_TOKEN" {
+			found = pair[1]
 		}
+	}
+
+	if found != "s3cret-token" {
+		t.Fatalf("the gateway environment carries token %q", found)
 	}
 }
 
@@ -322,7 +328,8 @@ func runOpenClawConfigScript(t *testing.T, existing string) map[string]any {
 	command.Env = append(os.Environ(),
 		"CONFIG="+path,
 		`ORIGINS=["https://openclaw.example.com"]`,
-		"PORT=18801")
+		"PORT=18801",
+		"TOKEN=s3cret-token")
 
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("the script failed: %v\n%s", err, output)
@@ -347,11 +354,10 @@ func runOpenClawConfigScript(t *testing.T, existing string) map[string]any {
 	return gateway
 }
 
-// The gateway rejects a trusted-proxy request coming from loopback unless it
-// is told not to, and nginx is on loopback — so without this key the identity
-// nginx authenticated is discarded and the dashboard asks for a gateway token
-// instead, which is exactly what it did.
-func TestOpenClawTrustsTheProxyOnLoopback(t *testing.T) {
+// The gateway does its own authenticating. The panel sets the token and the
+// three keys that follow from running behind this panel at all — mode, bind
+// and port — and nothing about how anybody is let in.
+func TestOpenClawKeepsItsOwnAuthentication(t *testing.T) {
 	gateway := runOpenClawConfigScript(t, "")
 
 	auth, ok := gateway["auth"].(map[string]any)
@@ -359,49 +365,73 @@ func TestOpenClawTrustsTheProxyOnLoopback(t *testing.T) {
 		t.Fatalf("no auth section: %v", gateway)
 	}
 
-	if auth["mode"] != "trusted-proxy" {
-		t.Errorf("auth mode is %v, not trusted-proxy", auth["mode"])
+	if auth["token"] != "s3cret-token" {
+		t.Errorf("the gateway was not given its token: %v", auth["token"])
 	}
 
-	proxy, ok := auth["trustedProxy"].(map[string]any)
-	if !ok {
-		t.Fatalf("no trustedProxy section: %v", auth)
+	if _, present := auth["mode"]; present {
+		t.Errorf("the panel set an auth mode of its own: %v", auth["mode"])
 	}
 
-	if proxy["userHeader"] != "x-auth-request-email" {
-		t.Errorf("the user header is %v, not the one nginx sets", proxy["userHeader"])
+	if _, present := auth["trustedProxy"]; present {
+		t.Error("the panel is still authenticating on the gateway's behalf")
 	}
 
-	if proxy["allowLoopback"] != true {
-		t.Errorf("allowLoopback is %v, so the gateway refuses its own nginx", proxy["allowLoopback"])
-	}
-
-	// Scopes are cleared for a Control UI session with no paired device, so
-	// the dashboard connects and then fails every call with "missing scope".
 	control, ok := gateway["controlUi"].(map[string]any)
 	if !ok {
 		t.Fatalf("no controlUi section: %v", gateway)
 	}
 
-	if control["dangerouslyDisableDeviceAuth"] != true {
-		t.Errorf("device auth is %v, so the dashboard opens with no scopes",
-			control["dangerouslyDisableDeviceAuth"])
+	// The break-glass switch the old arrangement needed. Device pairing is the
+	// gateway's own, and works over the HTTPS these sites are served on.
+	if _, present := control["dangerouslyDisableDeviceAuth"]; present {
+		t.Error("device authentication is still disabled")
+	}
+
+	if gateway["mode"] != "local" || gateway["bind"] != "loopback" {
+		t.Errorf("the gateway is not local on loopback: %v", gateway)
 	}
 }
 
-// A shared token alongside trusted-proxy mode is refused at startup, so an
-// existing one has to go — and everything the operator configured has to stay.
+// A site deployed by the panel that authenticated on the gateway's behalf has
+// trusted-proxy in its file. Left there beside a token, the gateway refuses to
+// start — once every ten seconds, for ever.
+func TestOpenClawUndoesThePanelsOldAuthentication(t *testing.T) {
+	gateway := runOpenClawConfigScript(t, `{
+	  "gateway": {"auth": {"mode": "trusted-proxy",
+	                       "trustedProxy": {"userHeader": "x-auth-request-email",
+	                                        "allowLoopback": true}},
+	              "controlUi": {"dangerouslyDisableDeviceAuth": true}}
+	}`)
+
+	auth := gateway["auth"].(map[string]any)
+
+	if _, present := auth["mode"]; present {
+		t.Errorf("trusted-proxy survived alongside the token: %v", auth["mode"])
+	}
+
+	if _, present := auth["trustedProxy"]; present {
+		t.Error("the trusted-proxy settings survived")
+	}
+
+	if _, present := gateway["controlUi"].(map[string]any)["dangerouslyDisableDeviceAuth"]; present {
+		t.Error("device authentication is still disabled from the old deployment")
+	}
+}
+
+// Everything the operator configured has to stay — including a token they
+// chose themselves, which a redeploy must not swap for the panel's.
 func TestOpenClawKeepsTheRestOfTheConfiguration(t *testing.T) {
 	gateway := runOpenClawConfigScript(t, `{
-	  "gateway": {"auth": {"mode": "token", "token": "old"},
+	  "gateway": {"auth": {"token": "chosen-by-hand"},
 	              "controlUi": {"allowedOrigins": ["https://kept.example.com"]}},
 	  "channels": {"whatsapp": {"enabled": true}}
 	}`)
 
 	auth := gateway["auth"].(map[string]any)
 
-	if _, present := auth["token"]; present {
-		t.Error("the shared token was left behind; the gateway refuses to start with both")
+	if auth["token"] != "chosen-by-hand" {
+		t.Errorf("the operator's own token was overwritten: %v", auth["token"])
 	}
 
 	origins := gateway["controlUi"].(map[string]any)["allowedOrigins"].([]any)

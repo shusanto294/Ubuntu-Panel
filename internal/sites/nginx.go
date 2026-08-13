@@ -120,8 +120,10 @@ func UnitPath(site *store.Site) string {
 	return "/etc/systemd/system/" + site.ServiceName() + ".service"
 }
 
-// PasswordFilePath is the htpasswd file for a site nginx authenticates on
-// behalf of the application behind it.
+// PasswordFilePath is the htpasswd file an older panel wrote to authenticate
+// on an application's behalf. Nothing reads it now; the deployment removes it,
+// so a site that has been redeployed is not left with a password file for a
+// login that no longer exists.
 func PasswordFilePath(site *store.Site) string {
 	return "/etc/nginx/panel-auth/" + site.Domain
 }
@@ -447,26 +449,18 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 					"    }\n", site.RootPath)
 		}
 
-		// OpenClaw's dashboard is a login form for a gateway token, and the
-		// gateway behind it will do the pairing dance with a browser before it
-		// accepts a Control UI session. Neither is something to hand an
-		// operator who asked the panel to install an application.
+		// No login of the panel's own in front of a proxied application.
 		//
-		// So nginx does the authenticating — one browser login, remembered —
-		// and tells the gateway who it let through. The gateway is configured
-		// to trust that header from the loopback address it is proxied from,
-		// and answers the dashboard without asking for anything.
+		// OpenClaw used to get one: nginx asked for a password and told the
+		// gateway who came through, so the dashboard opened without a token
+		// and without pairing a device. It worked, and it was the panel
+		// answering a question the application answers for itself — with the
+		// mobile pairing broken as the price, because a gateway in
+		// trusted-proxy mode may not also hold the token a setup code needs.
 		//
-		// The header is set, never appended: a visitor who sends one of their
-		// own must not be able to name themselves.
-		authentication := ""
-		if site.Type == "openclaw" {
-			authentication = fmt.Sprintf(
-				"        auth_basic \"%s\";\n"+
-					"        auth_basic_user_file %s;\n"+
-					"        proxy_set_header X-Auth-Request-Email $remote_user;\n",
-				site.Domain, PasswordFilePath(site))
-		}
+		// The gateway does its own authenticating now, the way it does
+		// everywhere else. nginx passes the request through; what stands in
+		// front of it is the token on this site's page.
 
 		// A WebSocket upgrade must never be answered from a cache. Without
 		// the cache that is all this line says; with it, the two conditions
@@ -480,7 +474,6 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 		fmt.Fprintf(out,
 			"\n"+
 				"    location / {\n"+
-				"%s"+
 				"        proxy_pass http://%s_upstream;\n"+
 				"        proxy_http_version 1.1;\n"+
 				"        proxy_set_header Upgrade $http_upgrade;\n"+
@@ -492,7 +485,7 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 				"%s"+
 				"        proxy_read_timeout 300;\n"+
 				"%s"+
-				"    }\n", authentication, site.ServiceName(), bypass, caching)
+				"    }\n", site.ServiceName(), bypass, caching)
 
 		return
 	}

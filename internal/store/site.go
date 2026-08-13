@@ -560,7 +560,12 @@ func (site *Site) Summary(detailed bool) map[string]any {
 				"url":      site.AdminURL(),
 				"user":     site.WPAdminUser,
 				"password": site.WPAdminPassword,
-				"token":    false,
+
+				// OpenClaw's credential is a gateway token rather than a
+				// password against a username: it is what its dashboard asks
+				// for and what a phone's setup code carries, and the site page
+				// labels it accordingly.
+				"token": site.Type == "openclaw",
 			}
 
 			// OpenClaw's dashboard asks for the gateway's WebSocket address as

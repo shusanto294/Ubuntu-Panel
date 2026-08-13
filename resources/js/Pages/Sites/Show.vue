@@ -1185,31 +1185,12 @@ const destroy = async () => {
                 </a>
 
                 <p v-if="site.app.websocket" class="mt-4 text-xs text-slate-500">
-                    Sign in with these and the dashboard connects on its own —
-                    nginx does the authenticating and tells the gateway who you
-                    are, so there is no token to paste. The WebSocket address is
-                    only needed if you point some other client at the gateway.
+                    The gateway asks for this token, and the panel does not
+                    stand in front of it — it authenticates the way it does
+                    anywhere else. The WebSocket address is only needed if you
+                    point some other client at it.
                 </p>
 
-                <!--
-                    Said here because OpenClaw's own dialog cannot say it:
-                    "Connect to mobile" fails with GatewayRequestError, which
-                    reads as a broken install rather than as the one thing this
-                    arrangement gives up.
-                -->
-                <p
-                    v-if="site.app.websocket"
-                    class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500"
-                >
-                    <span class="font-medium text-slate-700"
-                        >Connect to mobile does not work here.</span
-                    >
-                    A setup code has to carry a gateway token or password for the
-                    phone to log in with, and this gateway has neither on purpose
-                    — the password above is checked by nginx in front of it,
-                    which is what lets the dashboard open without asking you for
-                    anything.
-                </p>
             </div>
 
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">

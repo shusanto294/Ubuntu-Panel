@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -766,7 +765,7 @@ func (s *Service) restartOnFinalURL(ctx context.Context, siteID int64) func(*tas
 			err = writeAppEnv(site, n8nEnvironment(site))
 
 		case "openclaw":
-			if err = writeAppEnv(site, openClawEnvironment(site)); err == nil {
+			if err = writeAppEnv(site, openClawEnvironment(site, s.appSecret(site, 32))); err == nil {
 				// The allowed origins carry the scheme, and whether the site
 				// ended up on HTTPS was only decided by the step above. A
 				// gateway still allowing the http:// origin refuses the
@@ -821,19 +820,14 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", errors.New("npm reported success but there is no openclaw on PATH afterwards")
 		}
 
-		// The site's password, checked by nginx. The gateway is never told
-		// it: in trusted-proxy mode a shared token is not a second way in, it
-		// is a configuration the gateway refuses to start with.
-		password := s.appSecret(site, 32)
+		// The gateway's own token, which is what its dashboard asks for and
+		// what a phone's setup code carries. Generated once and stored, so the
+		// site page can show it; nothing else on this machine keeps a copy.
+		s.appSecret(site, 32)
 
-		user := site.WPAdminUser
-		if user == "" {
-			user = "admin"
-		}
-
-		if err := writePasswordFile(site, user, password); err != nil {
-			return "", err
-		}
+		// An older panel put an nginx password in front of this site and
+		// authenticated on the gateway's behalf. Nothing reads this now.
+		proc.Ok("sudo rm -f " + proc.Quote(PasswordFilePath(site)))
 
 		if err := runner.Must(fmt.Sprintf(
 			"sudo mkdir -p %[1]s/.openclaw && sudo chown -R www-data:www-data %[1]s && "+
@@ -844,7 +838,7 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 			return "", err
 		}
 
-		if err := writeAppEnv(site, openClawEnvironment(site)); err != nil {
+		if err := writeAppEnv(site, openClawEnvironment(site, s.appSecret(site, 32))); err != nil {
 			return "", err
 		}
 
@@ -878,6 +872,7 @@ func (s *Service) installOpenClaw(ctx context.Context, siteID int64) func(*tasks
 // agent on this machine, which is what a site on this panel is.
 func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) error {
 	command := fmt.Sprintf("sudo -u www-data HOME=%s openclaw", proc.Quote(site.RootPath))
+	token := s.appSecret(site, 32)
 
 	// The dashboard is served from the site's own hostname, and the gateway
 	// refuses a Control UI connection from an origin it was not told about —
@@ -896,97 +891,29 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 		command, site.AppPort,
 		proc.Quote(originsJSON(origins)), proc.Quote(origins[0])), 5*time.Minute)
 
-	// nginx has already authenticated whoever reached the gateway, and says so
-	// in a header it sets rather than forwards. Trusting that — from the
-	// loopback address the proxy sits on, and nowhere else — is what lets the
-	// dashboard open without a token and without pairing a device.
+	// The gateway authenticates for itself now, with the token on this site's
+	// page. The panel sets that token and nothing else about how the gateway
+	// lets anybody in — it is the application's own business, and the
+	// arrangement that replaced it broke the application's own mobile pairing.
 	//
-	// The gateway only listens on loopback, so nothing can reach it except
-	// through the nginx that requires the login.
+	// trustedProxies is not authentication: it is how the gateway knows whose
+	// X-Forwarded-For to believe, so a visitor is logged and rate limited as
+	// themselves rather than as nginx.
 	runner.Exec(fmt.Sprintf(
-		"%[1]s config set gateway.auth.mode trusted-proxy; "+
-			"%[1]s config set gateway.auth.trustedProxy.userHeader x-auth-request-email; "+
-			"%[1]s config set gateway.auth.trustedProxy.allowLoopback true; "+
-			"%[1]s config set gateway.controlUi.dangerouslyDisableDeviceAuth true; "+
+		"%[1]s config set gateway.auth.token %[2]s; "+
 			"%[1]s config set gateway.trustedProxies '[\"127.0.0.1\",\"::1\"]' || "+
-			"%[1]s config set gateway.trustedProxies 127.0.0.1; "+
-			"%[1]s config unset gateway.auth.token; "+
-			"%[1]s config unset gateway.auth.password",
-		command), 5*time.Minute)
+			"%[1]s config set gateway.trustedProxies 127.0.0.1",
+		command, proc.Quote(token)), 5*time.Minute)
 
 	// Then written properly, whatever the CLI made of it.
 	//
 	// `config set` is handed a list on the command line for the origins and the
 	// trusted proxies, and a version that stores those as a string produces a
-	// configuration the gateway rejects. This writes the keys as JSON, removes
-	// any shared token — which a gateway in trusted-proxy mode refuses to start
-	// alongside — and leaves the rest of the file alone.
-	return mergeOpenClawConfig(site, runner, origins)
-}
-
-// writePasswordFile puts the site's login into the htpasswd file nginx checks
-// before it lets anybody near the application.
-//
-// The password never reaches a command line: `openssl passwd` is given a file
-// to read it from, because an argument is readable by anyone who can run `ps`
-// at the moment it runs — and this one is the whole of the site's security.
-func writePasswordFile(site *store.Site, user, password string) error {
-	staged, cleanup, err := stagePassword(password)
-	if err != nil {
-		return err
-	}
-
-	defer cleanup()
-
-	// apr1 rather than bcrypt: nginx hashes with the system's crypt() for
-	// bcrypt, which not every Ubuntu builds support for, and apr1 is
-	// understood by nginx itself everywhere.
-	result := proc.Run("openssl passwd -apr1 -in "+proc.Quote(staged), time.Minute)
-	if !result.OK() {
-		return fmt.Errorf("could not hash the site password: %s", result.Output)
-	}
-
-	hash := strings.TrimSpace(result.Output)
-	if hash == "" || strings.Contains(hash, " ") {
-		return errors.New("openssl did not produce a password hash")
-	}
-
-	path := PasswordFilePath(site)
-
-	if err := proc.PutFile(path, user+":"+hash+"\n", true); err != nil {
-		return err
-	}
-
-	// Readable by nginx, by nobody else on the machine.
-	proc.Ok(fmt.Sprintf("sudo chown root:www-data %s && sudo chmod 640 %s",
-		proc.Quote(path), proc.Quote(path)))
-
-	return nil
-}
-
-// stagePassword writes a password to a file only this user can read, for a
-// command that would otherwise take it as an argument.
-func stagePassword(password string) (string, func(), error) {
-	file, err := os.CreateTemp("", "ubuntu-panel-secret-*")
-	if err != nil {
-		return "", func() {}, errors.New("could not stage the password")
-	}
-
-	name := file.Name()
-	cleanup := func() { os.Remove(name) }
-
-	file.Chmod(0o600)
-
-	if _, err := file.WriteString(password + "\n"); err != nil {
-		file.Close()
-		cleanup()
-
-		return "", func() {}, errors.New("could not stage the password")
-	}
-
-	file.Close()
-
-	return name, cleanup, nil
+	// configuration the gateway rejects. This writes the keys as JSON, puts the
+	// token where the gateway reads it, takes out the keys an older panel wrote
+	// to authenticate on the gateway's behalf, and leaves the rest of the file
+	// alone.
+	return mergeOpenClawConfig(site, runner, origins, token)
 }
 
 // openClawOrigins are the browser origins the dashboard is served from: the
@@ -1029,14 +956,16 @@ func originsJSON(origins []string) string {
 // it, so the file is read, one key is set, and it is written back — by Python,
 // which is on every Ubuntu the panel supports and can be trusted with JSON in
 // a way that a shell one-liner cannot.
-func mergeOpenClawConfig(site *store.Site, runner *tasks.Runner, origins []string) error {
+func mergeOpenClawConfig(site *store.Site, runner *tasks.Runner, origins []string,
+	token string) error {
 	command := fmt.Sprintf(
 		"sudo mkdir -p %[1]s && sudo chown www-data:www-data %[1]s && "+
-			"CONFIG=%[2]s ORIGINS=%[3]s PORT=%[4]d "+
-			"sudo -u www-data --preserve-env=CONFIG,ORIGINS,PORT python3 - <<'PYTHON'\n%[5]s\nPYTHON",
+			"CONFIG=%[2]s ORIGINS=%[3]s PORT=%[4]d TOKEN=%[5]s "+
+			"sudo -u www-data --preserve-env=CONFIG,ORIGINS,PORT,TOKEN python3 - <<'PYTHON'\n%[6]s\nPYTHON",
 		proc.Quote(site.RootPath+"/.openclaw"),
 		proc.Quote(site.RootPath+"/.openclaw/openclaw.json"),
-		proc.Quote(originsJSON(origins)), site.AppPort, openClawConfigScript)
+		proc.Quote(originsJSON(origins)), site.AppPort, proc.Quote(token),
+		openClawConfigScript)
 
 	if err := runner.Must(command, 2*time.Minute); err != nil {
 		return fmt.Errorf("could not write OpenClaw's gateway configuration: %w", err)
@@ -1057,6 +986,7 @@ import json, os, sys
 
 path = os.environ["CONFIG"]
 origins = json.loads(os.environ["ORIGINS"])
+token = os.environ["TOKEN"]
 
 try:
     with open(path) as handle:
@@ -1068,59 +998,50 @@ except ValueError as error:
 
 gateway = config.setdefault("gateway", {})
 
+# What running behind this panel actually decides: the gateway runs its own
+# agent on this machine, listens on loopback because nginx is in front of it,
+# on the port the panel assigned. Everything else is OpenClaw's own default.
 gateway["mode"] = "local"
 gateway["bind"] = "loopback"
 gateway["port"] = int(os.environ["PORT"])
+
+# Not authentication — which address the gateway believes X-Forwarded-For
+# from, so a visitor is logged and rate limited as themselves and not as
+# nginx.
 gateway["trustedProxies"] = ["127.0.0.1", "::1"]
 
 auth = gateway.setdefault("auth", {})
-auth["mode"] = "trusted-proxy"
 
-proxy = auth.setdefault("trustedProxy", {})
-proxy["userHeader"] = "x-auth-request-email"
+# The gateway's own token, which is what its dashboard asks for and what a
+# phone's setup code carries. An operator who sets their own is not overruled.
+auth.setdefault("token", token)
 
-# Without this the gateway rejects its own proxy. Its authorizeTrustedProxy
-# refuses any request whose source address is loopback unless allowLoopback
-# is set, with the reason trusted_proxy_loopback_source — and nginx proxying
-# to a gateway bound to loopback is a request from 127.0.0.1 every time. So
-# the identity nginx passed was thrown away, the connection was refused, and
-# the dashboard fell back to the only thing it has left: asking for a gateway
-# token. Which is what an operator was being asked for.
-proxy["allowLoopback"] = True
+# What an older panel wrote to authenticate on the gateway's behalf: nginx
+# asked for a password and named the visitor in a header, and the gateway was
+# told to believe it. It worked, and it was the panel answering a question the
+# application answers for itself — with the mobile pairing broken as the
+# price, because a gateway in trusted-proxy mode may not also hold the token a
+# setup code needs. Removed rather than left: trusted-proxy mode alongside a
+# token is refused at startup, so a site deployed by that panel would not come
+# back up.
+if auth.get("mode") == "trusted-proxy":
+    auth.pop("mode", None)
 
-# A token is mutually exclusive with trusted-proxy: a gateway configured with
-# both says so and exits, once every ten seconds, for ever.
-#
-# A password is allowed alongside it, and setting one would stop the mobile
-# pairing dialog failing with "Gateway auth is not configured (no token or
-# password)" — the setup code only checks that one of the two exists. Do not.
-# The phone it hands the code to would still be refused: the gateway only
-# accepts that password on a request it judges local and direct, which means
-# loopback and no forwarded headers, and every request through this nginx
-# carries X-Forwarded-For. The code would be a QR nobody can use.
-#
-# Mobile pairing and a browser that never asks for a token are one gateway's
-# two mutually exclusive settings, and this one is set for the browser.
-auth.pop("token", None)
-auth.pop("password", None)
+auth.pop("trustedProxy", None)
 
 control = gateway.setdefault("controlUi", {})
 
-# A Control UI session that carries no device identity is admitted in
-# trusted-proxy mode and then has its scopes cleared to [], so the dashboard
-# connects and every call it makes comes back "missing scope" — which is a
-# worse thing to hand somebody than a login prompt. The device identity that
-# would avoid it is generated by the browser's WebCrypto, which needs a secure
-# context, and approved with "openclaw devices approve" at a terminal the
-# operator was never sent to.
-#
-# OpenClaw calls this a break-glass switch, and on a gateway reachable from
-# anywhere it would be. This one is bound to loopback and sits behind an nginx
-# that will not pass a request through without the site's own password. That
-# password is the credential; device pairing on top of it protects nothing
-# here and only breaks the dashboard.
-control["dangerouslyDisableDeviceAuth"] = True
+# The break-glass switch that same arrangement needed, because a Control UI
+# session with no paired device was admitted and then had its scopes cleared.
+# The gateway does its own device pairing again, over HTTPS, which is the
+# secure context its WebCrypto needs.
+control.pop("dangerouslyDisableDeviceAuth", None)
 
+# The gateway refuses a Control UI connection from an origin it was not told
+# about — "Browser origin not allowed", with the login form still on screen.
+# It ships knowing about localhost and nothing else, so the site's own origin
+# has to be added or the dashboard can never be used from the domain it is
+# published on.
 existing = control.get("allowedOrigins") or []
 if not isinstance(existing, list):
     existing = []
@@ -1135,26 +1056,22 @@ with open(path, "w") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
 
-print("gateway: local, trusted-proxy auth from loopback, origins %s" % ", ".join(existing))
+print("gateway: local on loopback, its own token auth, origins %s" % ", ".join(existing))
 `
 
 // openClawEnvironment is the gateway's configuration.
-func openClawEnvironment(site *store.Site) [][2]string {
+func openClawEnvironment(site *store.Site, token string) [][2]string {
 	return [][2]string{
 		// Everything OpenClaw keeps — config, state, credentials — lives under
 		// $HOME, so pointing HOME at the site directory keeps one site's agent
 		// out of another's.
 		{"HOME", site.RootPath},
 		{"OPENCLAW_GATEWAY_PORT", strconv.Itoa(site.AppPort)},
-		// No OPENCLAW_GATEWAY_TOKEN, deliberately. nginx authenticates and the
-		// gateway is in trusted-proxy mode; the two are mutually exclusive, and
-		// a token alongside that mode is refused at startup:
-		//
-		//   Gateway failed to start: gateway auth mode is trusted-proxy, but a
-		//   shared token is also configured
-		//
-		// The same secret is still the site's password — it is nginx that
-		// checks it now, so the gateway must not be told about it.
+		// The gateway's own token, which is the whole of what stands in front
+		// of it. Set here as well as in the configuration file because either
+		// is enough on its own, and a config file an operator edits by hand is
+		// the one more likely to lose it.
+		{"OPENCLAW_GATEWAY_TOKEN", token},
 		// Loopback is its default and what the nginx proxy in front of it
 		// needs; named rather than assumed, because the default changes inside
 		// containers.
