@@ -532,3 +532,31 @@ func TestOpenClawDashboardLinkIsReadThroughTerminalColour(t *testing.T) {
 		t.Fatalf("link is %q", link)
 	}
 }
+
+// The CLI is a client of the gateway: devices, dashboard and status all
+// connect over the WebSocket and authenticate with gateway.remote.token. Set
+// on one side only, the gateway refuses its own command line with "gateway
+// token mismatch" — which is every command that has to ask it anything,
+// including the one that prints the dashboard link.
+func TestOpenClawCanTalkToItsOwnGateway(t *testing.T) {
+	gateway := runOpenClawConfigScript(t, "")
+
+	auth := gateway["auth"].(map[string]any)
+	remote, ok := gateway["remote"].(map[string]any)
+
+	if !ok {
+		t.Fatalf("no remote section, so the CLI cannot authenticate: %v", gateway)
+	}
+
+	if remote["token"] != auth["token"] {
+		t.Fatalf("remote token %v does not match auth token %v", remote["token"], auth["token"])
+	}
+
+	// And with a token the operator chose, the two still have to agree — it is
+	// the mismatch that breaks the CLI, not which token it is.
+	gateway = runOpenClawConfigScript(t, `{"gateway": {"auth": {"token": "chosen-by-hand"}}}`)
+
+	if gateway["remote"].(map[string]any)["token"] != "chosen-by-hand" {
+		t.Fatal("the operator's own token was not carried to the client half")
+	}
+}

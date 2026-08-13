@@ -902,6 +902,7 @@ func (s *Service) configureOpenClaw(site *store.Site, runner *tasks.Runner) erro
 	// themselves rather than as nginx.
 	runner.Exec(fmt.Sprintf(
 		"%[1]s config set gateway.auth.token %[2]s; "+
+			"%[1]s config set gateway.remote.token %[2]s; "+
 			"%[1]s config set gateway.trustedProxies '[\"127.0.0.1\",\"::1\"]' || "+
 			"%[1]s config set gateway.trustedProxies 127.0.0.1",
 		command, proc.Quote(token)), 5*time.Minute)
@@ -1017,6 +1018,22 @@ auth = gateway.setdefault("auth", {})
 # phone's setup code carries. An operator who sets their own is not overruled.
 auth.setdefault("token", token)
 
+# And the same token again, as the client half.
+#
+# openclaw's own CLI is a client of the gateway: every command that has to ask
+# it something — devices, dashboard, status — connects over the WebSocket and
+# authenticates with gateway.remote.token. Set on one side only, the gateway
+# refuses its own command line:
+#
+#   gateway connect failed: unauthorized: gateway token mismatch
+#   (set gateway.remote.token to match gateway.auth.token)
+#
+# which is every one of those commands failing, including the one that prints
+# the dashboard link. The two are kept equal here rather than left to whoever
+# reads that message.
+remote = gateway.setdefault("remote", {})
+remote["token"] = auth["token"]
+
 # What an older panel wrote to authenticate on the gateway's behalf: nginx
 # asked for a password and named the visitor in a header, and the gateway was
 # told to believe it. It worked, and it was the panel answering a question the
@@ -1057,7 +1074,7 @@ with open(path, "w") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
 
-print("gateway: local on loopback, its own token auth, origins %s" % ", ".join(existing))
+print("gateway: local on loopback, token matched for the CLI, origins %s" % ", ".join(existing))
 `
 
 // openClawEnvironment is the gateway's configuration.
