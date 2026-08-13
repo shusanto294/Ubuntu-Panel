@@ -1449,6 +1449,12 @@ const destroy = async () => {
                             the page cache answers first and the object cache
                             never gets asked — so the second one would be a
                             setting that quietly did nothing.
+
+                            What each one is, and nothing else: the lifetime is
+                            one field below, because it is one field whichever
+                            of the two is picked, and a form that moves its own
+                            controls around as you answer it is a form you have
+                            to re-read.
                         -->
                         <label
                             class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
@@ -1501,35 +1507,6 @@ const destroy = async () => {
                                     the site at all. The fastest of the two, and
                                     the one with rules about who may not have it.
                                 </span>
-
-                                <span
-                                    v-if="cacheMode === 'nginx'"
-                                    class="mt-3 block"
-                                >
-                                    <span class="block text-xs font-medium text-slate-600">
-                                        Keep a page for
-                                    </span>
-                                    <select
-                                        v-model="cacheTTL"
-                                        class="mt-1 w-52 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                                    >
-                                        <option
-                                            v-for="entry in cache.lifetimes"
-                                            :key="entry.value"
-                                            :value="entry.value"
-                                        >
-                                            {{ entry.label }}
-                                        </option>
-                                    </select>
-                                    <span class="mt-2 block text-xs text-slate-500">
-                                        How long before nginx asks the site to
-                                        build the page again. An expired page is
-                                        still served immediately and refreshed
-                                        behind the visitor, so nobody waits for
-                                        it — and Empty the cache is there for
-                                        when you have just published something.
-                                    </span>
-                                </span>
                             </span>
                         </label>
 
@@ -1571,52 +1548,63 @@ const destroy = async () => {
                                     Redis is not installed on this machine.
                                     Install it from the Apps page first.
                                 </span>
-
-                                <span v-else-if="cacheMode === 'redis'" class="mt-3 block">
-                                    <span class="block text-xs font-medium text-slate-600">
-                                        Keep an entry at most
-                                    </span>
-                                    <select
-                                        v-model="cacheTTL"
-                                        class="mt-1 w-52 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                                    >
-                                        <option
-                                            v-for="entry in cache.lifetimes"
-                                            :key="entry.value"
-                                            :value="entry.value"
-                                        >
-                                            {{ entry.label }}
-                                        </option>
-                                    </select>
-                                    <!--
-                                        Said plainly because it is not the same
-                                        clock as the one above it. WordPress
-                                        replaces an entry the moment what it
-                                        describes changes; this is only how long
-                                        one may sit there if nothing ever does.
-                                    -->
-                                    <span class="mt-2 block text-xs text-slate-500">
-                                        A ceiling, not a refresh interval.
-                                        WordPress replaces an entry as soon as
-                                        what it holds changes — this is how long
-                                        one may sit in Redis untouched if
-                                        nothing ever does. Left unset, entries
-                                        would only ever leave when Redis reaches
-                                        the memory cap and evicts the
-                                        least-recently-used.
-                                    </span>
-                                    <span class="mt-2 block text-xs text-slate-500">
-                                        The panel installs the Redis Object
-                                        Cache plugin, points wp-config.php at
-                                        Redis with the password it was
-                                        configured with, and installs the
-                                        drop-in. This site's keys are prefixed
-                                        <span class="font-mono">{{ cache.redis_prefix }}</span>
-                                        so they cannot be read by another site.
-                                    </span>
+                                <span
+                                    v-else
+                                    class="mt-2 block text-xs text-slate-500"
+                                >
+                                    The panel installs the Redis Object Cache
+                                    plugin, points wp-config.php at Redis with
+                                    the password it was configured with, and
+                                    installs the drop-in. This site's keys are
+                                    prefixed
+                                    <span class="font-mono">{{ cache.redis_prefix }}</span>
+                                    so they cannot be read by another site.
                                 </span>
                             </span>
                         </label>
+                    </div>
+
+                    <!--
+                        One field, whichever cache is on — but it is not the
+                        same clock in the two cases, so the label and the
+                        sentence under it change and the field does not move.
+                    -->
+                    <div v-if="cacheMode !== 'off'" class="mt-6">
+                        <label class="block text-sm font-medium text-slate-700">
+                            {{
+                                cacheMode === 'redis'
+                                    ? 'Keep an entry at most'
+                                    : 'Keep a page for'
+                            }}
+                        </label>
+                        <select
+                            v-model="cacheTTL"
+                            class="mt-1 w-56 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        >
+                            <option
+                                v-for="entry in cache.lifetimes"
+                                :key="entry.value"
+                                :value="entry.value"
+                            >
+                                {{ entry.label }}
+                            </option>
+                        </select>
+
+                        <p v-if="cacheMode === 'redis'" class="mt-2 text-xs text-slate-500">
+                            A ceiling, not a refresh interval. WordPress
+                            replaces an entry as soon as what it holds changes —
+                            this is how long one may sit in Redis untouched if
+                            nothing ever does. Left unset, entries would only
+                            ever leave when Redis reaches the memory cap and
+                            evicts the least-recently-used.
+                        </p>
+                        <p v-else class="mt-2 text-xs text-slate-500">
+                            How long before nginx asks the site to build the
+                            page again. An expired page is still served
+                            immediately and refreshed behind the visitor, so
+                            nobody waits for it — and Empty the cache is there
+                            for when you have just published something.
+                        </p>
                     </div>
 
                     <div class="mt-6 flex flex-wrap items-center gap-2">
