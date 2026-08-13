@@ -56,8 +56,8 @@ type SiteType struct {
 
 	// Managed is an application the panel installs and configures itself, so
 	// the create form has no repository to ask for and the deployment has an
-	// admin account to hand back. WordPress was the only one; Nextcloud, n8n
-	// and OpenClaw are the same arrangement.
+	// admin account to hand back. WordPress was the only one; Nextcloud and
+	// n8n are the same arrangement.
 	Managed bool `json:"managed"`
 
 	// AdminAccount is whether that application has a login the panel creates —
@@ -93,20 +93,6 @@ var SiteTypes = []SiteType{
 		Description: "Workflow automation · systemd service behind nginx",
 		Runtime:     "node", Proxied: true, Managed: true,
 		Start: "n8n start", NodeMinimum: 20,
-	},
-	{
-		Key: "openclaw", Label: "OpenClaw",
-		Description: "Self-hosted AI agent gateway · systemd service behind nginx",
-		Runtime:     "node", Proxied: true, Managed: true, AdminAccount: true,
-		// 24 rather than the 22.22.3 OpenClaw's own notes allow: the panel
-		// checks the major version only, and a machine on 22.5 would pass a
-		// check for 22 and then be refused by OpenClaw itself.
-		// `gateway run` rather than `gateway`: run is the foreground form, and
-		// a systemd unit of Type=simple wants the process it started to be the
-		// gateway rather than something that goes away having arranged for one
-		// elsewhere. It is also what openclaw itself suggests — "run `openclaw
-		// gateway run` for a foreground gateway".
-		Start: "openclaw gateway run", NodeMinimum: 24,
 	},
 	{
 		Key: "php", Label: "PHP", WebDirectory: "public",

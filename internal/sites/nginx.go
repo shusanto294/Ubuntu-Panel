@@ -120,14 +120,6 @@ func UnitPath(site *store.Site) string {
 	return "/etc/systemd/system/" + site.ServiceName() + ".service"
 }
 
-// PasswordFilePath is the htpasswd file an older panel wrote to authenticate
-// on an application's behalf. Nothing reads it now; the deployment removes it,
-// so a site that has been redeployed is not left with a password file for a
-// login that no longer exists.
-func PasswordFilePath(site *store.Site) string {
-	return "/etc/nginx/panel-auth/" + site.Domain
-}
-
 // ------------------------------------------------------------- page cache
 
 // CacheTTLs are the lifetimes the Cache tab offers, longest last.
@@ -448,19 +440,6 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 					"        access_log off;\n"+
 					"    }\n", site.RootPath)
 		}
-
-		// No login of the panel's own in front of a proxied application.
-		//
-		// OpenClaw used to get one: nginx asked for a password and told the
-		// gateway who came through, so the dashboard opened without a token
-		// and without pairing a device. It worked, and it was the panel
-		// answering a question the application answers for itself — with the
-		// mobile pairing broken as the price, because a gateway in
-		// trusted-proxy mode may not also hold the token a setup code needs.
-		//
-		// The gateway does its own authenticating now, the way it does
-		// everywhere else. nginx passes the request through; what stands in
-		// front of it is the token on this site's page.
 
 		// A WebSocket upgrade must never be answered from a cache. Without
 		// the cache that is all this line says; with it, the two conditions
@@ -820,37 +799,9 @@ func RenderUnit(site *store.Site) string {
 		start = "npm run start"
 	}
 
-	// `gateway` on its own is not the foreground form, and a unit of
-	// Type=simple wants the process it started to be the gateway itself. A
-	// site deployed before the catalogue said `gateway run` has the older
-	// command stored against it, so it is corrected here rather than left for
-	// somebody to notice.
-	if site.Type == "openclaw" && strings.Contains(start, "gateway") &&
-		!strings.Contains(start, "gateway run") {
-		start = strings.Replace(start, "gateway", "gateway run", 1)
-	}
-
-	// The port on the command line, not only in the environment.
-	//
-	// OpenClaw takes it from `--port`, then OPENCLAW_GATEWAY_PORT, then its
-	// config, then 18789 — and a gateway that falls through to 18789 while
-	// nginx proxies to the port the panel assigned is a 502 on a service that
-	// is running perfectly. The flag is the one place in that list the panel
-	// can be sure of.
-	if site.Type == "openclaw" && site.AppPort > 0 && !strings.Contains(start, "--port") {
-		start = fmt.Sprintf("%s --port %d", start, site.AppPort)
-	}
-
 	service := site.ServiceName()
 
-	// A configuration the process objects to is not something restarting fixes.
-	// OpenClaw exits 78 — the conventional EX_CONFIG — and without this the
-	// unit relaunches it every five seconds for ever, burning a CPU core and
-	// writing the same complaint into the log a thousand times.
 	restart := "Restart=always\nRestartSec=5\n"
-	if site.Type == "openclaw" {
-		restart += "RestartPreventExitStatus=78\n"
-	}
 
 	return fmt.Sprintf(
 		"# Managed by %s\n"+

@@ -32,8 +32,8 @@ type Site struct {
 	Branch       string
 	// The application admin account. Named for WordPress, which was the only
 	// application the panel installed when the columns were added; Nextcloud's
-	// administrator and OpenClaw's gateway token live in the same three
-	// columns rather than in three more of their own.
+	// administrator lives in the same three columns rather than in three more
+	// of its own.
 	WPAdminUser     string
 	WPAdminPassword string // decrypted
 	WPAdminEmail    string
@@ -441,16 +441,9 @@ func (site *Site) AdminURL() string {
 	}
 }
 
-// AdminLabel names the credentials on the site page. OpenClaw's gateway takes
-// a shared secret rather than a username, so calling it a password would be
-// telling the operator to look for a login form that is not there.
+// AdminLabel names the credentials on the site page.
 func (site *Site) AdminLabel() string {
-	switch site.Type {
-	case "openclaw":
-		return "OpenClaw login"
-	default:
-		return site.TypeLabel() + " administrator"
-	}
+	return site.TypeLabel() + " administrator"
 }
 
 // Hostnames is every name the site answers on, space-separated, for the nginx
@@ -560,27 +553,6 @@ func (site *Site) Summary(detailed bool) map[string]any {
 				"url":      site.AdminURL(),
 				"user":     site.WPAdminUser,
 				"password": site.WPAdminPassword,
-
-				// OpenClaw's credential is a gateway token rather than a
-				// password against a username: it is what its dashboard asks
-				// for and what a phone's setup code carries, and the site page
-				// labels it accordingly.
-				"token": site.Type == "openclaw",
-			}
-
-			// OpenClaw's dashboard asks for the gateway's WebSocket address as
-			// well as the token, and gets it wrong on its own: it offers `ws://`
-			// even on a page served over HTTPS, which the browser then refuses
-			// to open as mixed content. Handing over the right one is the
-			// difference between a dashboard that connects and a token that
-			// looks like it was rejected.
-			if site.Type == "openclaw" {
-				scheme := "ws"
-				if site.SSL {
-					scheme = "wss"
-				}
-
-				app["websocket"] = scheme + "://" + site.Domain
 			}
 
 			summary["app"] = app

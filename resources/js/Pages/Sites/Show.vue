@@ -893,11 +893,7 @@ const destroy = async () => {
                 <!--
                     For WordPress this goes through the panel, which mints a
                     one-time token and sends the browser on already signed in.
-                    For OpenClaw it asks the gateway for its own tokenized
-                    dashboard link and sends the browser to that, so the
-                    dashboard opens connected rather than on its "How to
-                    connect" screen. Everything else opens the application's
-                    own front door.
+                    Everything else opens the application's own front door.
                 -->
                 <div class="sm:justify-self-end">
                     <a
@@ -908,15 +904,6 @@ const destroy = async () => {
                         class="inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
                     >
                         WP Admin
-                    </a>
-                    <a
-                        v-else-if="site.type === 'openclaw'"
-                        :href="route('sites.openclaw', site.id)"
-                        target="_blank"
-                        rel="noopener"
-                        class="inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                    >
-                        Open dashboard
                     </a>
                     <a
                         v-else-if="site.app"
@@ -1176,43 +1163,20 @@ const destroy = async () => {
                             </button>
                         </dd>
                     </div>
-                    <div v-if="site.app.websocket" class="flex justify-between gap-4">
-                        <dt class="text-slate-500">WebSocket</dt>
-                        <dd class="break-all text-right font-mono text-xs text-slate-700">
-                            {{ site.app.websocket }}
-                        </dd>
-                    </div>
                 </dl>
 
                 <a
                     :href="
                         site.type === 'wordpress'
                             ? route('sites.wp-admin', site.id)
-                            : site.type === 'openclaw'
-                              ? route('sites.openclaw', site.id)
-                              : site.app.url
+                            : site.app.url
                     "
                     target="_blank"
                     rel="noopener"
                     class="mt-4 inline-block rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
                 >
-                    {{
-                        site.type === 'wordpress'
-                            ? 'WP Admin'
-                            : site.type === 'openclaw'
-                              ? 'Open dashboard'
-                              : `Open ${site.type_label}`
-                    }}
+                    {{ site.type === 'wordpress' ? 'WP Admin' : `Open ${site.type_label}` }}
                 </a>
-
-                <p v-if="site.app.websocket" class="mt-4 text-xs text-slate-500">
-                    Open dashboard asks the gateway for a tokenized link and
-                    sends you straight in — no address to paste, and no
-                    <span class="font-mono">openclaw gateway run</span>, which
-                    has been a systemd service since the deployment. The token
-                    and the WebSocket address are here for a phone's setup code
-                    or any other client you point at the gateway.
-                </p>
 
             </div>
 

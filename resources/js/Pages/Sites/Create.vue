@@ -74,12 +74,7 @@ const isPhp = computed(() => typeConfig.value?.runtime === 'php');
 const isManaged = computed(() => !!typeConfig.value?.managed);
 const hasAdminAccount = computed(() => !!typeConfig.value?.admin_account);
 
-// OpenClaw's gateway authenticates with a shared secret rather than a login,
-// so asking for a username and an email would be asking for two things it has
-// nowhere to put.
-const wantsAdminUser = computed(
-    () => hasAdminAccount.value && form.type !== 'openclaw',
-);
+const wantsAdminUser = computed(() => hasAdminAccount.value);
 
 // What is written where, per type, said before the deployment rather than in
 // the console afterwards.
@@ -91,8 +86,6 @@ const starterNote = computed(() => {
             return 'Nextcloud is downloaded, installed and pointed at its database';
         case 'n8n':
             return 'n8n is installed and run as a service, with its data under the site directory';
-        case 'openclaw':
-            return 'OpenClaw is installed and its gateway run as a service';
         case 'laravel':
             return 'a fresh Laravel application is created';
         default:
@@ -393,14 +386,6 @@ const submit = () => form.post(route('sites.store'));
                             placeholder="WordPress Site"
                         />
                     </div>
-                    <div v-if="form.type === 'openclaw'" class="sm:col-span-2">
-                        <p class="text-sm text-slate-600">
-                            The OpenClaw gateway authenticates with a shared
-                            token rather than a login. The panel generates one
-                            and shows it on the site's page after the
-                            deployment.
-                        </p>
-                    </div>
                     <div v-if="wantsAdminUser">
                         <InputLabel for="wp_admin_user" value="Admin username" />
                         <TextInput
@@ -423,7 +408,7 @@ const submit = () => form.post(route('sites.store'));
                             :message="form.errors.wp_admin_email"
                         />
                     </div>
-                    <div v-if="form.type !== 'openclaw'">
+                    <div v-if="hasAdminAccount">
                         <InputLabel
                             for="wp_admin_password"
                             value="Admin password"

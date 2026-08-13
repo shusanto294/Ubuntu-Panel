@@ -251,7 +251,7 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The application's own administrator, for the types where the panel
-	// creates one. OpenClaw's gateway has no login of its own, so the panel
+	// creates one. The panel
 	// puts one in front of it: same username, and a password it generates.
 	if meta.AdminAccount {
 		site.WPTitle = stringInput(input, "wp_title", store.DefaultWPTitle)
@@ -1071,66 +1071,6 @@ func (a *App) sitesWPAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, link, http.StatusSeeOther)
-}
-
-// sitesOpenClaw sends the browser into an OpenClaw dashboard that is already
-// connected.
-//
-// Its Control UI opens on a "How to connect" screen asking for a WebSocket
-// address and a token, with instructions to start a gateway and run a command
-// — three steps, two of which are already done: the gateway is a systemd
-// service that has been running since the deployment, and the token is the one
-// on this page.
-//
-// `openclaw dashboard` is the command that answers the third, so the panel
-// runs it, points the link it prints at the site instead of at loopback, and
-// sends the browser there. A redirect rather than a link rendered into the
-// page, for the same reason WP Admin is one: what comes back carries a token
-// and should not sit on a screen.
-func (a *App) sitesOpenClaw(w http.ResponseWriter, r *http.Request) {
-	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
-	if err != nil || site.Type != "openclaw" {
-		a.notFoundError(w, r, "No such site.")
-
-		return
-	}
-
-	result := proc.Run(sites.OpenClawDashboardCommand(site), 90*time.Second)
-
-	if link := sites.OpenClawDashboardURL(site, result.Output); link != "" {
-		http.Redirect(w, r, link, http.StatusSeeOther)
-
-		return
-	}
-
-	// Back to the panel rather than on to the dashboard.
-	//
-	// Sending them there was worse than useless: its connect screen asks for a
-	// token, the panel is where the token is, and a browser tab showing a
-	// refused connection says nothing about which of the two ends failed. The
-	// site page says what the command printed, and has the token on it.
-	a.Log.Warn("openclaw dashboard printed no link",
-		"site", site.Domain, "output", lastLines(result.Output, 5))
-
-	if sess := session.FromContext(r.Context()); sess != nil {
-		sess.Flash("danger", "The gateway did not hand back a dashboard link, so there was "+
-			"nowhere to send you. Paste the token below into the dashboard's own form. "+
-			"It said: "+lastLines(result.Output, 3))
-	}
-
-	http.Redirect(w, r, "/sites/"+itoa(site.ID), http.StatusSeeOther)
-}
-
-// lastLines is the tail of a command's output, for a log line that has to say
-// what happened without carrying a transcript.
-func lastLines(output string, count int) string {
-	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-
-	if len(lines) > count {
-		lines = lines[len(lines)-count:]
-	}
-
-	return strings.Join(lines, " · ")
 }
 
 // sitesAccess is the SSH/SFTP tab's one endpoint: add an account, change a

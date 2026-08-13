@@ -63,10 +63,6 @@ const MARKS = {
         path: 'M4 12h3m3 0h4m4 0h2M7 12a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0zm7-4a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0zm0 8a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0zm-4-4l4-4m-4 4l4 4',
         tint: 'rose',
     },
-    openclaw: {
-        path: 'M7 4v6a5 5 0 0 0 10 0V4M9 20a3 3 0 0 0 6 0M12 15v5',
-        tint: 'amber',
-    },
     nodejs: { path: 'M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm-2 6v5a2 2 0 0 0 4 0V9', tint: 'emerald' },
     nextjs: { path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 16V9l6 8M15 9v4', tint: 'slate' },
     static: { path: 'M4 5h16v12H4zM4 20h16M9 9l-2 2 2 2m6-4l2 2-2 2', tint: 'violet' },

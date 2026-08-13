@@ -107,9 +107,6 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 		case site.Type == "n8n":
 			list.AddFn("Install n8n", s.installN8N(ctx, site.ID))
 
-		case site.Type == "openclaw":
-			list.AddFn("Install OpenClaw", s.installOpenClaw(ctx, site.ID))
-
 		default:
 			if site.Repository != "" {
 				clone()
@@ -160,7 +157,7 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	case "nextcloud":
 		list.AddFn("Point Nextcloud at the final URL", s.pointNextcloudAtURL(ctx, site.ID))
 
-	case "n8n", "openclaw":
+	case "n8n":
 		// The environment file names the URL and whether the cookie may be
 		// marked secure, and both are only settled now. Rewritten, then the
 		// service restarted onto it.
@@ -231,7 +228,7 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 
 	list := &tasks.List{}
 
-	if site.IsProxied() {
+	if site.IsProxied() || proc.Ok("test -f "+proc.Quote(UnitPath(site))) {
 		service := site.ServiceName()
 
 		list.Add("Stop the application service",
