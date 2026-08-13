@@ -134,23 +134,37 @@ func PasswordFilePath(site *store.Site) string {
 // or `1 hr` is a configuration nginx refuses — for every site on the machine,
 // not just this one.
 var CacheTTLs = []struct {
-	Value string
-	Label string
+	Value   string
+	Label   string
+	Seconds int
 }{
-	{"1m", "1 minute"},
-	{"5m", "5 minutes"},
-	{"10m", "10 minutes"},
-	{"30m", "30 minutes"},
-	{"1h", "1 hour"},
-	{"6h", "6 hours"},
-	{"12h", "12 hours"},
-	{"1d", "1 day"},
+	{"1m", "1 minute", 60},
+	{"5m", "5 minutes", 300},
+	{"10m", "10 minutes", 600},
+	{"30m", "30 minutes", 1800},
+	{"1h", "1 hour", 3600},
+	{"6h", "6 hours", 21600},
+	{"12h", "12 hours", 43200},
+	{"1d", "1 day", 86400},
 }
 
 // DefaultCacheTTL is what a site that has never been configured caches for.
-// Ten minutes is long enough to take the repeat visitors off PHP and short
-// enough that a published change appears while somebody is still looking.
+// Twelve hours: a cache whose entries expire before the next visitor arrives
+// is a cache that only ever costs.
 const DefaultCacheTTL = "12h"
+
+// CacheSeconds is the same lifetime as a number, which is what Redis and the
+// object-cache plugin take — nginx is the only one of the two that reads
+// `12h`.
+func CacheSeconds(ttl string) int {
+	for _, entry := range CacheTTLs {
+		if entry.Value == ttl {
+			return entry.Seconds
+		}
+	}
+
+	return 43200
+}
 
 // ValidCacheTTL reports whether a lifetime is one of the offered ones.
 func ValidCacheTTL(ttl string) bool {

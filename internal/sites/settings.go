@@ -177,20 +177,22 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, mode, ttl string) 
 
 	previous := site.CacheMode
 
-	// Redis first, while nothing has been written: the failures here are a
-	// server that is not installed and a plugin that will not download, and
-	// both should leave the site exactly as it was.
-	if mode == "redis" && previous != "redis" {
-		if err := s.EnableRedisCache(ctx, site); err != nil {
-			return err
-		}
-	}
-
 	s.Store.SetSiteCache(site.ID, mode, ttl)
 
 	updated, err := s.Store.FindSite(ctx, site.ID)
 	if err != nil {
 		return errors.New("that site no longer exists")
+	}
+
+	// Written from the stored settings, so changing the lifetime goes through
+	// the same path as turning it on — and put back the way it was if the
+	// machine will not take it.
+	if mode == "redis" {
+		if err := s.EnableRedisCache(ctx, updated); err != nil {
+			s.Store.SetSiteCache(site.ID, previous, site.CacheTTL)
+
+			return err
+		}
 	}
 
 	restore := func() {

@@ -1571,17 +1571,49 @@ const destroy = async () => {
                                     Redis is not installed on this machine.
                                     Install it from the Apps page first.
                                 </span>
-                                <span
-                                    v-else-if="cacheMode === 'redis'"
-                                    class="mt-2 block text-xs text-slate-500"
-                                >
-                                    The panel installs the Redis Object Cache
-                                    plugin, points wp-config.php at Redis with
-                                    the password it was configured with, and
-                                    installs the drop-in. This site's keys are
-                                    prefixed
-                                    <span class="font-mono">{{ cache.redis_prefix }}</span>
-                                    so they cannot be read by another site.
+
+                                <span v-else-if="cacheMode === 'redis'" class="mt-3 block">
+                                    <span class="block text-xs font-medium text-slate-600">
+                                        Keep an entry at most
+                                    </span>
+                                    <select
+                                        v-model="cacheTTL"
+                                        class="mt-1 w-52 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                                    >
+                                        <option
+                                            v-for="entry in cache.lifetimes"
+                                            :key="entry.value"
+                                            :value="entry.value"
+                                        >
+                                            {{ entry.label }}
+                                        </option>
+                                    </select>
+                                    <!--
+                                        Said plainly because it is not the same
+                                        clock as the one above it. WordPress
+                                        replaces an entry the moment what it
+                                        describes changes; this is only how long
+                                        one may sit there if nothing ever does.
+                                    -->
+                                    <span class="mt-2 block text-xs text-slate-500">
+                                        A ceiling, not a refresh interval.
+                                        WordPress replaces an entry as soon as
+                                        what it holds changes — this is how long
+                                        one may sit in Redis untouched if
+                                        nothing ever does. Left unset, entries
+                                        would only ever leave when Redis reaches
+                                        the memory cap and evicts the
+                                        least-recently-used.
+                                    </span>
+                                    <span class="mt-2 block text-xs text-slate-500">
+                                        The panel installs the Redis Object
+                                        Cache plugin, points wp-config.php at
+                                        Redis with the password it was
+                                        configured with, and installs the
+                                        drop-in. This site's keys are prefixed
+                                        <span class="font-mono">{{ cache.redis_prefix }}</span>
+                                        so they cannot be read by another site.
+                                    </span>
                                 </span>
                             </span>
                         </label>
@@ -1656,8 +1688,10 @@ const destroy = async () => {
                             every other site on the machine alone.
                         </li>
                         <li>
-                            Redis holds what it is given until the application
-                            replaces it — there is no lifetime to set.
+                            An entry lives until WordPress replaces it, or until
+                            the ceiling on the left, whichever comes first. It
+                            is a backstop for keys nothing invalidates, not a
+                            refresh interval.
                         </li>
                     </ul>
                 </template>
@@ -1696,8 +1730,10 @@ const destroy = async () => {
                             }}
                         </dd>
                     </div>
-                    <div v-if="cache.mode === 'nginx'" class="flex justify-between gap-4">
-                        <dt class="text-slate-500">Lifetime</dt>
+                    <div v-if="cache.mode !== 'off'" class="flex justify-between gap-4">
+                        <dt class="text-slate-500">
+                            {{ cache.mode === 'redis' ? 'At most' : 'Lifetime' }}
+                        </dt>
                         <dd class="text-slate-800">{{ cache.ttl }}</dd>
                     </div>
                     <div v-if="cache.mode !== 'redis'" class="min-w-0">

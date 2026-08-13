@@ -63,6 +63,9 @@ func wpCommand(site *store.Site) string {
 // The constants are written into wp-config.php and the plugin's drop-in is
 // installed, which is what WordPress actually reads — activating the plugin
 // alone changes nothing.
+//
+// Run again whenever the settings change: every step of it is idempotent, so
+// changing the lifetime is the same code path as turning it on.
 func (s *Service) EnableRedisCache(ctx context.Context, site *store.Site) error {
 	if !RedisSupported(site) {
 		return fmt.Errorf("the panel cannot wire a %s site into Redis by itself",
@@ -95,16 +98,23 @@ func (s *Service) EnableRedisCache(ctx context.Context, site *store.Site) error 
 			lastLine(result.Output))
 	}
 
-	// The password Redis was configured with when it was installed. Without it
-	// every connection is refused and WordPress falls back to the database —
-	// slower than no cache at all, and silent about it.
+	// WP_REDIS_MAXTTL is a ceiling, not a refresh interval: an entry is
+	// replaced the moment WordPress changes what it holds, and this is only
+	// how long one may sit there untouched if nothing ever does. Without it
+	// entries never expire at all and are only ever pushed out by Redis
+	// reaching the memory cap — which is a reasonable way to run a cache, but
+	// it means a key nothing invalidates can outlive the thing it describes.
 	settings := []string{
 		"config set WP_REDIS_HOST 127.0.0.1",
 		"config set WP_REDIS_PORT 6379 --raw",
 		"config set WP_REDIS_PREFIX " + proc.Quote(RedisPrefix(site)),
+		fmt.Sprintf("config set WP_REDIS_MAXTTL %d --raw", CacheSeconds(CacheTTLOf(site))),
 		"config set WP_CACHE true --raw",
 	}
 
+	// The password Redis was configured with when it was installed. Without it
+	// every connection is refused and WordPress falls back to the database —
+	// slower than no cache at all, and silent about it.
 	if password := s.Store.SecretSetting("redis_password"); password != "" {
 		settings = append(settings, "config set WP_REDIS_PASSWORD "+proc.Quote(password))
 	}

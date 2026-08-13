@@ -398,3 +398,27 @@ func TestRedisIsOfferedOnlyWherePanelCanWireIt(t *testing.T) {
 		}
 	}
 }
+
+// nginx reads `12h`; Redis and the object-cache plugin take a number of
+// seconds. One menu, two forms of the same answer.
+func TestCacheLifetimeHasBothForms(t *testing.T) {
+	cases := map[string]int{"1m": 60, "1h": 3600, "12h": 43200, "1d": 86400}
+
+	for ttl, want := range cases {
+		if got := CacheSeconds(ttl); got != want {
+			t.Errorf("CacheSeconds(%q) = %d, want %d", ttl, got, want)
+		}
+	}
+
+	// Anything unrecognised falls back rather than reaching wp-config.php as a
+	// zero, which the plugin reads as "never expire".
+	if CacheSeconds("half an hour") != CacheSeconds(DefaultCacheTTL) {
+		t.Fatal("an unknown lifetime does not fall back to the default")
+	}
+
+	for _, entry := range CacheTTLs {
+		if entry.Seconds <= 0 {
+			t.Fatalf("%s has no seconds against it", entry.Value)
+		}
+	}
+}
