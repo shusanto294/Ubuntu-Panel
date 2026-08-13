@@ -110,15 +110,23 @@ const submit = () => {
 
             <div>
                 <InputLabel for="local_part" value="Address" />
+                <!--
+                    A third for the name and the rest for the domain. The two
+                    halves were the other way round, so `info` had room for a
+                    sentence and the domain it belongs to was cut to
+                    `@bdwebgu…` — which is the half you cannot type and
+                    therefore the half that has to be readable.
+                -->
                 <div class="mt-1 flex items-center">
                     <TextInput
                         id="local_part"
                         v-model="form.local_part"
-                        class="block w-full rounded-r-none"
+                        class="block w-[30%] shrink-0 rounded-r-none"
                         placeholder="info"
                     />
                     <span
-                        class="max-w-[45%] truncate rounded-r-lg border border-l-0 border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                        class="min-w-0 flex-1 truncate rounded-r-lg border border-l-0 border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                        :title="`@${domain?.domain}`"
                         >@{{ domain?.domain }}</span
                     >
                 </div>
