@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import FileIcon from '@/Components/FileIcon.vue';
+import FolderTree from '@/Components/FolderTree.vue';
 import TaskProgress from '@/Components/TaskProgress.vue';
 import { formatRelative } from '@/time';
 import { Head, Link, router } from '@inertiajs/vue3';
@@ -151,6 +152,349 @@ const saveJobs = () =>
         { jobs: JSON.stringify(jobs.value) },
         { preserveScroll: true },
     );
+
+// ---- File manager.
+//
+// Everything here names a path relative to the site's own directory, and the
+// panel resolves it against that root and refuses anything that leaves — so a
+// path typed into this page cannot reach the rest of the machine.
+const files = ref({ path: '/', entries: [], error: null });
+const filesLoading = ref(false);
+const editing = ref(null);
+
+const loadFiles = async (where = '/') => {
+    filesLoading.value = true;
+
+    try {
+        const { data } = await window.axios.get(route('sites.files', props.site.id), {
+            params: { path: where },
+        });
+
+        files.value = {
+            path: data.path ?? where,
+            entries: data.entries ?? [],
+            error: data.error ?? null,
+        };
+        selected.value = [];
+        anchor.value = null;
+
+        syncTree(files.value.path, files.value.entries);
+    } catch {
+        files.value = { path: where, entries: [], error: 'The folder could not be read.' };
+    } finally {
+        filesLoading.value = false;
+    }
+};
+
+// ---- The folder tree.
+//
+// The listing says what is in one folder; the tree says where that folder is,
+// which is the thing a listing on its own cannot tell you. It holds only
+// directories, and a branch is read from the server the first time it is
+// opened rather than the whole site being walked up front.
+const tree = ref([
+    { name: props.site.domain, path: '/', open: false, loading: false, children: null },
+]);
+
+const foldersFrom = (entries) =>
+    (entries ?? [])
+        .filter((entry) => entry.directory)
+        .map((entry) => ({
+            name: entry.name,
+            path: entry.path,
+            open: false,
+            loading: false,
+            children: null,
+        }));
+
+const loadBranch = async (node) => {
+    node.loading = true;
+
+    try {
+        const { data } = await window.axios.get(route('sites.files', props.site.id), {
+            params: { path: node.path },
+        });
+
+        node.children = foldersFrom(data.entries);
+    } catch {
+        node.children = [];
+    } finally {
+        node.loading = false;
+    }
+};
+
+const toggleBranch = async (node) => {
+    if (node.open) {
+        node.open = false;
+
+        return;
+    }
+
+    if (!node.children) await loadBranch(node);
+
+    node.open = true;
+};
+
+// Walking to a folder in the listing opens the tree down to it, and the
+// folders it just read become that branch — so the two halves cannot drift,
+// and a folder made or deleted here shows in both.
+const syncTree = async (path, entries) => {
+    let node = tree.value[0];
+    node.open = true;
+
+    for (const part of String(path).split('/').filter(Boolean)) {
+        if (!node.children) await loadBranch(node);
+
+        const next = (node.children ?? []).find((child) => child.name === part);
+        if (!next) return;
+
+        next.open = true;
+        node = next;
+    }
+
+    // Keep the branches already opened underneath open.
+    const opened = new Map(
+        (node.children ?? []).map((child) => [child.name, child]),
+    );
+
+    node.children = foldersFrom(entries).map((child) => {
+        const had = opened.get(child.name);
+
+        return had ? { ...child, open: had.open, children: had.children } : child;
+    });
+};
+
+// The path split into the links above the listing.
+const crumbs = computed(() => {
+    const parts = files.value.path.split('/').filter(Boolean);
+    const trail = [{ name: props.site.domain, path: '/' }];
+
+    parts.forEach((part, index) => {
+        trail.push({ name: part, path: '/' + parts.slice(0, index + 1).join('/') });
+    });
+
+    return trail;
+});
+
+const parentPath = computed(() => {
+    const parts = files.value.path.split('/').filter(Boolean);
+    parts.pop();
+
+    return '/' + parts.join('/');
+});
+
+const openEntry = (entry) => {
+    if (entry.directory) return loadFiles(entry.path);
+
+    return openEditor(entry);
+};
+
+const openEditor = async (entry) => {
+    editing.value = { path: entry.path, contents: '', loading: true, error: null };
+
+    try {
+        const { data } = await window.axios.get(route('sites.file', props.site.id), {
+            params: { path: entry.path },
+        });
+
+        editing.value = {
+            path: entry.path,
+            contents: data.contents ?? '',
+            loading: false,
+            error: data.error ?? null,
+        };
+    } catch {
+        editing.value = {
+            path: entry.path,
+            contents: '',
+            loading: false,
+            error: 'That file could not be opened.',
+        };
+    }
+};
+
+const saveFile = async () => {
+    const { data } = await window.axios.post(route('sites.file.save', props.site.id), {
+        path: editing.value.path,
+        contents: editing.value.contents,
+    });
+
+    if (data.error) {
+        editing.value.error = data.error;
+
+        return;
+    }
+
+    editing.value = null;
+    loadFiles(files.value.path);
+};
+
+// One endpoint for new, rename and delete: three verbs against one path, and
+// three routes would be three places to get the path check wrong.
+const fileAction = async (action, entry, extra = {}) => {
+    const { data } = await window.axios.post(route('sites.files.action', props.site.id), {
+        action,
+        path: entry,
+        ...extra,
+    });
+
+    if (data.error) {
+        files.value.error = data.error;
+
+        return;
+    }
+
+    files.value.error = null;
+    loadFiles(files.value.path);
+};
+
+const newFolder = () => {
+    const name = window.prompt('Name for the new folder');
+    if (!name) return;
+
+    fileAction('folder', `${files.value.path}/${name}`);
+};
+
+const newFile = () => {
+    const name = window.prompt('Name for the new file');
+    if (!name) return;
+
+    fileAction('file', `${files.value.path}/${name}`);
+};
+
+const renameEntry = (entry) => {
+    const name = window.prompt(`Rename ${entry.name} to`, entry.name);
+    if (!name || name === entry.name) return;
+
+    fileAction('rename', entry.path, { to: `${files.value.path}/${name}` });
+};
+
+const humanSize = (bytes) => {
+    if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
+    if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+    if (bytes >= 1 << 10) return `${Math.round(bytes / (1 << 10))} KB`;
+
+    return `${bytes} B`;
+};
+
+// ---- Selection, the way a file manager does it: a click picks one, a
+// modifier adds or extends, and a double click opens. No checkbox column —
+// Finder has none, and the toolbar reads the selection just as well without.
+const selected = ref([]);
+const anchor = ref(null);
+
+const isSelected = (entry) => selected.value.includes(entry.name);
+
+const selectEntry = (entry, event) => {
+    const names = files.value.entries.map((one) => one.name);
+
+    if (event.shiftKey && anchor.value !== null) {
+        const from = names.indexOf(anchor.value);
+        const to = names.indexOf(entry.name);
+
+        if (from !== -1 && to !== -1) {
+            const [start, end] = from < to ? [from, to] : [to, from];
+            selected.value = names.slice(start, end + 1);
+
+            return;
+        }
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+        selected.value = isSelected(entry)
+            ? selected.value.filter((name) => name !== entry.name)
+            : [...selected.value, entry.name];
+        anchor.value = entry.name;
+
+        return;
+    }
+
+    selected.value = [entry.name];
+    anchor.value = entry.name;
+};
+
+const downloadURL = (entry) =>
+    `${route('sites.download', props.site.id)}?path=${encodeURIComponent(entry.path)}`;
+
+const zipSelected = async () => {
+    if (!selected.value.length) return;
+
+    const name = window.prompt(
+        'Name for the archive',
+        selected.value.length === 1 ? selected.value[0] : 'archive',
+    );
+
+    if (!name) return;
+
+    await fileAction('zip', files.value.path, {
+        names: JSON.stringify(selected.value),
+        name,
+    });
+
+    selected.value = [];
+};
+
+const deleteSelected = async () => {
+    if (!selected.value.length) return;
+
+    const go = await confirmDanger(
+        `Delete ${selected.value.length} item${selected.value.length === 1 ? '' : 's'}?`,
+        'Folders are removed with everything in them.',
+        'Delete',
+    );
+
+    if (!go) return;
+
+    for (const name of selected.value) {
+        await fileAction('delete', `${files.value.path}/${name}`);
+    }
+
+    selected.value = [];
+};
+
+// What the toolbar acts on when exactly one thing is picked.
+const onlySelected = computed(() =>
+    selected.value.length === 1
+        ? files.value.entries.find((entry) => entry.name === selected.value[0])
+        : null,
+);
+
+// ---- Upload. Streamed as multipart so a large file is not held in memory at
+// either end, and the folder it lands in is the one on screen.
+const uploading = ref(false);
+const uploadInput = ref(null);
+const dragging = ref(false);
+
+const uploadFiles = async (list) => {
+    if (!list || !list.length) return;
+
+    const body = new FormData();
+    body.append('path', files.value.path);
+
+    for (const file of list) body.append('files[]', file, file.name);
+
+    uploading.value = true;
+
+    try {
+        const { data } = await window.axios.post(
+            route('sites.upload', props.site.id),
+            body,
+        );
+
+        files.value.error = data.error ?? null;
+    } catch {
+        files.value.error = 'The upload did not finish.';
+    } finally {
+        uploading.value = false;
+        if (uploadInput.value) uploadInput.value.value = '';
+        loadFiles(files.value.path);
+    }
+};
+
+const onDrop = (event) => {
+    dragging.value = false;
+    uploadFiles(event.dataTransfer?.files);
+};
 
 // ---- SSH and SFTP accounts.
 //
@@ -495,6 +839,47 @@ const destroy = async () => {
                 </template>
             </div>
 
+            <!--
+                The three facts somebody reads off a site page and puts into
+                something else. They were a row of their own under this card,
+                which made the top of the page two blocks saying one thing
+                between them — and pushed the tabs off the first screen.
+            -->
+            <dl
+                class="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 border-t border-slate-100 pt-5 text-sm sm:grid-cols-4"
+            >
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        Domain
+                    </dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ site.domain }}
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">Type</dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ site.type_label }}
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        {{ site.is_proxied ? 'App port' : 'PHP' }}
+                    </dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ site.is_proxied ? site.app_port : site.php_version }}
+                    </dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs uppercase tracking-wide text-slate-400">
+                        IP address
+                    </dt>
+                    <dd class="mt-1 truncate font-medium text-slate-800">
+                        {{ resolution?.expected || '—' }}
+                    </dd>
+                </div>
+            </dl>
+
             <p
                 v-if="!site.ssl"
                 class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
@@ -540,11 +925,11 @@ const destroy = async () => {
             half-built site with no way to remove it.
         -->
         <!--
-            What the site is, before what can be done to it — the three facts
-            somebody reads off a site page and puts into something else.
+            The same facts for a site that is not live — where the card above
+            them is not on screen to carry them.
         -->
         <dl
-            v-if="!busy"
+            v-if="!busy && !live"
             class="mb-6 grid grid-cols-2 gap-x-8 gap-y-4 border-b border-slate-200 pb-6 text-sm sm:grid-cols-4"
         >
             <div class="min-w-0">
@@ -1177,12 +1562,12 @@ const destroy = async () => {
         -->
         <div
             v-if="!busy && tab === 'files'"
-            class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            class="flex h-[calc(100vh-19rem)] min-h-[26rem] flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
             @dragover.prevent="dragging = true"
             @dragleave.prevent="dragging = false"
             @drop.prevent="onDrop"
         >
-            <div class="border-b border-slate-200 bg-slate-50/80 px-5 py-3">
+            <div class="shrink-0 border-b border-slate-200 bg-slate-50/80 px-5 py-3">
                 <nav class="flex flex-wrap items-center gap-1 text-sm text-slate-500">
                     <template v-for="(crumb, index) in crumbs" :key="crumb.path">
                         <span v-if="index" class="text-slate-300">›</span>
@@ -1275,32 +1660,57 @@ const destroy = async () => {
 
             <p
                 v-if="dragging"
-                class="border-b border-brand-200 bg-brand-50 px-5 py-2.5 text-sm text-brand-800"
+                class="shrink-0 border-b border-brand-200 bg-brand-50 px-5 py-2.5 text-sm text-brand-800"
             >
                 Drop the files to upload them into {{ files.path }}
             </p>
 
             <p
                 v-if="files.error"
-                class="border-b border-rose-100 bg-rose-50 px-5 py-2.5 text-sm text-rose-700"
+                class="shrink-0 border-b border-rose-100 bg-rose-50 px-5 py-2.5 text-sm text-rose-700"
             >
                 {{ files.error }}
             </p>
 
-            <p v-if="filesLoading" class="px-5 py-10 text-sm text-slate-500">Reading…</p>
+            <!--
+                The tree and the listing scroll separately inside a card of a
+                fixed height, so a folder with two thousand files in it scrolls
+                where it is rather than making the whole page long — and the
+                path bar and the toolbar stay where they were put.
+            -->
+            <div class="flex min-h-0 flex-1">
+                <div
+                    class="hidden w-60 shrink-0 overflow-auto border-r border-slate-200 bg-slate-50/40 px-2 py-3 md:block"
+                >
+                    <FolderTree
+                        :nodes="tree"
+                        :current="files.path"
+                        @open="loadFiles"
+                        @toggle="toggleBranch"
+                    />
+                </div>
 
-            <div v-else class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                    <thead>
-                        <tr
-                            class="border-b border-slate-200 text-left text-xs font-medium text-slate-500"
-                        >
-                            <th class="px-5 py-2 font-medium">Name</th>
-                            <th class="w-28 px-3 py-2 font-medium">Size</th>
-                            <th class="w-44 px-3 py-2 font-medium">Date modified</th>
-                            <th class="w-32 px-5 py-2 font-medium">Permissions</th>
-                        </tr>
-                    </thead>
+                <div class="min-w-0 flex-1 overflow-auto">
+                    <p v-if="filesLoading" class="px-5 py-10 text-sm text-slate-500">
+                        Reading…
+                    </p>
+
+                    <table v-else class="min-w-full text-sm">
+                        <!--
+                            The listing scrolls under its own headings, which
+                            is the only way a column is still labelled four
+                            hundred rows down.
+                        -->
+                        <thead class="sticky top-0 z-10 bg-white">
+                            <tr
+                                class="border-b border-slate-200 text-left text-xs font-medium text-slate-500"
+                            >
+                                <th class="px-5 py-2 font-medium">Name</th>
+                                <th class="w-28 px-3 py-2 font-medium">Size</th>
+                                <th class="w-44 px-3 py-2 font-medium">Date modified</th>
+                                <th class="w-32 px-5 py-2 font-medium">Permissions</th>
+                            </tr>
+                        </thead>
                     <tbody>
                         <tr v-if="files.path !== '/'">
                             <td colspan="4" class="px-5 py-1.5">
@@ -1366,11 +1776,12 @@ const destroy = async () => {
                             </td>
                         </tr>
                     </tbody>
-                </table>
+                    </table>
+                </div>
             </div>
 
             <p
-                class="border-t border-slate-200 bg-slate-50/80 px-5 py-2 text-xs text-slate-500"
+                class="shrink-0 border-t border-slate-200 bg-slate-50/80 px-5 py-2 text-xs text-slate-500"
             >
                 {{ files.entries.length }}
                 {{ files.entries.length === 1 ? 'item' : 'items' }} · double-click to
