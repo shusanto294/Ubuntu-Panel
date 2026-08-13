@@ -246,9 +246,14 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 				strings.ReplaceAll(site.Domain, ".", "-"))).Optional()
 	}
 
+	// The cache's zone file and its stored pages go with the vhost that named
+	// them. A zone declared for a site that no longer exists still holds its
+	// shared memory, and the pages are a copy of a site somebody deleted.
 	list.Add("Remove the nginx vhost",
-		fmt.Sprintf("sudo rm -f %s; sudo rm -f %s; sudo nginx -t && sudo systemctl reload nginx",
-			proc.Quote(EnabledPath(site)), proc.Quote(AvailablePath(site))))
+		fmt.Sprintf("sudo rm -f %s; sudo rm -f %s; sudo rm -f %s; sudo rm -rf %s; "+
+			"sudo nginx -t && sudo systemctl reload nginx",
+			proc.Quote(EnabledPath(site)), proc.Quote(AvailablePath(site)),
+			proc.Quote(CacheConfigPath(site)), proc.Quote(CacheDir(site))))
 
 	// Records the panel published are the panel's to take away. A provider
 	// that has already lost them is not a reason to keep the site row, so this

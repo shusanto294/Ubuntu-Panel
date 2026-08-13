@@ -50,6 +50,13 @@ type Site struct {
 	// defaults are what the pool was configured with.
 	PHPSettings string
 
+	// CacheEnabled turns on nginx's page cache for this site, and CacheTTL is
+	// how long a cached page is served before nginx asks the application
+	// again. Off unless somebody asked for it: a cache in front of a site
+	// whose pages are personal serves one visitor's page to the next.
+	CacheEnabled bool
+	CacheTTL     string
+
 	CreatedAt string
 }
 
@@ -62,7 +69,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	app_port, start_command, build_command, repository, branch,
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
 	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
-	php_settings, created_at`
+	php_settings, cache_enabled, cache_ttl, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -74,7 +81,8 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var dnsAccountID, databaseID, userID, appPort nullInt
 	var aliases, nodeVersion, lastError, startCommand, buildCommand text
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
-	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings text
+	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL text
+	var cacheEnabled nullInt
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -82,7 +90,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&startCommand, &buildCommand, &repository, &site.Branch,
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
-		&site.DNSProxied, &phpSettings, &site.CreatedAt)
+		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -104,6 +112,8 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.DNSRecordIDs = dnsRecordIDs.String()
 	site.DNSContent = dnsContent.String()
 	site.PHPSettings = phpSettings.String()
+	site.CacheEnabled = cacheEnabled.Int64 == 1
+	site.CacheTTL = cacheTTL.String()
 
 	site.Aliases = decodeStringList(aliases.String())
 
@@ -229,6 +239,14 @@ func (s *Store) SetSiteDNS(id int64, zoneID, recordIDs string) {
 func (s *Store) SetSitePHPSettings(id int64, encoded string) {
 	s.db.Exec(`UPDATE sites SET php_settings = ?, updated_at = datetime('now')
 	           WHERE id = ?`, nullText(encoded), id)
+}
+
+// SetSiteCache stores whether nginx caches this site's pages, and for how
+// long. The vhost and the cache's own conf.d file are written from it, so this
+// is only part of the change.
+func (s *Store) SetSiteCache(id int64, enabled bool, ttl string) {
+	s.db.Exec(`UPDATE sites SET cache_enabled = ?, cache_ttl = ?, updated_at = datetime('now')
+	           WHERE id = ?`, enabled, nullText(ttl), id)
 }
 
 // SetSiteWebDirectory moves the document root inside the site directory.
@@ -510,6 +528,8 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		summary["build_command"] = site.BuildCommand
 		summary["service_name"] = serviceName
 		summary["web_directory"] = site.WebDirectory
+		summary["cache_enabled"] = site.CacheEnabled
+		summary["cache_ttl"] = site.CacheTTL
 		summary["wp_admin_user"] = site.WPAdminUser
 		summary["wp_admin_email"] = site.WPAdminEmail
 

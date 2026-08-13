@@ -126,6 +126,201 @@ func PasswordFilePath(site *store.Site) string {
 	return "/etc/nginx/panel-auth/" + site.Domain
 }
 
+// ------------------------------------------------------------- page cache
+
+// CacheTTLs are the lifetimes the Cache tab offers, longest last.
+//
+// A menu rather than a box: the value goes into nginx as a time, and `10 min`
+// or `1 hr` is a configuration nginx refuses — for every site on the machine,
+// not just this one.
+var CacheTTLs = []struct {
+	Value string
+	Label string
+}{
+	{"1m", "1 minute"},
+	{"5m", "5 minutes"},
+	{"10m", "10 minutes"},
+	{"30m", "30 minutes"},
+	{"1h", "1 hour"},
+	{"6h", "6 hours"},
+	{"12h", "12 hours"},
+	{"1d", "1 day"},
+}
+
+// DefaultCacheTTL is what a site that has never been configured caches for.
+// Ten minutes is long enough to take the repeat visitors off PHP and short
+// enough that a published change appears while somebody is still looking.
+const DefaultCacheTTL = "10m"
+
+// ValidCacheTTL reports whether a lifetime is one of the offered ones.
+func ValidCacheTTL(ttl string) bool {
+	for _, entry := range CacheTTLs {
+		if entry.Value == ttl {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CacheTTLOf is the site's lifetime, with the default for a site whose stored
+// value is empty or no longer offered.
+func CacheTTLOf(site *store.Site) string {
+	if ValidCacheTTL(site.CacheTTL) {
+		return site.CacheTTL
+	}
+
+	return DefaultCacheTTL
+}
+
+// Cacheable reports whether the panel will put a page cache in front of this
+// kind of site.
+//
+// Static sites are already nginx reading a file off disk, so a cache in front
+// of that is a second copy of the same file. Nextcloud is every page personal
+// to whoever asked for it, and its own manual says not to. The rest — PHP
+// applications and proxied ones — are a process rendering a page per request,
+// which is the thing worth not doing twice.
+func Cacheable(site *store.Site) bool {
+	switch site.Type {
+	case "static", "nextcloud":
+		return false
+	}
+
+	return true
+}
+
+// CacheActive is whether this site's vhost should carry cache directives at
+// all: asked for, and of a kind the panel will cache.
+func CacheActive(site *store.Site) bool {
+	return site.CacheEnabled && Cacheable(site)
+}
+
+// CacheDir is where the cached responses are written, and CacheConfigPath is
+// the conf.d file that declares the zone.
+//
+// The zone has to be declared in nginx's http context, which a vhost is not
+// in — so every cached site owns one small file in conf.d beside its vhost.
+func CacheDir(site *store.Site) string {
+	return "/var/cache/ubuntu-panel/" + site.Domain
+}
+
+func CacheConfigPath(site *store.Site) string {
+	return "/etc/nginx/conf.d/panel-cache-" + site.Domain + ".conf"
+}
+
+// CacheZone is the shared-memory zone's name: one per site, and a name nginx
+// will take, which a domain with dots and dashes in it is not.
+func CacheZone(site *store.Site) string {
+	return "panelcache_" + sanitiseIdentifier(site.Domain)
+}
+
+// RenderCacheConfig is that conf.d file.
+//
+// max_size caps what one site may take on disk and inactive throws away what
+// nothing has asked for in an hour, so a cache nobody purges cannot fill the
+// disk the sites are served from.
+func RenderCacheConfig(site *store.Site) string {
+	directive := "fastcgi_cache_path"
+	if site.IsProxied() {
+		directive = "proxy_cache_path"
+	}
+
+	return fmt.Sprintf(
+		"# Managed by %s — page cache for %s.\n"+
+			"# The zone has to live in the http context; the vhost names it.\n"+
+			"%s %s levels=1:2 keys_zone=%s:10m inactive=60m max_size=256m;\n",
+		config.Name, site.Domain, directive, CacheDir(site), CacheZone(site))
+}
+
+// cacheSkipRules decide, per request, whether this one may be served from the
+// cache or stored in it.
+//
+// The whole risk of a page cache is here. A logged-in visitor must never be
+// handed a page built for somebody else, and a form must never be answered
+// from a copy — so anything carrying a session, anything posted, and every
+// path an application uses for its own back end is left to go through.
+func cacheSkipRules(site *store.Site) string {
+	var out strings.Builder
+
+	out.WriteString(
+		"\n" +
+			"    # Page cache. Anything that could be personal skips it — see\n" +
+			"    # cacheSkipRules in nginx.go.\n" +
+			"    set $skip_cache 0;\n" +
+			"\n" +
+			"    if ($request_method = POST) { set $skip_cache 1; }\n" +
+			"    if ($query_string != \"\") { set $skip_cache 1; }\n" +
+			"    if ($http_authorization != \"\") { set $skip_cache 1; }\n")
+
+	if site.Type == "wordpress" {
+		out.WriteString(
+			"    if ($request_uri ~* \"/wp-admin/|/wp-json/|/xmlrpc\\.php|wp-.*\\.php" +
+				"|/feed/|/cart|/checkout|/my-account|sitemap(_index)?\\.xml\") { set $skip_cache 1; }\n" +
+				"    if ($http_cookie ~* \"comment_author|wordpress_[a-f0-9]+|wp-postpass" +
+				"|wordpress_no_cache|wordpress_logged_in|woocommerce_items_in_cart" +
+				"|woocommerce_cart_hash\") { set $skip_cache 1; }\n")
+
+		return out.String()
+	}
+
+	// Everything else: a session cookie of any of the usual names is enough to
+	// treat the request as somebody's own.
+	out.WriteString(
+		"    if ($http_cookie ~* \"PHPSESSID|laravel_session|remember_web|session|_token" +
+			"|logged_in\") { set $skip_cache 1; }\n")
+
+	return out.String()
+}
+
+// cacheDirectives are what goes inside the location that talks to the
+// application.
+//
+// use_stale plus background_update is the part that earns the cache its
+// keep: an expired page is served immediately and refreshed behind the
+// visitor, and a PHP-FPM that has fallen over serves the last good copy
+// instead of a 502. cache_lock stops a hundred simultaneous misses becoming a
+// hundred simultaneous renders of the same page.
+func cacheDirectives(site *store.Site, tls bool) string {
+	prefix := "fastcgi"
+	if site.IsProxied() {
+		prefix = "proxy"
+	}
+
+	// The proxied form carries the WebSocket condition too: it replaces the
+	// plain proxy_cache_bypass rather than sitting beside it.
+	upgrade := ""
+	if site.IsProxied() {
+		upgrade = " $http_upgrade"
+	}
+
+	var out strings.Builder
+
+	fmt.Fprintf(&out,
+		"\n"+
+			"        # Page cache, %s. X-Panel-Cache says HIT, MISS or BYPASS.\n"+
+			"        %[2]s_cache %[3]s;\n"+
+			"        %[2]s_cache_key \"$scheme$request_method$host$request_uri\";\n"+
+			"        %[2]s_cache_valid 200 301 302 %[4]s;\n"+
+			"        %[2]s_cache_bypass $skip_cache%[5]s;\n"+
+			"        %[2]s_no_cache $skip_cache;\n"+
+			"        %[2]s_cache_use_stale error timeout updating invalid_header http_500 http_503;\n"+
+			"        %[2]s_cache_background_update on;\n"+
+			"        %[2]s_cache_lock on;\n"+
+			"        add_header X-Panel-Cache $upstream_cache_status always;\n",
+		CacheTTLOf(site), prefix, CacheZone(site), CacheTTLOf(site), upgrade)
+
+	// add_header in a location replaces every add_header inherited from the
+	// server block, so the one the server block sets has to be repeated here
+	// or a cached site quietly stops sending HSTS.
+	if tls {
+		out.WriteString(
+			"        add_header Strict-Transport-Security \"max-age=31536000\" always;\n")
+	}
+
+	return out.String()
+}
+
 // SupportsHTTP2Directive reports whether this nginx takes `http2 on;` as a
 // directive, which only 1.25.1 and later do.
 //
@@ -174,11 +369,19 @@ func SupportsHTTP2Directive(versionOutput string) bool {
 
 // body is the directives that actually serve the site, shared by the HTTP and
 // HTTPS forms so the two can never drift apart.
-func body(out *strings.Builder, site *store.Site) {
+func body(out *strings.Builder, site *store.Site, tls bool) {
 	root := site.DocumentRoot()
+
+	// Off unless the site's Cache tab turned it on, and never on a kind of site
+	// the panel will not cache.
+	cached := CacheActive(site)
 
 	if site.IsProxied() {
 		fmt.Fprintf(out, "    charset utf-8;\n    client_max_body_size 128M;\n")
+
+		if cached {
+			out.WriteString(cacheSkipRules(site))
+		}
 
 		if site.Type == "nextjs" {
 			fmt.Fprintf(out,
@@ -211,6 +414,15 @@ func body(out *strings.Builder, site *store.Site) {
 				site.Domain, PasswordFilePath(site))
 		}
 
+		// A WebSocket upgrade must never be answered from a cache. Without
+		// the cache that is all this line says; with it, the two conditions
+		// are one directive, because nginx refuses a second one beside it.
+		caching, bypass := "", "        proxy_cache_bypass $http_upgrade;\n"
+
+		if cached {
+			caching, bypass = cacheDirectives(site, tls), ""
+		}
+
 		fmt.Fprintf(out,
 			"\n"+
 				"    location / {\n"+
@@ -223,9 +435,10 @@ func body(out *strings.Builder, site *store.Site) {
 				"        proxy_set_header X-Real-IP $remote_addr;\n"+
 				"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"+
 				"        proxy_set_header X-Forwarded-Proto $scheme;\n"+
-				"        proxy_cache_bypass $http_upgrade;\n"+
+				"%s"+
 				"        proxy_read_timeout 300;\n"+
-				"    }\n", authentication, site.ServiceName())
+				"%s"+
+				"    }\n", authentication, site.ServiceName(), bypass, caching)
 
 		return
 	}
@@ -297,6 +510,15 @@ func body(out *strings.Builder, site *store.Site) {
 	// `HTTPS $https if_not_empty`. nginx sends parameters in declaration order
 	// and PHP keeps the last of any duplicate, so ours only win by coming
 	// afterwards.
+	if cached {
+		out.WriteString(cacheSkipRules(site))
+	}
+
+	caching := ""
+	if cached {
+		caching = cacheDirectives(site, tls)
+	}
+
 	fmt.Fprintf(out,
 		"\n"+
 			"    location ~ \\.php$ {\n"+
@@ -308,6 +530,7 @@ func body(out *strings.Builder, site *store.Site) {
 			"        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;\n"+
 			"        fastcgi_param HTTPS $panel_https;\n"+
 			phpValueParam(site)+
+			caching+
 			"    }\n"+
 			"\n"+
 			"    location ~ /\\.(?!well-known).* {\n"+
@@ -457,7 +680,7 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 
 		acme(&out)
 		out.WriteString("\n")
-		body(&out, site)
+		body(&out, site, tls)
 		out.WriteString("}\n")
 
 		// The same site on 443, with the self-signed pair, until a real
@@ -486,7 +709,7 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 		fmt.Fprintf(&out, "    access_log /var/log/nginx/%s-access.log;\n", site.Domain)
 		fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n\n", site.Domain)
 
-		body(&out, site)
+		body(&out, site, tls)
 		out.WriteString("}\n")
 
 		return out.String()
@@ -528,7 +751,7 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 	fmt.Fprintf(&out, "    access_log /var/log/nginx/%s-access.log;\n", site.Domain)
 	fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n\n", site.Domain)
 
-	body(&out, site)
+	body(&out, site, tls)
 	out.WriteString("}\n")
 
 	return out.String()

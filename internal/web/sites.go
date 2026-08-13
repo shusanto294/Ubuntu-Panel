@@ -377,6 +377,7 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"resolution":    resolution,
 		"phpDirectives": directives,
 		"accessUsers":   a.Sites.AccessUsers(site),
+		"cache":         cacheSummary(site),
 		"cronJobs":      a.Sites.CronJobs(site),
 		"certificate":   a.certificateSummary(site),
 		"site":          site.Summary(true),
@@ -618,6 +619,80 @@ func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess.Flash("success", "The PHP settings were applied.")
+
+	inertia.Back(w, r, "/sites")
+}
+
+// cacheSummary is what the Cache tab reads: what is set, what the panel will
+// take, and where the pages are kept.
+//
+// `supported` rather than hiding the tab: a static site has a Cache tab that
+// says why it has no cache, which is an answer. A missing tab is a question.
+func cacheSummary(site *store.Site) map[string]any {
+	lifetimes := make([]map[string]string, 0, len(sites.CacheTTLs))
+
+	for _, entry := range sites.CacheTTLs {
+		lifetimes = append(lifetimes, map[string]string{
+			"value": entry.Value,
+			"label": entry.Label,
+		})
+	}
+
+	return map[string]any{
+		"enabled":   site.CacheEnabled,
+		"ttl":       sites.CacheTTLOf(site),
+		"supported": sites.Cacheable(site),
+		"proxied":   site.IsProxied(),
+		"path":      sites.CacheDir(site),
+		"lifetimes": lifetimes,
+	}
+}
+
+// sitesCache turns the page cache on or off, and empties it.
+//
+// One endpoint for both, because emptying is the thing somebody does straight
+// after changing it — and a purge that lived somewhere else would be a second
+// place to get the site lookup wrong.
+func (a *App) sitesCache(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+	id := routeID(r, "site")
+
+	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	if input["action"] == "purge" {
+		if err := a.Sites.PurgeCache(r.Context(), id); err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		sess.Flash("success", "The cache was emptied. The next visitor gets a freshly built page.")
+
+		inertia.Back(w, r, "/sites")
+
+		return
+	}
+
+	enabled := input["enabled"] == "1" || input["enabled"] == "true"
+
+	if err := a.Sites.SetCache(r.Context(), id, enabled, input["ttl"]); err != nil {
+		a.failBack(w, r, err.Error())
+		return
+	}
+
+	if enabled {
+		sess.Flash("success", "The page cache is on and nginx was reloaded.")
+	} else {
+		sess.Flash("success", "The page cache is off. Every request goes to the site again.")
+	}
 
 	inertia.Back(w, r, "/sites")
 }

@@ -231,3 +231,121 @@ func TestPhpMyAdminCanBeServedWithoutTheGuard(t *testing.T) {
 		t.Errorf("the location itself went missing:\n%s", block)
 	}
 }
+
+// ------------------------------------------------------------- page cache
+
+// A site nobody turned the cache on for must render exactly the vhost it
+// rendered before the feature existed: no zone named, nothing to declare in
+// conf.d, no behaviour changed.
+func TestVhostHasNoCacheUntilItIsAskedFor(t *testing.T) {
+	vhost := RenderVhost(wordpress(), true, true)
+
+	for _, directive := range []string{"fastcgi_cache", "$skip_cache", "X-Panel-Cache"} {
+		if strings.Contains(vhost, directive) {
+			t.Fatalf("a site with the cache off still emits %s", directive)
+		}
+	}
+}
+
+func TestCachedWordPressSkipsAnythingPersonal(t *testing.T) {
+	site := wordpress()
+	site.CacheEnabled = true
+	site.CacheTTL = "30m"
+
+	vhost := RenderVhost(site, true, true)
+
+	if !strings.Contains(vhost, "fastcgi_cache "+CacheZone(site)+";") {
+		t.Fatal("the cached vhost does not name its own zone")
+	}
+
+	if !strings.Contains(vhost, "fastcgi_cache_valid 200 301 302 30m;") {
+		t.Fatal("the cached vhost does not use the lifetime the site was given")
+	}
+
+	// The whole risk of a page cache: one visitor's page served to the next.
+	for _, guard := range []string{
+		"if ($request_method = POST) { set $skip_cache 1; }",
+		"wordpress_logged_in",
+		"/wp-admin/",
+		"fastcgi_cache_bypass $skip_cache;",
+		"fastcgi_no_cache $skip_cache;",
+	} {
+		if !strings.Contains(vhost, guard) {
+			t.Fatalf("the cached WordPress vhost is missing %q", guard)
+		}
+	}
+
+	// add_header in a location drops everything inherited, so HSTS has to be
+	// repeated beside the cache header or a cached site stops sending it.
+	if strings.Count(vhost, "Strict-Transport-Security") < 2 {
+		t.Fatal("the cached HTTPS vhost sends the cache header and loses HSTS")
+	}
+}
+
+// nginx refuses a second proxy_cache_bypass in the same block, and it refuses
+// the whole configuration — every site on the machine — rather than that one
+// line. The WebSocket condition and the skip flag have to be one directive.
+func TestCachedProxiedSiteKeepsOneBypassDirective(t *testing.T) {
+	site := &store.Site{
+		ID: 2, Domain: "app.example.com", Type: "nextjs",
+		RootPath: "/var/www/app.example.com", AppPort: 3000,
+		CacheEnabled: true, CacheTTL: "5m",
+	}
+
+	vhost := RenderVhost(site, true, true)
+
+	// The TLS form has one block that serves the site; the other redirects.
+	if count := strings.Count(vhost, "proxy_cache_bypass"); count != 1 {
+		t.Fatalf("expected one proxy_cache_bypass in the serving block, got %d", count)
+	}
+
+	// The plain form serves from both 80 and the self-signed 443 block, so one
+	// each and no more.
+	if count := strings.Count(RenderVhost(site, false, true), "proxy_cache_bypass"); count != 2 {
+		t.Fatalf("expected one proxy_cache_bypass per serving block, got %d", count)
+	}
+
+	if !strings.Contains(vhost, "proxy_cache_bypass $skip_cache $http_upgrade;") {
+		t.Fatal("a cached proxied site no longer refuses to cache a WebSocket upgrade")
+	}
+}
+
+// Static is nginx reading a file off disk already, and Nextcloud's own manual
+// says not to cache it. Asking anyway must not produce a vhost that does.
+func TestKindsThePanelWillNotCache(t *testing.T) {
+	for _, kind := range []string{"static", "nextcloud"} {
+		site := wordpress()
+		site.Type = kind
+		site.CacheEnabled = true
+
+		if Cacheable(site) {
+			t.Fatalf("%s is offered a page cache", kind)
+		}
+
+		if strings.Contains(RenderVhost(site, true, true), "fastcgi_cache ") {
+			t.Fatalf("a %s site was given a page cache anyway", kind)
+		}
+	}
+}
+
+// The zone is declared in conf.d and named in the vhost. A name that does not
+// match is a configuration nginx refuses outright.
+func TestCacheConfigDeclaresTheZoneTheVhostNames(t *testing.T) {
+	site := wordpress()
+	site.CacheEnabled = true
+
+	declaration := RenderCacheConfig(site)
+
+	if !strings.Contains(declaration, "keys_zone="+CacheZone(site)+":") {
+		t.Fatal("the conf.d file does not declare the zone the vhost names")
+	}
+
+	if !strings.Contains(declaration, "fastcgi_cache_path "+CacheDir(site)+" ") {
+		t.Fatal("the zone is not backed by the site's own cache directory")
+	}
+
+	// A domain is not a name nginx takes for a zone.
+	if strings.Contains(CacheZone(site), ".") {
+		t.Fatalf("the zone name %q is not one nginx will accept", CacheZone(site))
+	}
+}

@@ -22,6 +22,7 @@ const props = defineProps({
     database: { type: Object, default: null },
     logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
+    cache: { type: Object, default: () => ({}) },
 });
 
 const deleteFiles = ref(true);
@@ -41,6 +42,7 @@ const tabs = computed(() => {
 
     entries.push({ key: 'database', label: 'Database' });
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
+    entries.push({ key: 'cache', label: 'Cache' });
     entries.push({ key: 'files', label: 'File manager' });
     entries.push({ key: 'access', label: 'SSH/SFTP' });
     entries.push({ key: 'cron', label: 'Cron jobs' });
@@ -70,6 +72,32 @@ const savePHP = () =>
     router.post(route('sites.php', props.site.id), phpValues.value, {
         preserveScroll: true,
     });
+
+// ---- Cache.
+//
+// nginx keeps the page it built and serves the copy to the next visitor, so a
+// second request for the same page never reaches PHP or the application at
+// all. The two things worth deciding are whether it happens and for how long.
+const cacheOn = ref(!!props.cache.enabled);
+const cacheTTL = ref(props.cache.ttl ?? '10m');
+const cacheWorking = ref(false);
+
+const cacheSubmit = (extra) => {
+    cacheWorking.value = true;
+
+    router.post(route('sites.cache', props.site.id), extra, {
+        preserveScroll: true,
+        onFinish: () => (cacheWorking.value = false),
+    });
+};
+
+const saveCache = () =>
+    cacheSubmit({ action: 'save', enabled: cacheOn.value ? '1' : '0', ttl: cacheTTL.value });
+
+// Turning the cache off does not empty it, and publishing a change is exactly
+// when somebody wants it gone — so this is its own button rather than a
+// consequence of the other one.
+const purgeCache = () => cacheSubmit({ action: 'purge' });
 
 // ---- Cron: the whole list is posted, so removing a row removes the line.
 //
@@ -1384,6 +1412,154 @@ const destroy = async () => {
             reading down one column should answer every question about that
             kind — who has one, how to make one, what to type to use it.
         -->
+        <!--
+            The page cache. nginx keeps what the application built and hands
+            the copy to the next visitor, so the second request for a page
+            never reaches PHP at all — which is most of the difference between
+            a site that survives being linked to and one that does not.
+        -->
+        <div v-if="!busy && tab === 'cache'" class="grid gap-6 lg:grid-cols-3">
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
+                <h3 class="font-semibold text-slate-800">Page cache</h3>
+
+                <template v-if="cache.supported">
+                    <p class="mt-2 text-sm text-slate-500">
+                        nginx stores the page
+                        {{ cache.proxied ? 'the application' : 'PHP' }} built and
+                        serves that copy to whoever asks for it next. A page
+                        already in the cache costs a file read instead of a
+                        render.
+                    </p>
+
+                    <label class="mt-5 flex items-start gap-3 text-sm">
+                        <input
+                            type="checkbox"
+                            v-model="cacheOn"
+                            class="mt-0.5 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                        />
+                        <span>
+                            <span class="font-medium text-slate-800">
+                                Cache this site's pages
+                            </span>
+                            <span class="block text-xs text-slate-500">
+                                Off by default, because a cache in front of a
+                                site that shows people their own account is a
+                                cache that shows them somebody else's.
+                            </span>
+                        </span>
+                    </label>
+
+                    <div class="mt-5">
+                        <label class="block text-sm font-medium text-slate-700">
+                            Keep a page for
+                        </label>
+                        <select
+                            v-model="cacheTTL"
+                            class="mt-1 w-56 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        >
+                            <option
+                                v-for="entry in cache.lifetimes"
+                                :key="entry.value"
+                                :value="entry.value"
+                            >
+                                {{ entry.label }}
+                            </option>
+                        </select>
+                        <p class="mt-2 text-xs text-slate-500">
+                            How long before nginx asks the site to build the
+                            page again. An expired page is still served
+                            immediately and refreshed behind the visitor, so
+                            nobody waits for it.
+                        </p>
+                    </div>
+
+                    <div class="mt-6 flex flex-wrap items-center gap-2">
+                        <button
+                            @click="saveCache"
+                            :disabled="cacheWorking"
+                            class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                        >
+                            {{ cacheWorking ? 'Applying…' : 'Apply' }}
+                        </button>
+                        <button
+                            @click="purgeCache"
+                            :disabled="cacheWorking"
+                            class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            Empty the cache
+                        </button>
+                    </div>
+
+                    <p class="mt-3 text-xs text-slate-500">
+                        nginx is asked whether it will take the new
+                        configuration before it is reloaded, and given the old
+                        one back if it will not.
+                    </p>
+                </template>
+
+                <!--
+                    A tab that says why there is no cache, rather than no tab.
+                    A missing tab is a question; this is an answer.
+                -->
+                <p v-else class="mt-2 text-sm text-slate-500">
+                    The panel does not cache a
+                    {{ site.type_label }} site.
+                    <template v-if="site.type === 'static'">
+                        Its pages are already files nginx reads off disk — a
+                        cache in front of that is a second copy of the same
+                        file, and the browser caching rules the panel writes
+                        are doing the part that helps.
+                    </template>
+                    <template v-else>
+                        Every page it serves is built for whoever asked for it,
+                        and its own manual says not to put a page cache in
+                        front of it.
+                    </template>
+                </p>
+            </div>
+
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-800">What is not cached</h3>
+
+                <ul class="mt-4 space-y-3 text-sm text-slate-600">
+                    <li>Anything posted — every form, every comment, every login.</li>
+                    <li>Any request carrying a session cookie, so a signed-in visitor always sees their own page.</li>
+                    <li>Anything with a query string, and anything sent with an Authorization header.</li>
+                    <li v-if="site.type === 'wordpress'">
+                        wp-admin, the REST API, feeds, and the cart, checkout
+                        and account pages a shop needs to be personal.
+                    </li>
+                </ul>
+
+                <p class="mt-4 text-xs text-slate-500">
+                    A response says which it was:
+                    <span class="font-mono">X-Panel-Cache: HIT</span> came from
+                    the cache, <span class="font-mono">MISS</span> was built and
+                    stored, <span class="font-mono">BYPASS</span> was one of the
+                    above.
+                </p>
+
+                <dl class="mt-5 space-y-3 border-t border-slate-200 pt-4 text-sm">
+                    <div class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Status</dt>
+                        <dd class="text-slate-800">
+                            {{ cache.enabled ? 'On' : 'Off' }}
+                        </dd>
+                    </div>
+                    <div v-if="cache.enabled" class="flex justify-between gap-4">
+                        <dt class="text-slate-500">Lifetime</dt>
+                        <dd class="text-slate-800">{{ cache.ttl }}</dd>
+                    </div>
+                    <div class="min-w-0">
+                        <dt class="text-slate-500">Stored in</dt>
+                        <dd class="mt-1 break-all font-mono text-xs text-slate-700">
+                            {{ cache.path }}
+                        </dd>
+                    </div>
+                </dl>
+            </div>
+        </div>
+
         <div v-if="!busy && tab === 'access'">
             <p class="mb-5 text-sm text-slate-500">
                 Real system accounts whose home is this site's directory. They

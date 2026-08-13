@@ -129,6 +129,112 @@ func (s *Service) SetWebDirectory(ctx context.Context, siteID int64, directory s
 	return s.rewriteVhost(ctx, site.ID)
 }
 
+// ---------------------------------------------------------------- the cache
+
+// SetCache turns nginx's page cache on or off for a site and sets how long a
+// cached page lives.
+//
+// Both halves are written before nginx is asked to take them: the zone in
+// conf.d, then the vhost that names it. A vhost naming a zone that does not
+// exist is a configuration nginx refuses — and it refuses the whole of it, for
+// every site on the machine, so the order matters more than it looks.
+func (s *Service) SetCache(ctx context.Context, siteID int64, enabled bool, ttl string) error {
+	site, err := s.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return errors.New("that site no longer exists")
+	}
+
+	if enabled && !Cacheable(site) {
+		return fmt.Errorf("the panel does not cache a %s site — see the Cache tab for why",
+			strings.ToLower(site.TypeLabel()))
+	}
+
+	if strings.TrimSpace(ttl) == "" {
+		ttl = DefaultCacheTTL
+	}
+
+	if !ValidCacheTTL(ttl) {
+		return fmt.Errorf("%q is not one of the lifetimes the panel offers", ttl)
+	}
+
+	s.Store.SetSiteCache(site.ID, enabled, ttl)
+
+	updated, err := s.Store.FindSite(ctx, site.ID)
+	if err != nil {
+		return errors.New("that site no longer exists")
+	}
+
+	restore := func() {
+		s.Store.SetSiteCache(site.ID, site.CacheEnabled, site.CacheTTL)
+
+		if previous, err := s.Store.FindSite(ctx, site.ID); err == nil {
+			s.writeCacheConfig(previous)
+		}
+	}
+
+	if err := s.writeCacheConfig(updated); err != nil {
+		restore()
+
+		return err
+	}
+
+	if err := s.rewriteVhost(ctx, site.ID); err != nil {
+		restore()
+
+		return err
+	}
+
+	return nil
+}
+
+// writeCacheConfig writes — or removes — the conf.d file that declares this
+// site's cache zone, and makes the directory nginx writes into.
+//
+// Removed rather than left behind when the cache is turned off: a zone
+// declared for a vhost that no longer names it still reserves its shared
+// memory, and a stale one for a deleted site is a file nobody will ever think
+// to look at.
+func (s *Service) writeCacheConfig(site *store.Site) error {
+	if !CacheActive(site) {
+		proc.Ok("sudo rm -f " + proc.Quote(CacheConfigPath(site)))
+
+		return nil
+	}
+
+	directory := proc.Quote(CacheDir(site))
+
+	if !proc.Ok(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R www-data:www-data %[1]s",
+		directory)) {
+		return errors.New("the cache directory could not be created")
+	}
+
+	return proc.PutFile(CacheConfigPath(site), RenderCacheConfig(site), true)
+}
+
+// PurgeCache throws away everything nginx has stored for a site.
+//
+// The files are the cache: nginx notices they are gone and renders the next
+// request from the application. This is what somebody publishes a change and
+// then reaches for, so it works whether or not the cache is currently on —
+// turning it off does not empty it.
+func (s *Service) PurgeCache(ctx context.Context, siteID int64) error {
+	site, err := s.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return errors.New("that site no longer exists")
+	}
+
+	directory := proc.Quote(CacheDir(site))
+
+	// mkdir first, so a site that has never cached anything is emptied
+	// successfully rather than failing on a directory that is not there.
+	if !proc.Ok(fmt.Sprintf("sudo mkdir -p %[1]s && sudo find %[1]s -mindepth 1 -delete",
+		directory)) {
+		return errors.New("the cache could not be emptied")
+	}
+
+	return nil
+}
+
 // rewriteVhost writes the site's vhost from its current record and reloads
 // nginx, putting the old file back if nginx will not have the new one.
 //

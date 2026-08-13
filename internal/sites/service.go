@@ -252,6 +252,14 @@ func (s *Service) writeVhost(ctx context.Context, siteID int64) func(*tasks.Runn
 			return "", err
 		}
 
+		// The cache zone before the vhost that names it. nginx refuses a
+		// configuration that refers to a zone nothing declared, and refuses it
+		// for every site on the machine — a redeploy is not the place to find
+		// that out.
+		if err := s.writeCacheConfig(site); err != nil {
+			return "", err
+		}
+
 		// No Let's Encrypt certificate yet — nginx will not start with an
 		// ssl_certificate that does not exist, so the real one cannot be named
 		// until certbot has run. The self-signed 443 block holds the port in
