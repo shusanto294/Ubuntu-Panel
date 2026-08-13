@@ -93,8 +93,40 @@ const SCHEDULES = [
 
 const jobs = ref(props.cronJobs.map((job) => ({ ...job })));
 
-const addJob = () => jobs.value.push({ schedule: '0 3 * * *', command: '' });
+// A new row starts on the first thing in the menu, which is also the schedule
+// somebody adding a job is most often after — a runner that has to be asked
+// every minute whether there is anything to do.
+const addJob = () => jobs.value.push({ schedule: SCHEDULES[0].value, command: '' });
 const removeJob = (index) => jobs.value.splice(index, 1);
+
+// The five fields, always on screen and always editable. The menu writes them
+// and typing in one writes back: change the hour of "Every day at 3am" and the
+// row is a custom schedule that keeps the rest of what the preset chose,
+// rather than a blank expression to retype.
+const FIELDS = [
+    { label: 'Minute' },
+    { label: 'Hour' },
+    { label: 'Day of month' },
+    { label: 'Month' },
+    { label: 'Day of week' },
+];
+
+const partsOf = (schedule) => {
+    const parts = String(schedule ?? '').trim().split(/\s+/).filter(Boolean);
+
+    while (parts.length < 5) parts.push('*');
+
+    return parts.slice(0, 5);
+};
+
+const field = (job, index) => partsOf(job.schedule)[index];
+
+const setField = (job, index, value) => {
+    const parts = partsOf(job.schedule);
+
+    parts[index] = String(value).trim() || '*';
+    job.schedule = parts.join(' ');
+};
 
 // A row is on a preset when its expression is one of them, and custom
 // otherwise — including a line somebody wrote into the file by hand, which
@@ -1567,29 +1599,35 @@ const destroy = async () => {
                     </div>
 
                     <!--
-                        The five fields, for the schedules the menu does not
-                        have. Shown only when the row is on one of those, so the
-                        common case is a sentence and not a puzzle.
+                        The five fields, under the menu rather than instead of
+                        it. A preset is a way to fill them in, not a different
+                        mode: pick "Every day at 3am", change the hour, and the
+                        row goes on being a schedule rather than becoming a
+                        blank box to retype.
                     -->
-                    <div
-                        v-if="presetFor(job) === 'custom'"
-                        class="mt-3 flex flex-wrap items-center gap-2"
-                    >
-                        <input
-                            v-model="job.schedule"
-                            type="text"
-                            placeholder="0 3 * * *"
-                            class="w-56 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                        />
-                        <span class="text-xs text-slate-500">
-                            minute · hour · day of month · month · day of week
-                        </span>
-                    </div>
+                    <div class="mt-3 flex flex-wrap items-end gap-2">
+                        <div v-for="(entry, position) in FIELDS" :key="entry.label">
+                            <label
+                                class="block text-[11px] uppercase tracking-wide text-slate-400"
+                            >
+                                {{ entry.label }}
+                            </label>
+                            <input
+                                :value="field(job, position)"
+                                @input="setField(job, position, $event.target.value)"
+                                type="text"
+                                placeholder="*"
+                                class="mt-1 w-24 rounded-xl border-slate-300 text-center font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            />
+                        </div>
 
-                    <p class="mt-2 text-xs text-slate-500">
-                        {{ describe(job.schedule) }}
-                        <span class="font-mono text-slate-400">{{ job.schedule }}</span>
-                    </p>
+                        <p class="ml-1 pb-2 text-xs text-slate-500">
+                            {{ describe(job.schedule) }}
+                            <span class="ml-1 font-mono text-slate-400">{{
+                                job.schedule
+                            }}</span>
+                        </p>
+                    </div>
                 </div>
             </div>
 
