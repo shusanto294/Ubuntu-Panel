@@ -416,9 +416,47 @@ func TestCacheLifetimeHasBothForms(t *testing.T) {
 		t.Fatal("an unknown lifetime does not fall back to the default")
 	}
 
+	// Forever is the one entry with no seconds: zero is how the object-cache
+	// plugin spells "never expire".
 	for _, entry := range CacheTTLs {
-		if entry.Seconds <= 0 {
+		if entry.Seconds <= 0 && entry.Value != "forever" {
 			t.Fatalf("%s has no seconds against it", entry.Value)
 		}
+	}
+
+	if CacheSeconds("forever") != 0 {
+		t.Fatal("forever would reach wp-config.php as a real expiry")
+	}
+}
+
+// nginx has no word for never, and `inactive` deletes a cached page nothing
+// has asked for in that long whatever its lifetime — so forever meant an hour
+// until both of them were dealt with.
+func TestForeverOutlastsBothOfNginxsClocks(t *testing.T) {
+	site := wordpress()
+	site.CacheEnabled = true
+	site.CacheTTL = "forever"
+
+	if !strings.Contains(RenderVhost(site, true, true), "fastcgi_cache_valid 200 301 302 365d;") {
+		t.Fatal("forever did not become a lifetime nginx understands")
+	}
+
+	if !strings.Contains(RenderCacheConfig(site), "inactive=365d") {
+		t.Fatal("a page nobody asked for in an hour is still deleted under forever")
+	}
+
+	// A day-long lifetime had the same problem in smaller form.
+	site.CacheTTL = "1d"
+
+	if !strings.Contains(RenderCacheConfig(site), "inactive=1d") {
+		t.Fatal("inactive does not follow the lifetime")
+	}
+
+	// Short lifetimes keep the hour floor: there is no point evicting a page
+	// five minutes after its own expiry.
+	site.CacheTTL = "5m"
+
+	if !strings.Contains(RenderCacheConfig(site), "inactive=60m") {
+		t.Fatal("a short lifetime lost the hour floor on inactive")
 	}
 }

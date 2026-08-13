@@ -146,6 +146,15 @@ var CacheTTLs = []struct {
 	{"6h", "6 hours", 21600},
 	{"12h", "12 hours", 43200},
 	{"1d", "1 day", 86400},
+
+	// For a site that changes when somebody says it does — a brochure, a
+	// manual, anything published and then left alone. Nothing expires it; the
+	// Empty the cache button is what clears it.
+	//
+	// Zero seconds is how the object-cache plugin spells "never expire". nginx
+	// has no such word, so it gets a year, which outlasts any uptime it will
+	// see between deployments.
+	{"forever", "Forever — until emptied by hand", 0},
 }
 
 // DefaultCacheTTL is what a site that has never been configured caches for.
@@ -155,7 +164,7 @@ const DefaultCacheTTL = "12h"
 
 // CacheSeconds is the same lifetime as a number, which is what Redis and the
 // object-cache plugin take — nginx is the only one of the two that reads
-// `12h`.
+// `12h`. Forever is zero, which is what the plugin reads as "never expire".
 func CacheSeconds(ttl string) int {
 	for _, entry := range CacheTTLs {
 		if entry.Value == ttl {
@@ -164,6 +173,36 @@ func CacheSeconds(ttl string) int {
 	}
 
 	return 43200
+}
+
+// CacheValidTime is the lifetime as nginx takes it in fastcgi_cache_valid.
+//
+// nginx has no way to say "never expire", so forever is a year. A cached page
+// older than that is not something any of these machines will meet.
+func CacheValidTime(ttl string) string {
+	if ttl == "forever" {
+		return "365d"
+	}
+
+	return ttl
+}
+
+// CacheInactive is the other half of making a lifetime mean what it says.
+//
+// `inactive` throws away a cached page nothing has *asked for* in that long,
+// whatever its lifetime — so a page kept for a day on a quiet site was still
+// deleted after an hour, and forever meant an hour. It follows the lifetime
+// now, with an hour as the floor for the short ones.
+func CacheInactive(ttl string) string {
+	if ttl == "forever" {
+		return "365d"
+	}
+
+	if CacheSeconds(ttl) < 3600 {
+		return "60m"
+	}
+
+	return ttl
 }
 
 // ValidCacheTTL reports whether a lifetime is one of the offered ones.
@@ -243,8 +282,9 @@ func RenderCacheConfig(site *store.Site) string {
 	return fmt.Sprintf(
 		"# Managed by %s — page cache for %s.\n"+
 			"# The zone has to live in the http context; the vhost names it.\n"+
-			"%s %s levels=1:2 keys_zone=%s:10m inactive=60m max_size=256m;\n",
-		config.Name, site.Domain, directive, CacheDir(site), CacheZone(site))
+			"%s %s levels=1:2 keys_zone=%s:10m inactive=%s max_size=256m;\n",
+		config.Name, site.Domain, directive, CacheDir(site), CacheZone(site),
+		CacheInactive(CacheTTLOf(site)))
 }
 
 // cacheSkipRules decide, per request, whether this one may be served from the
@@ -322,7 +362,7 @@ func cacheDirectives(site *store.Site, tls bool) string {
 			"        %[2]s_cache_background_update on;\n"+
 			"        %[2]s_cache_lock on;\n"+
 			"        add_header X-Panel-Cache $upstream_cache_status always;\n",
-		CacheTTLOf(site), prefix, CacheZone(site), CacheTTLOf(site), upgrade)
+		CacheTTLOf(site), prefix, CacheZone(site), CacheValidTime(CacheTTLOf(site)), upgrade)
 
 	// add_header in a location replaces every add_header inherited from the
 	// server block, so the one the server block sets has to be repeated here

@@ -1590,13 +1590,41 @@ const destroy = async () => {
                             </option>
                         </select>
 
-                        <p v-if="cacheMode === 'redis'" class="mt-2 text-xs text-slate-500">
+                        <!--
+                            Forever is the honest name for it, and the honest
+                            warning with it: nothing on a clock will ever clear
+                            this, so publishing a change and not pressing the
+                            button means the change is not on the site.
+                        -->
+                        <p
+                            v-if="cacheTTL === 'forever'"
+                            class="mt-2 text-xs text-amber-700"
+                        >
+                            Nothing expires this. A page stays as it was built
+                            until you press Empty the cache — right for a site
+                            that changes when you say so, and wrong for one that
+                            changes on its own. What you publish will not be on
+                            the site until the cache is emptied.
+                            <template v-if="cacheMode === 'nginx'">
+                                The 256 MB the panel allows this site is still a
+                                ceiling: past it, nginx drops the pages nobody
+                                has asked for lately.
+                            </template>
+                            <template v-else>
+                                WordPress still replaces an entry itself as soon
+                                as what it holds changes, so the site stays
+                                correct — this only removes the backstop for
+                                keys nothing invalidates.
+                            </template>
+                        </p>
+                        <p
+                            v-else-if="cacheMode === 'redis'"
+                            class="mt-2 text-xs text-slate-500"
+                        >
                             A ceiling, not a refresh interval. WordPress
                             replaces an entry as soon as what it holds changes —
                             this is how long one may sit in Redis untouched if
-                            nothing ever does. Left unset, entries would only
-                            ever leave when Redis reaches the memory cap and
-                            evicts the least-recently-used.
+                            nothing ever does.
                         </p>
                         <p v-else class="mt-2 text-xs text-slate-500">
                             How long before nginx asks the site to build the
