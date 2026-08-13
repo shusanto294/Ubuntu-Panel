@@ -5,7 +5,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import RequiredApps from '@/Components/RequiredApps.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({
     domains: Array,
@@ -17,16 +17,8 @@ const props = defineProps({
     activeTask: { type: Object, default: null },
 });
 
-// Covers the gap between the button posting and a worker picking the job up.
-// There is no task to watch for the first second or so, and the page that comes
-// back from the post is rendered before one exists — so without this the
-// progress only appeared on a manual reload, or on another page that happened
-// to be watching the same queue.
-const awaiting = ref(false);
-
 const busy = computed(
     () =>
-        awaiting.value ||
         props.domains.some(
             (domain) =>
                 isBusyStatus(domain.status) ||
@@ -55,24 +47,6 @@ const mailboxes = computed(() =>
     ),
 );
 
-// Holds the conversation a mail client holds — submission on 587, a real
-// login, a real message — and writes every reply the server gives to the log.
-// "Connection to server failed" in a webmail is not a diagnosis; a 535 or a 554
-// from the server itself is.
-const test = () => {
-    awaiting.value = true;
-
-    router.post(
-        route('email.test'),
-        {},
-        {
-            preserveScroll: true,
-            onFinish: () => setTimeout(() => (awaiting.value = false), 8000),
-        },
-    );
-};
-
-
 </script>
 
 <template>
@@ -89,19 +63,24 @@ const test = () => {
                         <span v-if="mailHostname">· {{ mailHostname }}</span>
                     </p>
                 </div>
+                <!--
+                    Test delivery is hidden for now rather than removed: the
+                    endpoint and the conversation it holds with the server are
+                    still there, and it goes back on the page when it is worth
+                    trusting again.
+                -->
                 <div v-if="mailConfigured" class="flex flex-wrap items-center gap-2">
-                    <button
-                        @click="test"
-                        class="rounded-xl px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                        title="Send a message through the server and log every reply"
-                    >
-                        Test delivery
-                    </button>
                     <Link
                         :href="route('email.domains.create')"
-                        class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+                        class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 shadow-sm transition hover:bg-slate-50"
                     >
                         Add domain
+                    </Link>
+                    <Link
+                        :href="route('email.accounts.new')"
+                        class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+                    >
+                        Add mailbox
                     </Link>
                 </div>
             </div>
@@ -305,8 +284,13 @@ const test = () => {
                                     colspan="5"
                                     class="px-5 py-16 text-center text-sm text-slate-500"
                                 >
-                                    No mailboxes yet. Open a domain to add the
-                                    first address.
+                                    No mailboxes yet.
+                                    <Link
+                                        :href="route('email.accounts.new')"
+                                        class="text-brand-600 hover:underline"
+                                        >Add one</Link
+                                    >
+                                    on any domain.
                                 </td>
                             </tr>
                         </tbody>

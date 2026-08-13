@@ -125,6 +125,7 @@ func (a *App) routes() *router {
 	rt.delete("/email/domains/{domain}", "email.domains.destroy", authenticated, a.emailDestroyDomain)
 	rt.post("/email/domains/{domain}/dns", "email.domains.dns", authenticated, a.emailSyncDNS)
 	rt.post("/email/domains/{domain}/retry", "email.domains.retry", authenticated, a.emailRetryDomain)
+	rt.get("/email/mailboxes/create", "email.accounts.new", authenticated, a.emailNewMailbox)
 	rt.get("/email/domains/{domain}/accounts/create", "email.accounts.create", authenticated,
 		a.emailCreateAccount)
 	rt.post("/email/domains/{domain}/accounts", "email.accounts.store", authenticated,

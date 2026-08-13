@@ -248,6 +248,35 @@ func (a *App) emailCreateAccount(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// emailNewMailbox is the same form with the domain still to be chosen.
+//
+// A mailbox belongs to a domain, but somebody adding one has an address in mind
+// — sales@something — rather than a domain to open first. This is the way in
+// from the Email page; the per-domain form is still there, and both post to the
+// same place.
+func (a *App) emailNewMailbox(w http.ResponseWriter, r *http.Request) {
+	domains, err := a.Store.EmailDomains(r.Context())
+	if err != nil {
+		a.serverError(w, r, "could not list the mail domains", err)
+		return
+	}
+
+	summaries := make([]map[string]any, 0, len(domains))
+
+	for _, domain := range domains {
+		// A domain being torn down is not somewhere to put a new address.
+		if domain.Status == "deleting" {
+			continue
+		}
+
+		summaries = append(summaries, a.Store.EmailDomainSummary(r.Context(), domain, false))
+	}
+
+	a.Render.Render(w, r, "Email/CreateMailbox", inertia.Props{
+		"domains": summaries,
+	})
+}
+
 func (a *App) emailStoreAccount(w http.ResponseWriter, r *http.Request) {
 	sess := session.FromContext(r.Context())
 	user := userFrom(r.Context())
