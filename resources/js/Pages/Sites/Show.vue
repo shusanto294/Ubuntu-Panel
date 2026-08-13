@@ -1360,72 +1360,28 @@ const destroy = async () => {
             </p>
         </div>
 
-        <div
-            v-if="!busy && tab === 'access'"
-            class="grid gap-6 lg:grid-cols-3"
-        >
-            <div
-                class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2"
-            >
-                <h3 class="font-semibold text-slate-800">Accounts</h3>
-                <p class="mt-2 text-sm text-slate-500">
-                    Real system accounts whose home is this site's directory.
-                    They belong to <span class="font-mono">www-data</span>, so
-                    what they upload is what the web server can read.
-                </p>
+        <!--
+            Two columns of the same shape: an SSH account and an SFTP account
+            are the same kind of thing to whoever has to hand one out, and
+            reading down one column should answer every question about that
+            kind — who has one, how to make one, what to type to use it.
+        -->
+        <div v-if="!busy && tab === 'access'">
+            <p class="mb-5 text-sm text-slate-500">
+                Real system accounts whose home is this site's directory. They
+                belong to <span class="font-mono">www-data</span>, so what they
+                upload is what the web server can read.
+            </p>
 
-                <!--
-                    Kept apart on the page because they are apart on the
-                    machine: one of these lists is a way to move files, and the
-                    other is a way to run commands on the server.
-                -->
-                <div class="mt-5">
-                    <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                        SFTP only
+            <div class="grid items-start gap-6 lg:grid-cols-2">
+                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <h3 class="font-semibold text-slate-800">SSH accounts</h3>
+                    <p class="mt-1 text-sm text-slate-500">
+                        A real shell on this server, which SFTP works over too.
+                        The commands it runs are the machine's.
                     </p>
-                    <ul class="mt-1 divide-y divide-slate-100 text-sm">
-                        <li
-                            v-for="user in sftpAccounts"
-                            :key="user.name"
-                            class="flex flex-wrap items-center justify-between gap-2 py-3"
-                        >
-                            <div class="min-w-0">
-                                <p class="break-all font-mono text-slate-800">
-                                    {{ user.name }}
-                                </p>
-                                <p class="text-xs text-slate-500">
-                                    Files in and out, no shell ·
-                                    <span class="font-mono">{{ user.shell }}</span>
-                                </p>
-                            </div>
-                            <div class="flex shrink-0 items-center gap-3">
-                                <button
-                                    @click="changeAccountPassword(user)"
-                                    :disabled="accountWorking"
-                                    class="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
-                                >
-                                    Password
-                                </button>
-                                <button
-                                    @click="removeAccount(user)"
-                                    :disabled="accountWorking"
-                                    class="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
-                                >
-                                    Remove
-                                </button>
-                            </div>
-                        </li>
-                        <li v-if="!sftpAccounts.length" class="py-3 text-sm text-slate-500">
-                            No SFTP account for this site yet.
-                        </li>
-                    </ul>
-                </div>
 
-                <div class="mt-6 border-t border-slate-200 pt-4">
-                    <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                        SSH and SFTP
-                    </p>
-                    <ul class="mt-1 divide-y divide-slate-100 text-sm">
+                    <ul class="mt-4 divide-y divide-slate-100 text-sm">
                         <li
                             v-for="user in sshAccounts"
                             :key="user.name"
@@ -1436,7 +1392,6 @@ const destroy = async () => {
                                     {{ user.name }}
                                 </p>
                                 <p class="text-xs text-slate-500">
-                                    A shell on the server ·
                                     <span class="font-mono">{{ user.shell }}</span>
                                 </p>
                             </div>
@@ -1457,106 +1412,142 @@ const destroy = async () => {
                                 </button>
                             </div>
                         </li>
-                        <li v-if="!sshAccounts.length" class="py-3 text-sm text-slate-500">
+                        <li v-if="!sshAccounts.length" class="py-3 text-slate-500">
                             No account has a shell here.
                         </li>
                     </ul>
+
+                    <div class="mt-5 border-t border-slate-200 pt-4">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Add an SSH account
+                        </p>
+                        <input
+                            v-model="forms.ssh.name"
+                            type="text"
+                            placeholder="username"
+                            class="mt-3 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                        <input
+                            v-model="forms.ssh.password"
+                            type="text"
+                            autocomplete="off"
+                            placeholder="Leave blank to generate a password"
+                            class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                        <button
+                            @click="addAccount('ssh')"
+                            :disabled="accountWorking || !forms.ssh.name.trim()"
+                            class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                        >
+                            Add SSH account
+                        </button>
+                    </div>
+
+                    <div class="mt-5 border-t border-slate-200 pt-4">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Connect with
+                        </p>
+                        <pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
+                            >{{ sshExample }}</pre
+                        >
+                        <p class="mt-2 text-xs text-slate-500">
+                            Only an account in this column answers it. An SFTP
+                            one is refused a shell by the server.
+                        </p>
+                    </div>
                 </div>
 
-                <div class="mt-5 border-t border-slate-200 pt-4">
-                    <p class="text-xs text-slate-500">Connect with</p>
-                    <pre
-                        class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                        >{{ sftpExample }}</pre
-                    >
-                    <pre
-                        v-if="sshAccounts.length"
-                        class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                        >{{ sshExample }}</pre
-                    >
-                    <p class="mt-2 text-xs text-slate-500">
-                        The same host, port and password work in FileZilla,
-                        Cyberduck or any client that speaks SFTP — choose SFTP
-                        rather than FTP, which this server does not run. Only an
-                        SSH account answers the second line; an SFTP one is
-                        refused a shell by the server.
-                    </p>
-                </div>
-            </div>
-
-            <!--
-                Two boxes rather than one with a tickbox. The tickbox made a
-                shell on the server something you got by not reading a line of
-                small print; asking for one is now its own act, with the
-                consequence written above the button rather than under it.
-            -->
-            <div class="space-y-6">
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                    <h3 class="font-semibold text-slate-800">Add an SFTP account</h3>
-                    <p class="mt-1 text-xs text-slate-500">
+                    <h3 class="font-semibold text-slate-800">SFTP accounts</h3>
+                    <p class="mt-1 text-sm text-slate-500">
                         Files in and out of this site, and nothing else. No
                         shell, no commands.
                     </p>
 
-                    <input
-                        v-model="forms.sftp.name"
-                        type="text"
-                        placeholder="username"
-                        class="mt-4 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
-                    <input
-                        v-model="forms.sftp.password"
-                        type="text"
-                        autocomplete="off"
-                        placeholder="Leave blank to generate a password"
-                        class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
+                    <ul class="mt-4 divide-y divide-slate-100 text-sm">
+                        <li
+                            v-for="user in sftpAccounts"
+                            :key="user.name"
+                            class="flex flex-wrap items-center justify-between gap-2 py-3"
+                        >
+                            <div class="min-w-0">
+                                <p class="break-all font-mono text-slate-800">
+                                    {{ user.name }}
+                                </p>
+                                <p class="text-xs text-slate-500">
+                                    <span class="font-mono">{{ user.shell }}</span>
+                                </p>
+                            </div>
+                            <div class="flex shrink-0 items-center gap-3">
+                                <button
+                                    @click="changeAccountPassword(user)"
+                                    :disabled="accountWorking"
+                                    class="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                                >
+                                    Password
+                                </button>
+                                <button
+                                    @click="removeAccount(user)"
+                                    :disabled="accountWorking"
+                                    class="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                        </li>
+                        <li v-if="!sftpAccounts.length" class="py-3 text-slate-500">
+                            No SFTP account for this site yet.
+                        </li>
+                    </ul>
 
-                    <button
-                        @click="addAccount('sftp')"
-                        :disabled="accountWorking || !forms.sftp.name.trim()"
-                        class="mt-4 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
-                    >
-                        Add SFTP account
-                    </button>
+                    <div class="mt-5 border-t border-slate-200 pt-4">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Add an SFTP account
+                        </p>
+                        <input
+                            v-model="forms.sftp.name"
+                            type="text"
+                            placeholder="username"
+                            class="mt-3 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                        <input
+                            v-model="forms.sftp.password"
+                            type="text"
+                            autocomplete="off"
+                            placeholder="Leave blank to generate a password"
+                            class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                        <button
+                            @click="addAccount('sftp')"
+                            :disabled="accountWorking || !forms.sftp.name.trim()"
+                            class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                        >
+                            Add SFTP account
+                        </button>
+                    </div>
+
+                    <div class="mt-5 border-t border-slate-200 pt-4">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Connect with
+                        </p>
+                        <pre
+                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
+                            >{{ sftpExample }}</pre
+                        >
+                        <p class="mt-2 text-xs text-slate-500">
+                            The same host, port and password work in FileZilla,
+                            Cyberduck or any client that speaks SFTP — choose
+                            SFTP, not FTP, which this server does not run.
+                        </p>
+                    </div>
                 </div>
-
-                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                    <h3 class="font-semibold text-slate-800">Add an SSH account</h3>
-                    <p class="mt-1 text-xs text-slate-500">
-                        A real shell on this server, which SFTP works over too.
-                        It is confined to the site's directory for files, but
-                        the commands it runs are the machine's.
-                    </p>
-
-                    <input
-                        v-model="forms.ssh.name"
-                        type="text"
-                        placeholder="username"
-                        class="mt-4 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
-                    <input
-                        v-model="forms.ssh.password"
-                        type="text"
-                        autocomplete="off"
-                        placeholder="Leave blank to generate a password"
-                        class="mt-2 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
-                    />
-
-                    <button
-                        @click="addAccount('ssh')"
-                        :disabled="accountWorking || !forms.ssh.name.trim()"
-                        class="mt-4 w-full rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-800 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        Add SSH account
-                    </button>
-                </div>
-
-                <p class="text-xs text-slate-500">
-                    The password is shown once, when it is set — the panel does
-                    not store it, and there is nowhere to read it again.
-                </p>
             </div>
+
+            <p class="mt-4 text-xs text-slate-500">
+                The password is shown once, when it is set — the panel does not
+                store it, and there is nowhere to read it again.
+            </p>
         </div>
 
         <div
