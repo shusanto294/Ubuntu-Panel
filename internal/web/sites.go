@@ -377,7 +377,6 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"resolution":    resolution,
 		"phpDirectives": directives,
 		"accessUsers":   a.Sites.AccessUsers(site),
-		"sshPort":       system.SSHPort(),
 		"cronJobs":      a.Sites.CronJobs(site),
 		"certificate":   a.certificateSummary(site),
 		"site":          site.Summary(true),

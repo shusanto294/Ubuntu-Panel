@@ -19,7 +19,6 @@ const props = defineProps({
     phpDirectives: { type: Array, default: () => [] },
     cronJobs: { type: Array, default: () => [] },
     accessUsers: { type: Array, default: () => [] },
-    sshPort: { type: Number, default: 22 },
     database: { type: Object, default: null },
     logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
@@ -570,19 +569,6 @@ const removeAccount = async (user) => {
 
     accessSubmit('delete', { username: user.name });
 };
-
-// What somebody pastes into a client. The host is the server, not the site:
-// SFTP is a session on the machine, and a domain behind a CDN would not reach
-// it.
-const sftpExample = computed(
-    () =>
-        `sftp -P ${props.sshPort} <user>@${props.resolution?.expected || props.site.domain}`,
-);
-
-const sshExample = computed(
-    () =>
-        `ssh -p ${props.sshPort} <user>@${props.resolution?.expected || props.site.domain}`,
-);
 
 
 // ---- Logs: nginx's own for this site, and the panel's history of it.
@@ -1437,25 +1423,12 @@ const destroy = async () => {
                         <button
                             @click="addAccount('ssh')"
                             :disabled="accountWorking || !forms.ssh.name.trim()"
-                            class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                            class="mt-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
                         >
                             Add SSH account
                         </button>
                     </div>
 
-                    <div class="mt-5 border-t border-slate-200 pt-4">
-                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                            Connect with
-                        </p>
-                        <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                            >{{ sshExample }}</pre
-                        >
-                        <p class="mt-2 text-xs text-slate-500">
-                            Only an account in this column answers it. An SFTP
-                            one is refused a shell by the server.
-                        </p>
-                    </div>
                 </div>
 
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
@@ -1521,26 +1494,12 @@ const destroy = async () => {
                         <button
                             @click="addAccount('sftp')"
                             :disabled="accountWorking || !forms.sftp.name.trim()"
-                            class="mt-3 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                            class="mt-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
                         >
                             Add SFTP account
                         </button>
                     </div>
 
-                    <div class="mt-5 border-t border-slate-200 pt-4">
-                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                            Connect with
-                        </p>
-                        <pre
-                            class="mt-2 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs text-slate-200"
-                            >{{ sftpExample }}</pre
-                        >
-                        <p class="mt-2 text-xs text-slate-500">
-                            The same host, port and password work in FileZilla,
-                            Cyberduck or any client that speaks SFTP — choose
-                            SFTP, not FTP, which this server does not run.
-                        </p>
-                    </div>
                 </div>
             </div>
 
