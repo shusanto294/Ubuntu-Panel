@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1082,4 +1083,68 @@ func openClawEnvironment(site *store.Site, token string) [][2]string {
 		{"NODE_COMPILE_CACHE", "/var/tmp/openclaw-compile-cache"},
 		{"NODE_ENV", "production"},
 	}
+}
+
+// ---------------------------------------------- the OpenClaw dashboard link
+
+// dashboardURLPattern is the first URL in whatever `openclaw dashboard`
+// prints. The command's prose changes between versions; a URL in its output
+// does not.
+var dashboardURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// localHostPattern is any way the gateway names this machine to itself, with
+// the port that follows it — percent-encoded too, because the address inside a
+// query parameter is escaped and `agent.example.com%3A18801` is a host that
+// answers for nothing.
+var localHostPattern = regexp.MustCompile(
+	`(?i)(?:127\.0\.0\.1|\[::1\]|::1|localhost)(?::\d+|%3A\d+)?`)
+
+// OpenClawDashboardURL turns the link the gateway prints for itself into one
+// that works from a browser somewhere else.
+//
+// `openclaw dashboard` mints a tokenized URL and points it at the address the
+// gateway is bound to, which here is loopback — right for somebody sitting at
+// the machine's terminal and useless in a browser anywhere else. The token,
+// the path and the parameters are the parts that matter, so the host is
+// swapped for the site's own and everything else is left exactly as it was.
+//
+// The parameters carry a WebSocket address of their own, pointing at the same
+// loopback port, so the substitution runs over the whole string rather than
+// over the host alone — and ws:// becomes wss:// on a site served over HTTPS,
+// which a browser on an https page will not open otherwise.
+func OpenClawDashboardURL(site *store.Site, output string) string {
+	found := dashboardURLPattern.FindString(output)
+	if found == "" {
+		return ""
+	}
+
+	scheme := "http"
+	if site.SSL {
+		scheme = "https"
+	}
+
+	// The host, wherever it appears: the URL's own, and any inside a parameter.
+	rewritten := localHostPattern.ReplaceAllString(found, site.Domain)
+
+	if site.SSL {
+		rewritten = strings.ReplaceAll(rewritten, "ws://"+site.Domain, "wss://"+site.Domain)
+		rewritten = strings.ReplaceAll(rewritten, "ws%3A%2F%2F"+site.Domain, "wss%3A%2F%2F"+site.Domain)
+	}
+
+	// http:// on a site that is served over https is a link browsers upgrade,
+	// downgrade or refuse depending on where it appears. Named rather than
+	// left to them.
+	if strings.HasPrefix(rewritten, "http://") {
+		rewritten = scheme + "://" + strings.TrimPrefix(rewritten, "http://")
+	}
+
+	return rewritten
+}
+
+// OpenClawDashboardCommand asks the gateway for that link, as the user it runs
+// as and with the HOME its configuration lives under — the two things that
+// decide which site's gateway answers.
+func OpenClawDashboardCommand(site *store.Site) string {
+	return fmt.Sprintf("sudo -u www-data HOME=%s openclaw dashboard 2>&1",
+		proc.Quote(site.RootPath))
 }

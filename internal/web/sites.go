@@ -1073,6 +1073,57 @@ func (a *App) sitesWPAdmin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, link, http.StatusSeeOther)
 }
 
+// sitesOpenClaw sends the browser into an OpenClaw dashboard that is already
+// connected.
+//
+// Its Control UI opens on a "How to connect" screen asking for a WebSocket
+// address and a token, with instructions to start a gateway and run a command
+// — three steps, two of which are already done: the gateway is a systemd
+// service that has been running since the deployment, and the token is the one
+// on this page.
+//
+// `openclaw dashboard` is the command that answers the third, so the panel
+// runs it, points the link it prints at the site instead of at loopback, and
+// sends the browser there. A redirect rather than a link rendered into the
+// page, for the same reason WP Admin is one: what comes back carries a token
+// and should not sit on a screen.
+func (a *App) sitesOpenClaw(w http.ResponseWriter, r *http.Request) {
+	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
+	if err != nil || site.Type != "openclaw" {
+		a.notFoundError(w, r, "No such site.")
+
+		return
+	}
+
+	result := proc.Run(sites.OpenClawDashboardCommand(site), 90*time.Second)
+
+	if link := sites.OpenClawDashboardURL(site, result.Output); link != "" {
+		http.Redirect(w, r, link, http.StatusSeeOther)
+
+		return
+	}
+
+	// The dashboard itself, which is where they were going. It asks for the
+	// token, which is on the site's page — a screen with a question on it
+	// beats a dead end.
+	a.Log.Warn("openclaw dashboard printed no link",
+		"site", site.Domain, "output", lastLines(result.Output, 5))
+
+	http.Redirect(w, r, site.URL(), http.StatusSeeOther)
+}
+
+// lastLines is the tail of a command's output, for a log line that has to say
+// what happened without carrying a transcript.
+func lastLines(output string, count int) string {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+
+	if len(lines) > count {
+		lines = lines[len(lines)-count:]
+	}
+
+	return strings.Join(lines, " · ")
+}
+
 // sitesAccess is the SSH/SFTP tab's one endpoint: add an account, change a
 // password, remove one.
 func (a *App) sitesAccess(w http.ResponseWriter, r *http.Request) {

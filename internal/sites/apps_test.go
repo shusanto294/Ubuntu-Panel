@@ -440,3 +440,72 @@ func TestOpenClawKeepsTheRestOfTheConfiguration(t *testing.T) {
 		t.Errorf("the operator's own origin was not kept: %v", origins)
 	}
 }
+
+// The link `openclaw dashboard` prints is for somebody at the machine's own
+// terminal: it names the loopback address the gateway is bound to, which is
+// nothing a browser anywhere else can open. Everything else about it — the
+// path, the token, the parameters — is exactly what is needed.
+func TestOpenClawDashboardLinkIsPointedAtTheSite(t *testing.T) {
+	site := &store.Site{
+		ID: 11, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 18801, SSL: true,
+	}
+
+	output := "Gateway is running.\n" +
+		"Open this in a browser:\n" +
+		"  http://127.0.0.1:18801/dashboard?token=abc123&gateway=ws%3A%2F%2F127.0.0.1%3A18801\n"
+
+	link := OpenClawDashboardURL(site, output)
+
+	if !strings.HasPrefix(link, "https://agent.example.com/dashboard?") {
+		t.Fatalf("the link was not pointed at the site: %s", link)
+	}
+
+	if !strings.Contains(link, "token=abc123") {
+		t.Errorf("the token was lost: %s", link)
+	}
+
+	// The parameters carry an address of their own, at the same loopback port.
+	if strings.Contains(link, "127.0.0.1") || strings.Contains(link, "18801") {
+		t.Errorf("a loopback address survived inside the link: %s", link)
+	}
+
+	// A browser on an https page will not open a ws:// socket.
+	if !strings.Contains(link, "wss%3A%2F%2Fagent.example.com") {
+		t.Errorf("the WebSocket address was left insecure: %s", link)
+	}
+}
+
+func TestOpenClawDashboardLinkOnAPlainSite(t *testing.T) {
+	site := &store.Site{
+		ID: 12, Domain: "agent.example.com", Type: "openclaw",
+		RootPath: "/var/www/agent.example.com", AppPort: 18801,
+	}
+
+	link := OpenClawDashboardURL(site, "http://localhost:18801/?token=xyz\n")
+
+	if link != "http://agent.example.com/?token=xyz" {
+		t.Fatalf("link is %q", link)
+	}
+
+	// Nothing to send the browser to is better said by the caller, which falls
+	// back to the site itself.
+	if OpenClawDashboardURL(site, "command not found: openclaw\n") != "" {
+		t.Error("a failed command produced a link anyway")
+	}
+}
+
+// The command has to run as the user the gateway runs as, with the HOME its
+// configuration lives under — those two decide which site's gateway answers.
+func TestOpenClawDashboardCommandAsksThisSitesGateway(t *testing.T) {
+	site := &store.Site{Domain: "agent.example.com", RootPath: "/var/www/agent.example.com"}
+
+	command := OpenClawDashboardCommand(site)
+
+	for _, needed := range []string{"sudo -u www-data", "HOME='/var/www/agent.example.com'",
+		"openclaw dashboard"} {
+		if !strings.Contains(command, needed) {
+			t.Errorf("the command is missing %q: %s", needed, command)
+		}
+	}
+}
