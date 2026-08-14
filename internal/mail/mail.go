@@ -36,6 +36,21 @@ type Service struct {
 // New wires it up.
 func New(st *store.Store) *Service { return &Service{Store: st} }
 
+// ConfigRevision is what the files this package writes look like. It changes
+// when they do, and never otherwise.
+//
+// A machine whose stored revision is older gets the mail server configured
+// again on the next start; one that matches is left alone. It used to be the
+// panel's own version that was compared, which meant every update — including
+// the ones that did not touch a line of mail — rewrote the configuration and
+// restarted Postfix, Dovecot and OpenDKIM. That is a mail outage of a second or
+// two and a task in the log, both for nothing, on every release.
+//
+// **Bump this when you change what writeConfigs, writeDKIMConfig or
+// EnsureSchema produce.** Nothing else needs to move with it: the panel's
+// version is about releases, and this is about the contents of six files.
+const ConfigRevision = "2"
+
 // IsConfigured reports whether the mail server is installed and set up.
 func (s *Service) IsConfigured() bool {
 	return s.Store.ServiceInstalled("mail") && s.Store.SettingBool("mail_configured", false)
@@ -720,11 +735,10 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 
 	s.Store.SetSetting("mail_configured", "1")
 
-	// What the configuration on disk was written by. A panel that changes how
-	// the mail server expects to be spoken to — as making submission demand
-	// STARTTLS did — leaves every machine it updates one version behind until
-	// something rewrites it. This is what NeedsConfiguring compares against.
-	s.Store.SetSetting("mail_configured_version", config.Version)
+	// What the configuration on disk was written from. This is what
+	// NeedsConfiguring compares against, so a machine only has its mail server
+	// rewritten when the panel actually changed how it writes one.
+	s.Store.SetSetting("mail_configured_revision", ConfigRevision)
 
 	return nil
 }
@@ -732,10 +746,14 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 // NeedsConfiguring reports whether the mail server has to be set up, or set up
 // again.
 //
-// Nobody should have to press a repair button after installing a panel or
-// updating one. Mail is configured when its packages land, and again after an
-// update that could have changed what the server expects — every statement in
-// that task is idempotent, so the second run is only a restart of two daemons.
+// Nobody should have to press a repair button after installing a panel, and
+// nobody should watch their mail server restart after an update that had
+// nothing to do with mail. So: when the packages have landed and nothing has
+// configured them, and when the panel has since changed what it writes —
+// ConfigRevision, not the release number.
+//
+// A machine configured by a panel from before that distinction has no revision
+// stored, so it is written once more and then left alone.
 func (s *Service) NeedsConfiguring() bool {
 	if !s.Store.ServiceInstalled("mail") {
 		return false
@@ -745,5 +763,5 @@ func (s *Service) NeedsConfiguring() bool {
 		return true
 	}
 
-	return s.Store.Setting("mail_configured_version", "") != config.Version
+	return s.Store.Setting("mail_configured_revision", "") != ConfigRevision
 }

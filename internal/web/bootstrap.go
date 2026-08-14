@@ -24,11 +24,17 @@ const bootstrapSetting = "apps_bootstrapped"
 // anybody asking.
 //
 // Two occasions: its packages are on the machine but nothing has configured
-// them, and the panel has been updated since the configuration was written. The
-// second is the one that used to need a button — an update that changes what
-// Postfix or Dovecot expects leaves the files on disk describing the old
-// arrangement, and the symptom is a webmail that cannot send with a server that
-// is working perfectly.
+// them, and the panel has since changed what it writes into those files. The
+// second is the one that used to need a button — a change to what Postfix or
+// Dovecot is told leaves the files on disk describing the old arrangement, and
+// the symptom is a webmail that cannot send with a server that is working
+// perfectly.
+//
+// An ordinary update is not one of those occasions. It used to be, because the
+// comparison was against the panel's version number, which moves on every
+// release: every update restarted the mail server and wrote a task nobody had
+// asked for. The comparison is now against mail.ConfigRevision, which moves
+// when the mail configuration does.
 func (a *App) EnsureMailConfigured() {
 	if !a.Mail.NeedsConfiguring() {
 		return
@@ -41,7 +47,7 @@ func (a *App) EnsureMailConfigured() {
 	}
 
 	a.Log.Info("configuring the mail server", "reason",
-		"its configuration was written by a different version of the panel, or not at all")
+		"nothing has configured it, or the panel now writes it differently")
 }
 
 // BootstrapApps installs the software a server needs, on a panel that has never

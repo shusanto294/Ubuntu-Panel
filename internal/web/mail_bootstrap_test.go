@@ -88,20 +88,21 @@ func TestMailIsConfiguredOnceItIsInstalled(t *testing.T) {
 	}
 }
 
-// The case that used to need a repair button: an update changed what the server
-// expects, and the files on disk still describe the old arrangement.
-func TestMailIsConfiguredAgainAfterAPanelUpdate(t *testing.T) {
+// The case that used to need a repair button: the panel now writes the mail
+// configuration differently, and the files on disk describe the old
+// arrangement.
+func TestMailIsConfiguredAgainWhenThePanelWritesItDifferently(t *testing.T) {
 	app := mailApp(t)
 
 	app.Catalog.SyncRows()
 	app.Store.SetServiceStatus("mail", store.ServiceInstalled, "3.8.6", "")
 	app.Store.SetSetting("mail_configured", "1")
-	app.Store.SetSetting("mail_configured_version", "1.0.0-ancient")
+	app.Store.SetSetting("mail_configured_revision", "ancient")
 
 	app.EnsureMailConfigured()
 
 	if n := queued(t, app); n != 1 {
-		t.Fatalf("queued %d configure jobs after an update, want one", n)
+		t.Fatalf("queued %d configure jobs for an out-of-date configuration, want one", n)
 	}
 }
 
@@ -113,11 +114,33 @@ func TestAConfiguredMailServerIsLeftAlone(t *testing.T) {
 	app.Catalog.SyncRows()
 	app.Store.SetServiceStatus("mail", store.ServiceInstalled, "3.8.6", "")
 	app.Store.SetSetting("mail_configured", "1")
-	app.Store.SetSetting("mail_configured_version", config.Version)
+	app.Store.SetSetting("mail_configured_revision", mail.ConfigRevision)
 
 	app.EnsureMailConfigured()
 
 	if n := queued(t, app); n != 0 {
 		t.Fatalf("queued %d configure jobs for a current configuration", n)
+	}
+}
+
+// The regression this all came from: an update bumps the panel's version and
+// nothing else, and the mail server is not touched.
+func TestAnOrdinaryUpdateDoesNotReconfigureMail(t *testing.T) {
+	app := mailApp(t)
+
+	app.Catalog.SyncRows()
+	app.Store.SetServiceStatus("mail", store.ServiceInstalled, "3.8.6", "")
+	app.Store.SetSetting("mail_configured", "1")
+	app.Store.SetSetting("mail_configured_revision", mail.ConfigRevision)
+
+	// Whatever the panel was on when the mail server was configured, it is on
+	// something else now. That is not a reason to rewrite six files and restart
+	// three daemons.
+	app.Store.SetSetting("mail_configured_version", "2.5.1")
+
+	app.EnsureMailConfigured()
+
+	if n := queued(t, app); n != 0 {
+		t.Fatalf("a version bump queued %d configure jobs", n)
 	}
 }
