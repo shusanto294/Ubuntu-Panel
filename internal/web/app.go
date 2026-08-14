@@ -98,6 +98,7 @@ func (a *App) Start(ctx context.Context) {
 	// answering while they run.
 	go func() {
 		a.BootstrapApps(ctx)
+		a.EnsureNginxHelpers()
 		a.EnsureMailConfigured()
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLReachable(ctx)

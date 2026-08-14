@@ -295,6 +295,46 @@ func (s *Service) publishDNS(ctx context.Context, siteID int64) func(*tasks.Runn
 	}
 }
 
+// edgeTLS asks the site's DNS provider whether it is already serving the
+// certificate.
+//
+// A provider that cannot be reached, or that answers something this panel does
+// not recognise, is treated as not serving one: the cost of being wrong that
+// way is a certificate nobody looks at, and the cost of being wrong the other
+// way is a site with no TLS at all.
+func (s *Service) edgeTLS(ctx context.Context, site *store.Site) dns.EdgeTLS {
+	edge, err := dns.EdgeTLSForSite(ctx, s.Store, site)
+	if err != nil {
+		return dns.EdgeTLS{OriginNeedsCertificate: true}
+	}
+
+	return edge
+}
+
+// useEdgeTLS records that this site's certificate is the provider's, and says
+// so in the console where the certificate step would have been.
+func (s *Service) useEdgeTLS(ctx context.Context, siteID int64, mode string) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", errors.New("site vanished")
+		}
+
+		// `ssl` stays false: it means a certificate on this machine, and there
+		// is not one. The site's URL is https either way — EdgeTLS decides that
+		// — and nginx keeps serving plain HTTP to the proxy, which is what the
+		// proxy is asking for.
+		s.Store.SetSiteTLSMode(site.ID, "edge")
+		s.Store.SetSiteSSL(site.ID, false)
+
+		return fmt.Sprintf("Cloudflare is set to %s for this zone, so it answers visitors with its "+
+			"own certificate and fetches from this server over HTTP. No certificate is needed "+
+			"here, and the deployment skips the two or three minutes of asking for one. Switch the "+
+			"zone to Full and redeploy if you want the traffic between Cloudflare and this server "+
+			"encrypted too.", mode), nil
+	}
+}
+
 func (s *Service) requestCertificate(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
 	return func(runner *tasks.Runner) (string, error) {
 		site, err := s.Store.FindSite(ctx, siteID)
@@ -392,6 +432,11 @@ func (s *Service) enableHTTPS(ctx context.Context, siteID int64) func(*tasks.Run
 		}
 
 		s.Store.SetSiteSSL(site.ID, true)
+
+		// A site that used to be served by its provider's certificate and now
+		// has one of its own says so, or the pages would keep crediting
+		// Cloudflare for a certificate certbot issued.
+		s.Store.SetSiteTLSMode(site.ID, "letsencrypt")
 
 		return "HTTPS enabled; HTTP now redirects to it.", nil
 	}

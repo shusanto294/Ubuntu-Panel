@@ -125,6 +125,7 @@ var schema = []string{
 		dns_type          TEXT NOT NULL DEFAULT 'A',
 		dns_content       TEXT,
 		dns_proxied       INTEGER NOT NULL DEFAULT 1,
+		tls_mode          TEXT,
 		deleted_at        TEXT,
 		created_at        TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
@@ -256,6 +257,7 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN cache_ttl TEXT`,
 	`ALTER TABLE sites ADD COLUMN cache_mode TEXT`,
 	`ALTER TABLE api_tokens ADD COLUMN server_name TEXT`,
+	`ALTER TABLE sites ADD COLUMN tls_mode TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -62,6 +62,13 @@ type Site struct {
 	CacheEnabled bool
 	CacheTTL     string
 
+	// TLSMode is who serves this site's certificate. Empty or "letsencrypt" is
+	// the panel's own, issued by certbot and renewed here. "edge" is a DNS
+	// provider whose proxy terminates TLS in front of the machine — Cloudflare
+	// with the orange cloud on — where a certificate at the origin would be
+	// issued, renewed and never presented to anybody.
+	TLSMode string
+
 	CreatedAt string
 }
 
@@ -74,7 +81,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	app_port, start_command, build_command, repository, branch,
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
 	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
-	php_settings, cache_enabled, cache_ttl, cache_mode, created_at`
+	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -86,7 +93,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var dnsAccountID, databaseID, userID, appPort nullInt
 	var aliases, nodeVersion, lastError, startCommand, buildCommand text
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
-	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL, cacheMode text
+	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL, cacheMode, tlsMode text
 	var cacheEnabled nullInt
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
@@ -95,7 +102,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&startCommand, &buildCommand, &repository, &site.Branch,
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
-		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode,
+		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
 		&site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
@@ -121,6 +128,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.CacheEnabled = cacheEnabled.Int64 == 1
 	site.CacheTTL = cacheTTL.String()
 	site.CacheMode = cacheMode.String()
+	site.TLSMode = tlsMode.String()
 
 	// A site from before the choice existed has the page cache or nothing, and
 	// says so rather than reading as "off" with the cache running.
@@ -230,6 +238,12 @@ func (s *Store) SetSiteStatus(id int64, status, lastError string) {
 // SetSiteSSL records that a certificate was issued.
 func (s *Store) SetSiteSSL(id int64, ssl bool) {
 	s.db.Exec(`UPDATE sites SET ssl = ?, updated_at = datetime('now') WHERE id = ?`, ssl, id)
+}
+
+// SetSiteTLSMode records who serves this site's certificate.
+func (s *Store) SetSiteTLSMode(id int64, mode string) {
+	s.db.Exec(`UPDATE sites SET tls_mode = ?, updated_at = datetime('now') WHERE id = ?`,
+		nullText(mode), id)
 }
 
 // SetSiteDatabase links the database provisioned for a site.
@@ -362,12 +376,31 @@ func (site *Site) ServiceName() string {
 }
 
 // URL is where the site answers.
+//
+// A site whose TLS ends at its DNS provider has no certificate here and is
+// still an https address: the visitor's connection is encrypted to the proxy,
+// and it is the visitor's address that goes into a link, a WordPress option or
+// an OAuth callback.
 func (site *Site) URL() string {
-	if site.SSL {
+	if site.SSL || site.EdgeTLS() {
 		return "https://" + site.Domain
 	}
 
 	return "http://" + site.Domain
+}
+
+// EdgeTLS reports whether the certificate a visitor sees is the DNS provider's
+// rather than this machine's.
+func (site *Site) EdgeTLS() bool { return site.TLSMode == "edge" }
+
+// TLSModeOrDefault is the mode with the empty value spelled out, because every
+// site has one and "" is not a word the pages can print.
+func (site *Site) TLSModeOrDefault() string {
+	if site.TLSMode == "" {
+		return "letsencrypt"
+	}
+
+	return site.TLSMode
 }
 
 // TypeLabel, IsProxied, IsPHP and NeedsDatabase read the site type table.
@@ -508,6 +541,8 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		"aliases":       aliases,
 		"status":        site.Status,
 		"ssl":           site.SSL,
+		"tls_mode":      site.TLSModeOrDefault(),
+		"edge_tls":      site.EdgeTLS(),
 		"php_version":   site.PHPVersion,
 		"app_port":      nullableInt(site.AppPort),
 		"root_path":     site.RootPath,

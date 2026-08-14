@@ -535,6 +535,11 @@ func (a *App) certificateSummary(site *store.Site) map[string]any {
 		"path":    path,
 		"expires": nil,
 		"issuer":  nil,
+		// Whose certificate the visitor is shown. A site behind Cloudflare's
+		// proxy on Flexible has none here on purpose, and a tab that only said
+		// "no certificate" about a site serving perfectly good HTTPS is a tab
+		// that sends people looking for a fault.
+		"edge": site.EdgeTLS(),
 	}
 
 	if !proc.Ok("sudo test -f " + proc.Quote(path)) {

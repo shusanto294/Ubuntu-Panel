@@ -787,7 +787,10 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 			"record":     fmt.Sprintf("%s %s -> %s", dnsType, domain, site.DNSContent),
 			"proxied":    site.DNSProxied && dns.SupportsProxy(dnsAccount.Provider),
 			"note": "The panel publishes this during the deployment and removes it again when " +
-				"the site is deleted. Nothing to add by hand.",
+				"the site is deleted — nothing to add by hand. Where the provider's proxy is on " +
+				"and already terminating TLS, the deployment also skips asking Let's Encrypt for " +
+				"a certificate nobody would be shown, which is two or three minutes off it. " +
+				"get_site's tls_mode says which happened.",
 		}
 
 		return answer, nil

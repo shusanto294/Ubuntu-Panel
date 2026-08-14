@@ -81,7 +81,10 @@ func TestManagedNodeAppsAreProxiedWithUpgradeHeaders(t *testing.T) {
 			"upstream " + site.ServiceName() + "_upstream {",
 			"server 127.0.0.1:3001;",
 			"proxy_set_header Upgrade $http_upgrade;",
-			"proxy_set_header X-Forwarded-Proto $scheme;",
+			// The visitor's scheme, not this nginx's: behind a proxy that ends
+			// TLS in front of the machine, $scheme is http and an application
+			// told that builds http links into an https page.
+			"proxy_set_header X-Forwarded-Proto $panel_proto;",
 		} {
 			if !strings.Contains(vhost, needed) {
 				t.Errorf("the %s vhost is missing %q", kind, needed)

@@ -15,6 +15,42 @@ import (
 //
 // The provider's record ids are stored on the site, so deleting it can take
 // the records back down again.
+// EdgeTLSForSite asks this site's DNS provider whether it is serving the
+// certificate, so a deployment can skip asking Let's Encrypt for one nobody
+// will ever be shown.
+//
+// A site the panel does not manage DNS for, or whose record is not proxied, is
+// answered without a request: the question only arises behind a proxy.
+func EdgeTLSForSite(ctx context.Context, st *store.Store, site *store.Site) (EdgeTLS, error) {
+	if !site.ManageDNS || site.DNSAccountID <= 0 || !site.DNSProxied {
+		return EdgeTLS{OriginNeedsCertificate: true}, nil
+	}
+
+	account, err := st.FindDNSAccount(ctx, site.DNSAccountID, 0)
+	if err != nil {
+		return EdgeTLS{OriginNeedsCertificate: true}, err
+	}
+
+	if !SupportsProxy(account.Provider) {
+		return EdgeTLS{OriginNeedsCertificate: true}, nil
+	}
+
+	client := New(account)
+
+	zoneID := site.DNSZoneID
+
+	if zoneID == "" {
+		id, _, err := client.FindZone(site.Domain)
+		if err != nil {
+			return EdgeTLS{OriginNeedsCertificate: true}, err
+		}
+
+		zoneID = id
+	}
+
+	return client.EdgeTLSFor(zoneID)
+}
+
 func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string, error) {
 	if !site.ManageDNS || site.DNSAccountID <= 0 {
 		return "", errors.New("DNS management is not enabled for this site.")

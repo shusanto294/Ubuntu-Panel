@@ -460,3 +460,18 @@ func TestForeverOutlastsBothOfNginxsClocks(t *testing.T) {
 		t.Fatal("a short lifetime lost the hour floor on inactive")
 	}
 }
+
+// The map every proxied vhost now leans on, in the file that defines it.
+//
+// A vhost naming a variable nothing declares is one nginx refuses to load, and
+// nginx refuses the whole configuration rather than that one file — so the
+// missing half of this pair would take every site on the machine down.
+func TestTheSharedConfigDeclaresTheForwardedProtoMap(t *testing.T) {
+	if !strings.Contains(helperConfig, "$panel_proto") {
+		t.Fatal("the shared config does not define $panel_proto")
+	}
+
+	if !strings.Contains(helperConfig, "map $http_x_forwarded_proto $panel_proto {") {
+		t.Errorf("the map is not keyed on the forwarded header:\n%s", helperConfig)
+	}
+}

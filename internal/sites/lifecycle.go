@@ -143,9 +143,23 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	list.AddFn("Write the nginx vhost", s.writeVhost(ctx, site.ID))
 	list.Add("Reload nginx", "sudo nginx -t", "sudo systemctl reload nginx")
 
+	// The certificate — unless the site's DNS provider is already serving one.
+	//
+	// A Cloudflare record with the orange cloud on answers the visitor with
+	// Cloudflare's certificate, and on Flexible it fetches from here over plain
+	// HTTP. Asking Let's Encrypt for a certificate in that arrangement adds two
+	// or three minutes to every deployment, has to wait for DNS to spread
+	// first, fails more often than anything else here, and produces a file
+	// nobody is ever shown. Full and Strict are the other half of the question:
+	// there the proxy dials this machine over HTTPS, so the certificate is
+	// needed however the visitor is served.
 	if site.SSL {
-		list.AddFn("Request the TLS certificate", s.requestCertificate(ctx, site.ID)).Optional()
-		list.AddFn("Serve the site over HTTPS", s.enableHTTPS(ctx, site.ID)).Optional()
+		if edge := s.edgeTLS(ctx, site); edge.Terminates && !edge.OriginNeedsCertificate {
+			list.AddFn("Let the DNS provider serve TLS", s.useEdgeTLS(ctx, site.ID, edge.Mode))
+		} else {
+			list.AddFn("Request the TLS certificate", s.requestCertificate(ctx, site.ID)).Optional()
+			list.AddFn("Serve the site over HTTPS", s.enableHTTPS(ctx, site.ID)).Optional()
+		}
 	}
 
 	// Both applications store absolute URLs, so they can only be told which

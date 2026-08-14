@@ -205,3 +205,36 @@ func TestADKIMRecordIsMatchedOnTheDomainsOwnSelector(t *testing.T) {
 		t.Fatal("the domain's own DKIM record was not recognised")
 	}
 }
+
+// Which Cloudflare settings mean this machine can skip Let's Encrypt.
+//
+// Only Flexible does. Full and Strict have Cloudflare dialling the origin over
+// HTTPS, so a machine without a certificate answers those requests with
+// nothing — the 525 that looks exactly like a broken site.
+func TestOnlyFlexibleLetsTheOriginSkipItsCertificate(t *testing.T) {
+	cases := []struct {
+		mode       string
+		terminates bool
+		needsCert  bool
+	}{
+		{"flexible", true, false},
+		{"full", true, true},
+		{"strict", true, true},
+		{"off", false, true},
+		{"", false, true},
+		{"something-new", false, true},
+	}
+
+	for _, test := range cases {
+		edge := edgeTLSFromMode(test.mode)
+
+		if edge.Terminates != test.terminates {
+			t.Errorf("%q: terminates = %v, want %v", test.mode, edge.Terminates, test.terminates)
+		}
+
+		if edge.OriginNeedsCertificate != test.needsCert {
+			t.Errorf("%q: the origin needs a certificate = %v, want %v",
+				test.mode, edge.OriginNeedsCertificate, test.needsCert)
+		}
+	}
+}

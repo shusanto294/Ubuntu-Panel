@@ -1342,11 +1342,32 @@ const destroy = async () => {
         >
             <h3 class="font-semibold text-slate-800">SSL/TLS</h3>
 
+            <!--
+                A site behind Cloudflare's proxy on Flexible has no certificate
+                here on purpose and is served over HTTPS all the same. Without
+                this the tab said "None yet" about a site that is working, and
+                sent people looking for a fault.
+            -->
+            <p
+                v-if="certificate.edge"
+                class="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ring-1 ring-emerald-600/20"
+            >
+                Cloudflare is serving this site's certificate. Its proxy answers
+                visitors over HTTPS and fetches from this server over HTTP, so
+                there is nothing to issue here and the deployment skips the step.
+                Switch the zone to Full in Cloudflare and redeploy if you want
+                the hop between Cloudflare and this server encrypted too.
+            </p>
+
             <dl class="mt-4 space-y-3 text-sm">
                 <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Certificate</dt>
                     <dd class="text-slate-800">
-                        {{ certificate.issued ? 'Issued' : 'None yet' }}
+                        <template v-if="certificate.issued">Issued</template>
+                        <template v-else-if="certificate.edge">
+                            Cloudflare's
+                        </template>
+                        <template v-else>None yet</template>
                     </dd>
                 </div>
                 <div v-if="certificate.expires" class="flex justify-between gap-4">
@@ -1361,7 +1382,9 @@ const destroy = async () => {
                 </div>
                 <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Serving over</dt>
-                    <dd class="text-slate-800">{{ site.ssl ? 'HTTPS' : 'HTTP' }}</dd>
+                    <dd class="text-slate-800">
+                        {{ site.ssl || certificate.edge ? 'HTTPS' : 'HTTP' }}
+                    </dd>
                 </div>
             </dl>
 

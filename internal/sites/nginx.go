@@ -80,6 +80,11 @@ func PhpMyAdminLocation(php string, gate string, panelPort int) string {
 				"        proxy_pass_request_body off;\n"+
 				"        proxy_set_header Content-Length \"\";\n"+
 				"        proxy_set_header Host $host;\n"+
+				// $scheme, not $panel_proto: this block goes into the panel's
+				// own vhost, which the installer writes before the conf.d file
+				// defining that map exists. See the note above about
+				// $panel_https — an undefined variable here is an nginx that
+				// refuses to load the panel.
 				"        proxy_set_header X-Forwarded-Proto $scheme;\n"+
 				"    }\n\n", gate, panelPort)
 	}
@@ -460,7 +465,7 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 				"        proxy_set_header Host $host;\n"+
 				"        proxy_set_header X-Real-IP $remote_addr;\n"+
 				"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"+
-				"        proxy_set_header X-Forwarded-Proto $scheme;\n"+
+				"        proxy_set_header X-Forwarded-Proto $panel_proto;\n"+
 				"%s"+
 				"        proxy_read_timeout 300;\n"+
 				"%s"+
@@ -830,6 +835,10 @@ func RenderUnit(site *store.Site) string {
 		service, service)
 }
 
+// HelperConfig is the shared configuration as this build writes it, so the
+// panel can tell whether what is on disk is still current.
+func HelperConfig() string { return helperConfig }
+
 // helperConfig is the `$panel_https` map every vhost references.
 const helperConfig = "# Managed by " + config.Name + "\n" +
 	"# Tells PHP-FPM the request was secure, whether TLS ended at nginx or at a\n" +
@@ -838,6 +847,15 @@ const helperConfig = "# Managed by " + config.Name + "\n" +
 	"map \"$scheme$http_x_forwarded_proto\" $panel_https {\n" +
 	"    default   off;\n" +
 	"    \"~*https\" on;\n" +
+	"}\n" +
+	"\n" +
+	"# The scheme the visitor actually used, for the applications the panel runs\n" +
+	"# behind nginx rather than through PHP-FPM. Behind a proxy that terminates\n" +
+	"# TLS, $scheme is http — and a Next.js or n8n app told that builds http\n" +
+	"# links and redirects into them from an https page.\n" +
+	"map $http_x_forwarded_proto $panel_proto {\n" +
+	"    default $http_x_forwarded_proto;\n" +
+	"    \"\"      $scheme;\n" +
 	"}\n"
 
 // defaultServer is the catch-all that stops an unknown hostname being served

@@ -308,6 +308,69 @@ func (c *Client) Verify() (string, error) {
 	return "", fmt.Errorf("Unknown DNS provider: %s", c.Account.Provider)
 }
 
+// ----------------------------------------------------------------- edge TLS
+
+// EdgeTLS is what a provider's proxy does about certificates for one zone.
+//
+// A proxy that terminates TLS presents its own certificate to the visitor, and
+// then decides for itself how to reach the origin. That decision is the whole
+// question: on Cloudflare, `flexible` means the origin is spoken to over plain
+// HTTP, so a certificate here would be issued, renewed and never presented to
+// anybody; `full` and `strict` mean the origin is dialled over HTTPS, so it
+// needs one whatever the edge is doing.
+type EdgeTLS struct {
+	// Terminates is whether the visitor's TLS ends at the provider.
+	Terminates bool
+
+	// OriginNeedsCertificate is whether this machine still needs one of its
+	// own for the proxy to reach it.
+	OriginNeedsCertificate bool
+
+	// Mode is the provider's own word for it, for the sentence that explains
+	// the decision to whoever is reading the deployment.
+	Mode string
+}
+
+// EdgeTLSFor reports what the provider is doing about TLS for this zone.
+//
+// Only Cloudflare answers today, because it is the only provider the panel
+// talks to whose records can be proxied at all — SupportsProxy is the same
+// question asked in the same table. A provider that cannot proxy is not
+// terminating anything, and its sites need their own certificate.
+func (c *Client) EdgeTLSFor(zoneID string) (EdgeTLS, error) {
+	if !SupportsProxy(c.Account.Provider) {
+		return EdgeTLS{OriginNeedsCertificate: true}, nil
+	}
+
+	body, err := c.request("GET",
+		"https://api.cloudflare.com/client/v4/zones/"+zoneID+"/settings/ssl", nil)
+	if err != nil {
+		return EdgeTLS{}, err
+	}
+
+	return edgeTLSFromMode(strings.ToLower(str(object(body["result"]), "value", ""))), nil
+}
+
+// edgeTLSFromMode reads Cloudflare's own word for what it is doing.
+func edgeTLSFromMode(mode string) EdgeTLS {
+	switch mode {
+	case "flexible":
+		// The one case where this machine needs nothing: Cloudflare answers the
+		// visitor over TLS and fetches from here over plain HTTP.
+		return EdgeTLS{Terminates: true, Mode: mode}
+
+	case "full", "strict":
+		// TLS both ways, so the origin needs its own certificate however the
+		// visitor is served.
+		return EdgeTLS{Terminates: true, OriginNeedsCertificate: true, Mode: mode}
+	}
+
+	// "off", and anything nobody here recognises. Neither is a reason to skip
+	// a certificate: being wrong this way costs a file nobody looks at, and
+	// being wrong the other way is a site with no TLS at all.
+	return EdgeTLS{OriginNeedsCertificate: true, Mode: mode}
+}
+
 // -------------------------------------------------------------------- zones
 
 // Zones lists every zone the credential can see.

@@ -10,7 +10,9 @@ import (
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
 	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
+	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
+	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 )
 
@@ -115,6 +117,49 @@ func (a *App) BootstrapApps(ctx context.Context) {
 
 	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
 		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+}
+
+// EnsureNginxHelpers keeps the shared nginx configuration in step with the
+// panel that renders vhosts against it.
+//
+// The conf.d file the panel writes declares the maps every site vhost uses —
+// $panel_https, and now $panel_proto. It is written when nginx is installed and
+// never again, so a panel that starts referencing a new one would render a
+// vhost naming a variable nothing declares. nginx does not skip that file: it
+// refuses the whole configuration, for every site on the machine and for the
+// panel itself. So the file is checked on every start, and rewritten when this
+// build's version of it differs from what is on disk.
+//
+// Reloaded only when it changed, and only when nginx accepts the result: a
+// panel restart should not restart nginx, and a bad configuration should not be
+// loaded over a working one.
+func (a *App) EnsureNginxHelpers() {
+	if !a.Store.ServiceInstalled("nginx") {
+		return
+	}
+
+	const path = "/etc/nginx/conf.d/panel-proxy.conf"
+
+	if current, err := proc.ReadFile(path, true); err == nil && current == sites.HelperConfig() {
+		return
+	}
+
+	if err := a.Sites.WriteSharedConfig(nil); err != nil {
+		a.Log.Warn("could not write the shared nginx configuration", "error", err)
+
+		return
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		a.Log.Error("nginx refused the configuration after the shared file was rewritten",
+			"output", check.Output)
+
+		return
+	}
+
+	if proc.Ok("sudo systemctl reload nginx") {
+		a.Log.Info("the shared nginx configuration was brought up to date")
+	}
 }
 
 // InstallAppsNow installs the same set BootstrapApps queues, in the foreground,
