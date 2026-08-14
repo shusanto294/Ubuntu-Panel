@@ -190,6 +190,182 @@ func TestMCPValidatesBeforeItCreatesASite(t *testing.T) {
 	}
 }
 
+// toolText runs a tool and hands back its content block and whether it failed.
+func toolText(t *testing.T, p *panel, token, name, arguments string) (string, bool) {
+	t.Helper()
+
+	_, answer := rpc(t, p, token, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":
+		{"name":"`+name+`","arguments":`+arguments+`}}`)
+
+	result, ok := answer["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s answered %v", name, answer)
+	}
+
+	content, _ := result["content"].([]any)
+	block, _ := content[0].(map[string]any)
+	text, _ := block["text"].(string)
+
+	return text, result["isError"] == true
+}
+
+// saveSettings posts the AI page's own form.
+func saveSettings(t *testing.T, p *panel, body string) {
+	t.Helper()
+
+	headers := p.inertia()
+	headers["X-XSRF-TOKEN"] = p.csrf()
+
+	response := p.do(http.MethodPost, "/ai/settings", body, headers)
+	response.Body.Close()
+
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ai/settings = %d, want 303", response.StatusCode)
+	}
+}
+
+func TestTurningTheServerOffClosesTheEndpoint(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	saveSettings(t, p, `{"enabled":false,"confirm_destructive":true,"allow_all":true}`)
+
+	status, answer := rpc(t, p, token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("a switched-off server answered %d, want 503", status)
+	}
+
+	if _, ok := answer["error"]; !ok {
+		t.Errorf("the refusal carried no JSON-RPC error: %v", answer)
+	}
+
+	// And back on again, because a switch that only goes one way is a trap.
+	saveSettings(t, p, `{"enabled":true,"confirm_destructive":true,"allow_all":true}`)
+
+	if status, _ := rpc(t, p, token, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); status != http.StatusOK {
+		t.Fatalf("after switching it back on, tools/list = %d", status)
+	}
+}
+
+// A capability that is not ticked is neither offered nor run. Both halves
+// matter: a client lists the tools once and keeps them.
+func TestAnUntickedCapabilityIsNeitherOfferedNorRun(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	saveSettings(t, p, `{"enabled":true,"confirm_destructive":true,"allow_all":false,
+		"permissions":["sites.read"]}`)
+
+	_, list := rpc(t, p, token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+
+	tools, _ := list["result"].(map[string]any)["tools"].([]any)
+
+	for _, entry := range tools {
+		if tool, ok := entry.(map[string]any); ok && tool["name"] == "run_command" {
+			t.Fatal("run_command was offered with the shell capability off")
+		}
+	}
+
+	text, failed := toolText(t, p, token, "run_command", `{"command":"whoami"}`)
+
+	if !failed || !strings.Contains(text, "does not allow") {
+		t.Errorf("calling it anyway gave %q (error: %v)", text, failed)
+	}
+
+	// The one that is ticked still works.
+	if _, failed := toolText(t, p, token, "list_sites", `{}`); failed {
+		t.Error("list_sites was refused with sites.read ticked")
+	}
+}
+
+func TestDestructiveWorkAsksBeforeItRuns(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	// Reading is free even with the switch on.
+	if _, failed := toolText(t, p, token, "run_command", `{"command":"id"}`); failed {
+		t.Error("a read-only command was refused")
+	}
+
+	text, failed := toolText(t, p, token, "run_command", `{"command":"rm -rf /tmp/panel-test-nothing"}`)
+
+	if !failed || !strings.Contains(text, "confirm: true") {
+		t.Fatalf("a destructive command ran without confirmation: %q", text)
+	}
+
+	// With the person's yes it runs, and the exit status comes back rather than
+	// being reported as a broken tool.
+	text, failed = toolText(t, p, token, "run_command",
+		`{"command":"rm -rf /tmp/panel-test-nothing","confirm":true}`)
+
+	if failed || !strings.Contains(text, `"exit_code": 0`) {
+		t.Fatalf("the confirmed command answered %q", text)
+	}
+
+	// And with the switch off, nothing is asked.
+	saveSettings(t, p, `{"enabled":true,"confirm_destructive":false,"allow_all":true}`)
+
+	if _, failed := toolText(t, p, token, "run_command",
+		`{"command":"rm -rf /tmp/panel-test-nothing"}`); failed {
+		t.Error("it still asked with the confirm switch off")
+	}
+}
+
+// The panel owns its vhosts, its units and its certificates. A command that
+// redoes one of those by hand is refused with the tool that owns it.
+func TestTheShellWillNotRedoThePanelsOwnWork(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	for _, command := range []string{
+		`echo x | sudo tee /etc/nginx/sites-available/example.com`,
+		`sudo certbot --nginx -d example.com`,
+	} {
+		text, failed := toolText(t, p, token, "run_command",
+			`{"command":`+strconv.Quote(command)+`,"confirm":true}`)
+
+		if !failed {
+			t.Errorf("%q was allowed through: %s", command, text)
+		}
+	}
+
+	// Reading the same file is not the same request.
+	if _, failed := toolText(t, p, token, "run_command",
+		`{"command":"ls /etc/nginx/sites-available"}`); failed {
+		t.Error("listing the vhost directory was refused")
+	}
+}
+
+// The name a client shows, which somebody with three panels connected needs to
+// be able to change.
+func TestTheServerIntroducesItselfByTheNameThatWasSet(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	saveSettings(t, p, `{"enabled":true,"confirm_destructive":true,"allow_all":true,
+		"name":"Client staging box"}`)
+
+	_, answer := rpc(t, p, token,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
+
+	info, _ := answer["result"].(map[string]any)["serverInfo"].(map[string]any)
+
+	if info["name"] != "Client staging box" {
+		t.Errorf("it introduced itself as %v", info["name"])
+	}
+}
+
 func TestRevokingAKeyStopsIt(t *testing.T) {
 	p := start(t)
 	signIn(t, p)

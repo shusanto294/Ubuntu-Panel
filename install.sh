@@ -29,7 +29,8 @@
 #   PANEL_PORT=8088          loopback port nginx proxies to
 #   PANEL_SWAP=1             create a swapfile if the box has none and < 1.5 GB
 #   PANEL_SKIP_APT=0         skip the apt dependency step
-#   PANEL_INSTALL_APPS=all   what a first start installs: all | core | none
+#   PANEL_INSTALL_APPS=all   what the installer puts on the machine before it
+#                            starts the panel: all | core | none
 #   PANEL_FROM_SOURCE=0      1 forces a source build even inside a release
 #   NO_COLOR=1               plain output
 #
@@ -89,7 +90,7 @@ else
 fi
 
 STEP=0
-STEP_TOTAL=13   # reset once the build mode is known: a release skips three steps
+STEP_TOTAL=14   # reset once the build mode is known: a release skips three steps
 
 step()   { STEP=$((STEP + 1)); printf '\n%s[%2d/%d] %s%s\n' "$BOLD" "$STEP" "$STEP_TOTAL" "$*" "$RESET"; }
 detail() { printf '        %s\n' "$*"; }
@@ -222,10 +223,10 @@ if [ -f "$RELEASE_FILE" ] && [ "$PANEL_FROM_SOURCE" != "1" ] && [ -f "$SOURCE_DI
     RELEASE_BUILT="$(release_field built)"
 fi
 
-# 13 steps from source; a release skips the toolchain checks and the build, and
+# 14 steps from source; a release skips the toolchain checks and the build, and
 # adds one step that checks what it shipped with instead. The `|| true` is not
 # decoration: under `set -e` a bare failing test ends the script.
-[ "$BUILD_MODE" = prebuilt ] && STEP_TOTAL=11 || true
+[ "$BUILD_MODE" = prebuilt ] && STEP_TOTAL=12 || true
 
 printf '\n%s==> Ubuntu Panel%s\n' "$BOLD" "$RESET"
 
@@ -1117,6 +1118,48 @@ fi
 
 # ====================================================== 12. start the panel
 
+step "Installing the server's apps"
+
+# nginx, PHP-FPM, MariaDB, Node.js and the rest, now — before the service is
+# started rather than on the queue behind it.
+#
+# The panel used to queue this on its first start, which meant it answered in
+# five seconds and then spent the next ten minutes installing underneath
+# whoever was signing in: every page qualified by "installing…", and a site
+# created in that window refused for a missing app that was already on its way.
+# Waiting here costs the same minutes once, in the place where waiting for an
+# installer is what you are already doing.
+#
+# The binary does the work through its own catalogue — same steps, same task
+# row, same console on the Apps page afterwards — and runs as the panel's user,
+# so nothing it writes is owned by root.
+
+APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
+APPS_CHOICE="${APPS_CHOICE:-all}"
+
+if [ "$MODE" = update ]; then
+    same "Update — whatever is on this machine is left as it is."
+elif [ "$APPS_CHOICE" = none ]; then
+    same "PANEL_INSTALL_APPS=none — nothing installed; pick what you need on the Apps page."
+elif [ "$PANEL_SKIP_APT" = "1" ]; then
+    same "PANEL_SKIP_APT=1 — skipping."
+else
+    detail "Selection: ${APPS_CHOICE}. This is the long part of the install — on a"
+    detail "small VPS, five to fifteen minutes. Every step is also in $INSTALL_LOG."
+
+    printf '\n$ ubuntu-panel --install-apps %s\n' "$APPS_CHOICE" >>"$INSTALL_LOG"
+
+    if sudo -u "$PANEL_USER" "$PANEL_ROOT/bin/ubuntu-panel" \
+            --config "$CONFIG_FILE" --install-apps "$APPS_CHOICE" 2>&1 | tee -a "$INSTALL_LOG"; then
+        ok "The machine has what a server needs"
+    else
+        warn "Some of it did not install. The panel is fine and starts anyway —"
+        warn "the Apps page has the console for each, and a Retry beside it."
+    fi
+fi
+
+# ========================================================= 13. start the panel
+
 step "Starting the panel"
 
 # A failure here falls through to the health check below, which prints the
@@ -1177,7 +1220,7 @@ if [ -f "$DB_FILE" ]; then
     kv "Sites"    "$SITES"
 fi
 
-# ============================================================ 13. finishing
+# ============================================================ 14. finishing
 
 step "Finishing up"
 
@@ -1242,16 +1285,13 @@ printf '    %-13s %s\n' "URL" "$PANEL_URL"
 if [ "$MODE" = install ]; then
     printf '    %-13s open the URL — it will ask you to create the first one\n' "Account"
 
-    APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
-
     case "${APPS_CHOICE:-all}" in
         none)
-            printf '    %-13s nothing installed yet — pick what you need on the Apps page\n' "Apps"
+            printf '    %-13s nothing installed — pick what you need on the Apps page\n' "Apps"
             ;;
         *)
-            printf '    %-13s installing %s in the background; watch it on the Apps page\n' \
+            printf '    %-13s %s — installed already; nothing is still landing\n' \
                 "Apps" "${APPS_CHOICE:-all}"
-            printf '    %-13s nginx, PHP, MariaDB and the rest land over the next few minutes\n' ""
             ;;
     esac
 fi

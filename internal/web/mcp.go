@@ -14,6 +14,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
+	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
@@ -31,6 +32,14 @@ const MCPPath = "/mcp"
 const mcpInstructions = `This server is Ubuntu Panel, a control panel running on one Ubuntu server. ` +
 	`Through it you can create and manage websites, databases and the applications the server needs.
 
+Work the way the panel works. Anything the panel does, do with the panel's own tools — creating ` +
+	`sites, deploying them, installing apps, creating databases, issuing certificates. The panel ` +
+	`owns those files: the nginx vhosts under /etc/nginx/sites-available, the systemd units for ` +
+	`proxied sites, the site directories under /var/www, the database rows that pair with a real ` +
+	`database. A site put there by hand is invisible to the panel and will be overwritten or ` +
+	`orphaned by the next deployment. run_command is for what no other tool covers — inspecting a ` +
+	`service, tailing a log, running composer or wp inside a site — not for redoing the panel's job.
+
 Creating or deleting a site is asynchronous: the tool returns immediately with a site id, and the ` +
 	`work — cloning the repository, installing the runtime, writing the nginx vhost, requesting the ` +
 	`TLS certificate — runs on the server's queue and takes anywhere from thirty seconds to several ` +
@@ -41,7 +50,148 @@ Before creating a site, check list_site_types: it says what this machine can hos
 	`which apps are missing for the rest. Missing apps can be installed with install_apps, which is ` +
 	`also asynchronous.
 
-Every domain must point at this server for TLS to be issued. server_status has the public IP.`
+Every domain must point at this server for TLS to be issued. server_status has the public IP.
+
+The person who owns this panel decides what you may do, on its AI access page. A tool that answers ` +
+	`"not allowed" is a setting, not a fault — say so and stop rather than looking for another way ` +
+	`round. Where a tool asks you to confirm first, ask the person in your own words and wait for a ` +
+	`real answer before calling it again.`
+
+// The two switches on the AI access page.
+//
+// Both default to the safe answer on a panel that has never been asked: the
+// server is on, because a key that answers nothing is a support ticket, and
+// destructive work asks first, because the alternative is an assistant that
+// deletes a site it decided was unused.
+const (
+	mcpEnabledSetting = "mcp_enabled"
+	mcpConfirmSetting = "mcp_confirm_destructive"
+)
+
+// mcpNameSetting is what a client introduces this panel as.
+//
+// One machine can have several of these connected — a staging box, a client's
+// server, your own — and every one of them is called Ubuntu Panel until
+// somebody says otherwise. The name is what the assistant reads on connection
+// and what the configuration file keys on, so it is worth being able to change.
+const mcpNameSetting = "mcp_server_name"
+
+func (a *App) mcpEnabled() bool  { return a.Store.SettingBool(mcpEnabledSetting, true) }
+func (a *App) mcpConfirms() bool { return a.Store.SettingBool(mcpConfirmSetting, true) }
+
+func (a *App) mcpServerName() string {
+	return a.Store.Setting(mcpNameSetting, config.Name)
+}
+
+// mcpServerSlug is the same name as a configuration key: lower case, words
+// joined by dashes, and never empty.
+func mcpServerSlug(name string) string {
+	var slug strings.Builder
+
+	for _, character := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case character >= 'a' && character <= 'z', character >= '0' && character <= '9':
+			slug.WriteRune(character)
+		default:
+			// Collapsed rather than repeated, so "My  panel!" is "my-panel".
+			if text := slug.String(); text != "" && !strings.HasSuffix(text, "-") {
+				slug.WriteByte('-')
+			}
+		}
+	}
+
+	trimmed := strings.Trim(slug.String(), "-")
+
+	if trimmed == "" {
+		return "ubuntu-panel"
+	}
+
+	return trimmed
+}
+
+// What an assistant is allowed to do, one line per tick box on the AI access
+// page. Every tool names one of these, and a tool whose capability is not
+// granted is neither offered nor run.
+const (
+	mcpAllowAllSetting    = "mcp_allow_all"
+	mcpPermissionsSetting = "mcp_permissions"
+	capSitesRead          = "sites.read"
+	capSitesWrite         = "sites.write"
+	capSitesDelete        = "sites.delete"
+	capFilesRead          = "files.read"
+	capFilesWrite         = "files.write"
+	capDatabases          = "databases"
+	capApps               = "apps"
+	capShell              = "shell"
+)
+
+// mcpCapabilities is the checklist, in the order the page shows it: what it is
+// called, what it means, and whether it is the kind of thing that cannot be
+// undone.
+var mcpCapabilities = []struct {
+	Key, Label, Help string
+	Destructive      bool
+}{
+	{Key: capSitesRead, Label: "Look around",
+		Help: "List sites, read their status and deployment logs, and see how the server is doing."},
+	{Key: capSitesWrite, Label: "Create and deploy sites",
+		Help: "Create a site from a repository or a template, deploy it again, pull it, restart it."},
+	{Key: capSitesDelete, Label: "Delete sites", Destructive: true,
+		Help: "Remove a site: its files, its database, its DNS records and its certificate."},
+	{Key: capFilesRead, Label: "Read a site's files",
+		Help: "Open files inside a site — configuration, templates, a .env with its passwords in it."},
+	{Key: capFilesWrite, Label: "Write a site's files", Destructive: true,
+		Help: "Create and replace files inside a site."},
+	{Key: capDatabases, Label: "Databases",
+		Help: "List databases with their credentials, and create new ones."},
+	{Key: capApps, Label: "Install apps",
+		Help: "Install what the machine is missing — PHP, MariaDB, Node.js, Redis and the rest."},
+	{Key: capShell, Label: "Run any command", Destructive: true,
+		Help: "Run shell commands as the panel's own user, which has passwordless sudo. " +
+			"This is everything the machine can do, so it is also every way it can be broken."},
+}
+
+// mcpAllows reports whether a capability is granted.
+//
+// A panel that has never been to this page allows everything: the assistant is
+// the point of the feature, and a fresh install where every tool answers "not
+// allowed" reads as broken rather than as careful. Narrowing it is one visit to
+// the page; the confirm-first switch is what stands in front of the damage
+// until then.
+func (a *App) mcpAllows(capability string) bool {
+	if capability == "" || a.Store.SettingBool(mcpAllowAllSetting, true) {
+		return true
+	}
+
+	for _, granted := range strings.Split(a.Store.Setting(mcpPermissionsSetting, ""), ",") {
+		if strings.TrimSpace(granted) == capability {
+			return true
+		}
+	}
+
+	return false
+}
+
+// mcpAllowsTool is what the registry asks before it offers or runs anything.
+func (a *App) mcpAllowsTool(ctx context.Context, tool *mcp.Tool) bool {
+	return a.mcpAllows(tool.Capability)
+}
+
+// requireConfirmation is the confirm-first switch.
+//
+// It cannot force a human to be asked — nothing on this side of the connection
+// can — but it stops the one-step version, where a sentence about tidying up
+// becomes a deleted site inside one tool call. The assistant has to come back a
+// second time and say, in the call itself, that the person agreed.
+func (a *App) requireConfirmation(args mcp.Args, what string) error {
+	if !a.mcpConfirms() || args.Bool("confirm", false) {
+		return nil
+	}
+
+	return fmt.Errorf("%s cannot be undone, and this panel is set to confirm first. Tell the "+
+		"person exactly what will happen, in your own words, and wait for them to say yes — "+
+		"then call this tool again with confirm: true. Do not set confirm yourself.", what)
+}
 
 // mcpUserKey carries the account a token belongs to into the tools.
 type mcpUserKey struct{}
@@ -72,6 +222,20 @@ func (a *App) withMCP(next http.Handler) http.Handler {
 }
 
 func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
+	// The switch on the AI access page. Checked before the key, so turning the
+	// server off is one decision that ends every connection rather than a race
+	// with whoever still holds a key.
+	if !a.mcpEnabled() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":null,"error":{"code":-32000,`+
+			`"message":"This panel's MCP server is switched off. Whoever owns the panel can turn `+
+			`it back on under AI access."}}`)
+
+		return
+	}
+
 	secret := bearerToken(r)
 
 	if secret == "" {
@@ -155,7 +319,11 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpCreateDatabase(),
 		a.mcpListApps(),
 		a.mcpInstallApps(),
+		a.mcpRunCommand(),
 	)
+
+	server.Allow = a.mcpAllowsTool
+	server.NameFor = func(context.Context) string { return a.mcpServerName() }
 
 	return server
 }
@@ -240,9 +408,10 @@ func tail(text string, limit int) string {
 
 func (a *App) mcpServerStatus() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "server_status",
-		Title:    "Server status",
-		ReadOnly: true,
+		Name:       "server_status",
+		Capability: capSitesRead,
+		Title:      "Server status",
+		ReadOnly:   true,
 		Description: "What this machine is and how it is doing: hostname, public IP, operating " +
 			"system, installed apps, CPU, memory and disk. Read this before promising that a " +
 			"domain can point here, or that a site type can be hosted.",
@@ -260,9 +429,10 @@ func (a *App) mcpServerStatus() *mcp.Tool {
 
 func (a *App) mcpListSiteTypes() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "list_site_types",
-		Title:    "List site types",
-		ReadOnly: true,
+		Name:       "list_site_types",
+		Capability: capSitesRead,
+		Title:      "List site types",
+		ReadOnly:   true,
 		Description: "The kinds of site this panel deploys — WordPress, Laravel, Next.js, Node.js, " +
 			"plain PHP, static HTML and the managed applications — and, for each, whether this " +
 			"machine has what it needs right now. A type whose `ready` is false names the apps " +
@@ -310,6 +480,7 @@ func (a *App) mcpListSiteTypes() *mcp.Tool {
 func (a *App) mcpListSites() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        "list_sites",
+		Capability:  capSitesRead,
 		Title:       "List sites",
 		ReadOnly:    true,
 		Description: "Every site this panel hosts, with its domain, type, status and URL.",
@@ -332,9 +503,10 @@ func (a *App) mcpListSites() *mcp.Tool {
 
 func (a *App) mcpGetSite() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "get_site",
-		Title:    "Get a site",
-		ReadOnly: true,
+		Name:       "get_site",
+		Capability: capSitesRead,
+		Title:      "Get a site",
+		ReadOnly:   true,
 		Description: "Everything the panel knows about one site: where its files are, what it " +
 			"runs, whether it has a certificate, its database, the login the panel created for a " +
 			"managed application, and how its most recent deployment ended. This is what to poll " +
@@ -356,8 +528,9 @@ func (a *App) mcpGetSite() *mcp.Tool {
 
 func (a *App) mcpCreateSite() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "create_site",
-		Title: "Create a site",
+		Name:       "create_site",
+		Capability: capSitesWrite,
+		Title:      "Create a site",
 		Description: "Create and deploy a site: nginx vhost, runtime, database where the type " +
 			"needs one, a Let's Encrypt certificate, and — for a git-backed site — a clone of the " +
 			"repository followed by its build. Returns as soon as the work is queued, so poll " +
@@ -507,6 +680,7 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 func (a *App) mcpDeleteSite() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        "delete_site",
+		Capability:  capSitesDelete,
 		Title:       "Delete a site",
 		Destructive: true,
 		Description: "Remove a site: its vhost, its service, its DNS records, its database and — " +
@@ -516,11 +690,17 @@ func (a *App) mcpDeleteSite() *mcp.Tool {
 			"site": {Description: "The site's id, or its domain."},
 			"delete_files": {Type: "boolean", Default: true,
 				Description: "Remove the site's directory as well as its configuration."},
+			"confirm": {Type: "boolean", Default: false,
+				Description: "The person has been told what this removes and has said yes."},
 		},
 		Required: []string{"site"},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			site, err := a.mcpSite(ctx, args)
 			if err != nil {
+				return nil, err
+			}
+
+			if err := a.requireConfirmation(args, "Deleting "+site.Domain); err != nil {
 				return nil, err
 			}
 
@@ -543,8 +723,9 @@ func (a *App) mcpDeleteSite() *mcp.Tool {
 
 func (a *App) mcpDeploySite() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "deploy_site",
-		Title: "Deploy a site again",
+		Name:       "deploy_site",
+		Capability: capSitesWrite,
+		Title:      "Deploy a site again",
 		Description: "Run a site's deployment from the start: write its vhost, install its runtime, " +
 			"build it, and request its certificate. This is what fixes a site whose first " +
 			"deployment failed, and what applies a change to its configuration.",
@@ -572,8 +753,9 @@ func (a *App) mcpDeploySite() *mcp.Tool {
 
 func (a *App) mcpPullSite() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "pull_site",
-		Title: "Pull a site's repository",
+		Name:       "pull_site",
+		Capability: capSitesWrite,
+		Title:      "Pull a site's repository",
 		Description: "Fetch the site's git repository again and rebuild it, without touching its " +
 			"nginx configuration or its certificate. This is the ordinary way to ship a change.",
 		Properties: map[string]mcp.Property{
@@ -605,8 +787,9 @@ func (a *App) mcpPullSite() *mcp.Tool {
 
 func (a *App) mcpRestartSite() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "restart_site",
-		Title: "Restart a site's service",
+		Name:       "restart_site",
+		Capability: capSitesWrite,
+		Title:      "Restart a site's service",
 		Description: "Restart the systemd service behind a Node.js or Next.js site. Sites served " +
 			"straight by nginx and PHP-FPM have no service to restart.",
 		Properties: map[string]mcp.Property{
@@ -638,9 +821,10 @@ func (a *App) mcpRestartSite() *mcp.Tool {
 
 func (a *App) mcpSiteLogs() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "site_logs",
-		Title:    "Read a site's logs",
-		ReadOnly: true,
+		Name:       "site_logs",
+		Capability: capSitesRead,
+		Title:      "Read a site's logs",
+		ReadOnly:   true,
 		Description: "The tail of nginx's access and error logs for a site, and of the " +
 			"application's own log where the site runs as a service. This is where the reason for " +
 			"a 500 or a 502 is.",
@@ -672,6 +856,7 @@ func (a *App) mcpSiteLogs() *mcp.Tool {
 func (a *App) mcpListFiles() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        "list_files",
+		Capability:  capFilesRead,
 		Title:       "List a site's files",
 		ReadOnly:    true,
 		Description: "List one directory inside a site. Paths are relative to the site's own root, so `/` is the site itself.",
@@ -704,6 +889,7 @@ func (a *App) mcpListFiles() *mcp.Tool {
 func (a *App) mcpReadFile() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        "read_file",
+		Capability:  capFilesRead,
 		Title:       "Read a site's file",
 		ReadOnly:    true,
 		Description: "Read one text file from inside a site — a .env, a configuration file, a template.",
@@ -734,14 +920,17 @@ func (a *App) mcpReadFile() *mcp.Tool {
 
 func (a *App) mcpWriteFile() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "write_file",
-		Title: "Write a site's file",
+		Name:       "write_file",
+		Capability: capFilesWrite,
+		Title:      "Write a site's file",
 		Description: "Write a text file inside a site, creating it or replacing it whole. The " +
 			"file is written as the site's own user, so the application can read it.",
 		Properties: map[string]mcp.Property{
 			"site":     {Description: "The site's id, or its domain."},
 			"path":     {Description: "The file, relative to the site root."},
 			"contents": {Description: "The whole of the file's new contents."},
+			"confirm": {Type: "boolean", Default: false,
+				Description: "The person has been told which file is being replaced and has said yes."},
 		},
 		Required: []string{"site", "path", "contents"},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
@@ -756,6 +945,15 @@ func (a *App) mcpWriteFile() *mcp.Tool {
 				return nil, errors.New("`contents` is the whole of the new file and has to be sent")
 			}
 
+			// Replacing a file loses what was in it, so it asks first — but only
+			// for a file that is already there. Creating one takes nothing away.
+			if _, err := a.Sites.ReadFile(site, path); err == nil {
+				if err := a.requireConfirmation(args,
+					"Replacing "+path+" in "+site.Domain); err != nil {
+					return nil, err
+				}
+			}
+
 			if err := a.Sites.WriteFile(site, path, args.String("contents")); err != nil {
 				return nil, err
 			}
@@ -767,9 +965,10 @@ func (a *App) mcpWriteFile() *mcp.Tool {
 
 func (a *App) mcpGetTask() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "get_task",
-		Title:    "Get a task",
-		ReadOnly: true,
+		Name:       "get_task",
+		Capability: capSitesRead,
+		Title:      "Get a task",
+		ReadOnly:   true,
 		Description: "One task — a deployment, an install, a teardown — with its steps and the " +
 			"tail of its console output. This is where the reason a deployment failed is written.",
 		Properties: map[string]mcp.Property{
@@ -801,9 +1000,10 @@ func (a *App) mcpGetTask() *mcp.Tool {
 
 func (a *App) mcpListTasks() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "list_tasks",
-		Title:    "List recent tasks",
-		ReadOnly: true,
+		Name:       "list_tasks",
+		Capability: capSitesRead,
+		Title:      "List recent tasks",
+		ReadOnly:   true,
 		Description: "The panel's recent work, newest first: deployments, installs, certificates " +
 			"and teardowns, with how each ended.",
 		Properties: map[string]mcp.Property{
@@ -843,9 +1043,10 @@ func (a *App) mcpListTasks() *mcp.Tool {
 
 func (a *App) mcpListDatabases() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "list_databases",
-		Title:    "List databases",
-		ReadOnly: true,
+		Name:       "list_databases",
+		Capability: capDatabases,
+		Title:      "List databases",
+		ReadOnly:   true,
 		Description: "Every database the panel manages, with its engine, its user and its " +
 			"password — the ones it created for a site included.",
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
@@ -867,8 +1068,9 @@ func (a *App) mcpListDatabases() *mcp.Tool {
 
 func (a *App) mcpCreateDatabase() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "create_database",
-		Title: "Create a database",
+		Name:       "create_database",
+		Capability: capDatabases,
+		Title:      "Create a database",
 		Description: "Create a database and a user with every privilege on it. A site the panel " +
 			"deploys gets one of these by itself, so this is for an application that needs a " +
 			"second one, or for one the panel is not deploying.",
@@ -962,9 +1164,10 @@ func (a *App) mcpCreateDatabase() *mcp.Tool {
 
 func (a *App) mcpListApps() *mcp.Tool {
 	return &mcp.Tool{
-		Name:     "list_apps",
-		Title:    "List the server's apps",
-		ReadOnly: true,
+		Name:       "list_apps",
+		Capability: capSitesRead,
+		Title:      "List the server's apps",
+		ReadOnly:   true,
 		Description: "What the panel can install on this machine — nginx, PHP, MariaDB, Node.js, " +
 			"Redis, Certbot and the rest — and the state each is in.",
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
@@ -977,8 +1180,9 @@ func (a *App) mcpListApps() *mcp.Tool {
 
 func (a *App) mcpInstallApps() *mcp.Tool {
 	return &mcp.Tool{
-		Name:  "install_apps",
-		Title: "Install apps",
+		Name:       "install_apps",
+		Capability: capApps,
+		Title:      "Install apps",
 		Description: "Install one or more of the apps from list_apps. This is what a site type " +
 			"whose `ready` is false needs first. Asynchronous: the installs run on the queue, and " +
 			"list_apps says when they are done.",
@@ -1034,6 +1238,248 @@ func (a *App) mcpInstallApps() *mcp.Tool {
 	}
 }
 
+// readOnlyBinaries is the allowlist behind the confirm-first switch.
+//
+// The list is what the panel is willing to call harmless by inspection, and it
+// is deliberately short: anything not on it needs a yes, including things that
+// are obviously safe. Getting that wrong in this direction costs one extra
+// question; getting it wrong the other way costs a server.
+var readOnlyBinaries = map[string]bool{
+	// No pagers and nothing interactive: `less` and `top` wait for a keypress
+	// that is never coming, and the only thing that ends them is the timeout.
+	"cat": true, "head": true, "tail": true, "grep": true, "egrep": true,
+	"fgrep": true, "wc": true, "ls": true, "stat": true, "file": true, "find": true,
+	"du": true, "df": true, "free": true, "uptime": true, "uname": true, "hostname": true,
+	"whoami": true, "id": true, "date": true, "ps": true, "pgrep": true,
+	"journalctl": true, "dmesg": true, "ss": true, "netstat": true, "ip": true,
+	"lsblk": true, "printenv": true, "env": true, "dpkg-query": true, "apt-cache": true,
+	"systemctl": true, "git": true, "nginx": true, "which": true, "readlink": true,
+	"realpath": true, "sha256sum": true, "md5sum": true, "dig": true, "host": true,
+	"nslookup": true, "ping": true,
+}
+
+// readOnlyCommand reports whether a command only reads.
+//
+// By inspection, and conservatively: a command that chains, redirects or
+// substitutes is not judged at all, because the interesting half of
+// `ls; rm -rf /` is the half that is not `ls`.
+func readOnlyCommand(command string) bool {
+	trimmed := strings.TrimSpace(command)
+
+	if trimmed == "" || strings.ContainsAny(trimmed, ";&|><`\n") {
+		return false
+	}
+
+	fields := strings.Fields(trimmed)
+
+	// sudo does not make a command dangerous by itself, and refusing to look
+	// past it would put `sudo tail -n 50 /var/log/syslog` behind a question.
+	if fields[0] == "sudo" {
+		fields = fields[1:]
+
+		if len(fields) == 0 {
+			return false
+		}
+	}
+
+	name := fields[0]
+
+	if strings.Contains(name, "/") {
+		name = name[strings.LastIndex(name, "/")+1:]
+	}
+
+	if !readOnlyBinaries[name] {
+		return false
+	}
+
+	// A reading binary can still be asked to write.
+	for _, argument := range fields[1:] {
+		switch argument {
+		case "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf":
+			return false
+		}
+	}
+
+	// The ones whose subcommand is the whole question.
+	switch name {
+	case "systemctl":
+		return len(fields) > 1 && map[string]bool{
+			"status": true, "show": true, "cat": true, "list-units": true,
+			"list-unit-files": true, "is-active": true, "is-enabled": true, "is-failed": true,
+		}[fields[1]]
+
+	case "git":
+		return len(fields) > 1 && map[string]bool{
+			"status": true, "log": true, "diff": true, "show": true, "branch": true,
+			"remote": true, "config": true, "describe": true, "rev-parse": true,
+		}[fields[1]]
+
+	case "nginx":
+		return len(fields) > 1 && (fields[1] == "-t" || fields[1] == "-T" || fields[1] == "-v")
+
+	case "ip":
+		// `ip addr` and `ip route show` read the machine; `ip link set …`
+		// changes it, and the difference is the verb after the object.
+		return len(fields) < 3 || fields[2] == "show" || fields[2] == "list"
+	}
+
+	return true
+}
+
+// panelOwnedWork is the panel's own job, done by hand.
+//
+// Not a safety check — it is a correctness one. A vhost written into
+// sites-available, a unit dropped into systemd, a certificate fetched by a
+// hand-run certbot: each of those works for an afternoon and is then overwritten
+// by the next deployment, or outlives the site it belonged to because no row
+// knows about it. The tool that owns the work is named instead.
+func panelOwnedWork(command string) string {
+	lower := strings.ToLower(command)
+
+	// Reading any of it is fine and often the point.
+	writes := strings.ContainsAny(command, ">|") ||
+		containsWord(lower, "tee", "rm", "mv", "cp", "sed", "install", "ln", "truncate", "chown", "chmod")
+
+	switch {
+	case writes && (strings.Contains(lower, "/etc/nginx/sites-available") ||
+		strings.Contains(lower, "/etc/nginx/sites-enabled")):
+		return "writing an nginx vhost by hand — the panel writes those from the site's row, and " +
+			"the next deployment overwrites whatever is there. Use create_site, or the site tools " +
+			"for a site that already exists"
+
+	case writes && strings.Contains(lower, "/etc/systemd/system/ubuntu-panel-"):
+		return "writing a site's systemd unit by hand — the panel writes those, and restart_site " +
+			"or deploy_site is what changes them"
+
+	case containsWord(lower, "certbot"):
+		return "asking certbot for a certificate directly — the panel requests and renews them per " +
+			"site, and records what it got. deploy_site does it, and get_site says whether it worked"
+
+	case containsWord(lower, "mysqladmin") && containsWord(lower, "create"),
+		strings.Contains(lower, "create database"):
+		return "creating a database by hand — the panel keeps a row beside every database it " +
+			"creates, with the credentials it generated. create_database does both"
+	}
+
+	return ""
+}
+
+// containsWord reports whether any of these appear as a whole word.
+func containsWord(text string, words ...string) bool {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '|' || r == '&' ||
+			r == '(' || r == ')' || r == '"' || r == '\''
+	})
+
+	for _, field := range fields {
+		for _, word := range words {
+			if field == word {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (a *App) mcpRunCommand() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "run_command",
+		Title:      "Run a command",
+		Capability: capShell,
+		Description: "Run a shell command on the server. It runs as the panel's own user, which " +
+			"has passwordless sudo, so anything the machine can do is reachable from here.\n\n" +
+			"This is for what the other tools do not cover: inspecting a service, tailing a log, " +
+			"running composer, npm or wp inside a site, restarting a daemon. It is not the way to " +
+			"do what the panel does — creating sites, vhosts, systemd units, databases or " +
+			"certificates by hand leaves the panel's records disagreeing with the machine, and the " +
+			"next deployment overwrites the work.\n\n" +
+			"Reading is free. Anything else needs the person's explicit yes first, sent back as " +
+			"confirm: true. Every command is recorded in the panel's Logs, with its output.",
+		Properties: map[string]mcp.Property{
+			"command":   {Description: "The command line, run through bash."},
+			"directory": {Description: "Where to run it. Defaults to /."},
+			"timeout": {Type: "integer", Default: 120,
+				Description: "Seconds to allow before it is killed. Up to 1800."},
+			"confirm": {Type: "boolean", Default: false,
+				Description: "The person has been told what this command does and has said yes."},
+		},
+		Required: []string{"command"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			command := strings.TrimSpace(args.String("command"))
+			if command == "" {
+				return nil, errors.New("`command` is the command line to run")
+			}
+
+			if instead := panelOwnedWork(command); instead != "" {
+				return nil, errors.New("that is " + instead + ". If you have a reason this is " +
+					"genuinely different, say what it is to the person first")
+			}
+
+			if !readOnlyCommand(command) {
+				if err := a.requireConfirmation(args, "Running `"+command+"`"); err != nil {
+					return nil, err
+				}
+			}
+
+			timeout := time.Duration(args.Int("timeout")) * time.Second
+
+			switch {
+			case timeout <= 0:
+				timeout = 2 * time.Minute
+			case timeout > 30*time.Minute:
+				timeout = 30 * time.Minute
+			}
+
+			full := command
+
+			if directory := args.String("directory"); directory != "" {
+				full = "cd " + proc.Quote(directory) + " && " + command
+			}
+
+			// Recorded like everything else the panel does, so the Logs page
+			// answers "what has the assistant been doing on my server".
+			user := mcpUser(ctx)
+
+			var userID int64
+			if user != nil {
+				userID = user.ID
+			}
+
+			taskID, _ := a.Store.CreateTask(ctx, "mcp", "command", userID, 0, proc.Redact(command))
+
+			result := proc.Run(full, timeout)
+
+			if taskID > 0 {
+				a.Store.AppendTaskOutput(taskID, result.Output)
+
+				status, message := "success", "Exit 0"
+
+				if !result.OK() {
+					status = "failed"
+					message = fmt.Sprintf("Exit %d", result.Code)
+				}
+
+				if result.TimedOut {
+					message = "Killed after " + timeout.String()
+				}
+
+				a.Store.FinishTask(taskID, status, message, 100)
+			}
+
+			// A command that failed is not a tool that failed: the exit status
+			// and the output are the answer, and the assistant reads both.
+			return map[string]any{
+				"command":   command,
+				"exit_code": result.Code,
+				"timed_out": result.TimedOut,
+				"output":    tail(result.Output, 20000),
+				"task_id":   taskID,
+			}, nil
+		},
+	}
+}
+
 // ------------------------------------------------------------ the panel page
 
 // panelURL is where this panel answers from outside the machine, which is what
@@ -1083,14 +1529,21 @@ func (a *App) aiIndex(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	tools := make([]map[string]any, 0)
+	// The checklist, with what is ticked now. `allow_all` is its own answer
+	// rather than every box ticked: a panel that has never been here allows
+	// everything, and that is a different statement from somebody having chosen
+	// each one.
+	allowAll := a.Store.SettingBool(mcpAllowAllSetting, true)
 
-	for _, tool := range a.MCP.Tools() {
-		tools = append(tools, map[string]any{
-			"name":        tool.Name,
-			"title":       tool.Title,
-			"description": tool.Description,
-			"read_only":   tool.ReadOnly,
+	capabilities := make([]map[string]any, 0, len(mcpCapabilities))
+
+	for _, capability := range mcpCapabilities {
+		capabilities = append(capabilities, map[string]any{
+			"key":         capability.Key,
+			"label":       capability.Label,
+			"help":        capability.Help,
+			"destructive": capability.Destructive,
+			"granted":     a.mcpAllows(capability.Key),
 		})
 	}
 
@@ -1099,9 +1552,23 @@ func (a *App) aiIndex(w http.ResponseWriter, r *http.Request) {
 		issued = sess.Flashed("issued_token")
 	}
 
+	name := a.mcpServerName()
+
 	a.Render.Render(w, r, "System/Ai", inertia.Props{
 		"tokens": list,
-		"tools":  tools,
+		"settings": map[string]any{
+			"enabled":             a.mcpEnabled(),
+			"confirm_destructive": a.mcpConfirms(),
+			"allow_all":           allowAll,
+			"name":                name,
+		},
+		"capabilities": capabilities,
+		// What a client will call this server, and the same thing in the form a
+		// configuration file uses as its key. Somebody with three panels
+		// connected needs both to differ.
+		"serverName":  name,
+		"serverSlug":  mcpServerSlug(name),
+		"defaultName": config.Name,
 		// Where a client has to point. The panel's own hostname when one was
 		// set, and the public IP with the port when not — which is what a panel
 		// nobody has put a domain in front of actually answers on.
@@ -1110,6 +1577,59 @@ func (a *App) aiIndex(w http.ResponseWriter, r *http.Request) {
 		// so this is the only time the key exists anywhere it can be read.
 		"issued": nullable(issued),
 	})
+}
+
+// aiSettings writes the switches and the checklist.
+func (a *App) aiSettings(w http.ResponseWriter, r *http.Request) {
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+
+		return
+	}
+
+	a.Store.SetSetting(mcpEnabledSetting, boolSetting(boolInput(input, "enabled", true)))
+	a.Store.SetSetting(mcpConfirmSetting, boolSetting(boolInput(input, "confirm_destructive", true)))
+
+	allowAll := boolInput(input, "allow_all", false)
+
+	a.Store.SetSetting(mcpAllowAllSetting, boolSetting(allowAll))
+
+	if !allowAll {
+		granted := []string{}
+
+		for _, capability := range mcpCapabilities {
+			for _, asked := range listInput(input, "permissions") {
+				if asked == capability.Key {
+					granted = append(granted, capability.Key)
+
+					break
+				}
+			}
+		}
+
+		a.Store.SetSetting(mcpPermissionsSetting, strings.Join(granted, ","))
+	}
+
+	if name := stringInput(input, "name", ""); name != "" {
+		a.Store.SetSetting(mcpNameSetting, truncate(name, 60))
+	}
+
+	if sess := session.FromContext(r.Context()); sess != nil {
+		sess.Flash("success", "Saved. A client that is already connected picks this up when it "+
+			"reconnects; the panel applies it to every call either way.")
+	}
+
+	inertia.Redirect(w, r, "/ai")
+}
+
+// boolSetting is how a checkbox is stored, so SettingBool reads it back.
+func boolSetting(value bool) string {
+	if value {
+		return "1"
+	}
+
+	return "0"
 }
 
 func (a *App) aiStoreToken(w http.ResponseWriter, r *http.Request) {
@@ -1123,10 +1643,13 @@ func (a *App) aiStoreToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := stringInput(input, "name", "AI assistant")
+	name := truncate(stringInput(input, "name", "AI assistant"), 60)
 
-	if len(name) > 60 {
-		name = name[:60]
+	// The name a client will show this panel under, set here because this is
+	// where somebody is already typing — and it is the same field they will want
+	// when the second panel is added to the same machine.
+	if serverName := stringInput(input, "server_name", ""); serverName != "" {
+		a.Store.SetSetting(mcpNameSetting, truncate(serverName, 60))
 	}
 
 	secret, hash := store.NewAPIToken()

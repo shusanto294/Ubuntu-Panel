@@ -26,12 +26,14 @@ a systemd unit.
 Then open the server's address in a browser. With no account yet it asks you to
 create the first one.
 
-A fresh panel installs the software a server needs by itself — nginx, PHP-FPM,
-MariaDB, Certbot, WP-CLI, Node and the rest of the Apps page — in the
-background, on the first start. Watch it on the Apps page; it takes a few
-minutes. Set `PANEL_INSTALL_APPS=core` for only what a site cannot run without,
-or `none` to choose them yourself. It happens once, on a panel that has never
-installed an app, so removing one afterwards is a decision the panel keeps.
+The installer puts the software a server needs on the machine before it starts
+the panel — nginx, PHP-FPM, MariaDB, Certbot, WP-CLI, Node and the rest of the
+Apps page — so the first sign-in lands on a server that is finished. That is
+the long part of the install: five to fifteen minutes on a small VPS, printed
+step by step as it goes. Set `PANEL_INSTALL_APPS=core` for only what a site
+cannot run without, or `none` to choose them yourself. It happens once, on a
+machine the panel has never installed an app on, so removing one afterwards is
+a decision the panel keeps.
 
 Options are environment variables, or flags after `bash -s --`:
 
@@ -99,9 +101,16 @@ And one thing the C panel does not:
   other Model Context Protocol client at `https://your-panel/mcp` with a key
   issued on the AI access page, and the assistant can create a site from a
   GitHub repository, deploy a WordPress or Next.js site, read a failing
-  deployment's console, edit a site's files, create databases and install what
-  the machine is missing — nineteen tools, each one a call onto the same
-  service the panel's own pages use
+  deployment's console, edit a site's files, create databases, install what the
+  machine is missing, and run commands on the server — twenty tools, each one a
+  call onto the same service the panel's own pages use.
+
+  What it may do is a checklist on that page, from "look around" to the shell,
+  with an Everything option and a switch for the whole server. A second switch
+  makes anything destructive — deleting a site, replacing a file, a command
+  that is not plainly read-only — refuse the first attempt and tell the
+  assistant to put it to you in words first. Every command it runs is in the
+  panel's own Logs, with its output
 
 The database schema matches the C panel's, so the same `panel.db` can be served
 by either binary.
@@ -187,7 +196,7 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_PUBLIC` | `$PANEL_ROOT/public` (only with `PANEL_DEBUG`) |
 | `PANEL_APP_KEY` | — (written by the installer; encrypts every stored credential) |
 | `PANEL_WORKERS` | `2` (`1` on a machine under 1.5 GB) |
-| `PANEL_INSTALL_APPS` | `all` — what a first start installs: `all`, `core` or `none` |
+| `PANEL_INSTALL_APPS` | `all` — what the installer puts on the machine before starting the panel: `all`, `core` or `none` |
 | `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel-Go` |
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |

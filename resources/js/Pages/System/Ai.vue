@@ -1,29 +1,80 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import Checkbox from '@/Components/Checkbox.vue';
 import DangerButton from '@/Components/DangerButton.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import { Head, router, useForm } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
+import { copyText } from '@/clipboard';
 
 /**
- * AI access: the keys an assistant signs its requests with, and the three lines
- * of configuration that point one at this panel.
+ * AI access: what an assistant is allowed to do with this server, the keys it
+ * signs its requests with, and the one paragraph that connects it.
  *
- * The key is shown once, on the response that created it — the panel keeps only
- * a hash — so the card that carries it is the loudest thing on the page and
- * says so.
+ * The connection instructions are below the keys and only appear once there is
+ * a key to put in them — before that they would be a snippet with a blank where
+ * the credential goes, which is a thing to be pasted and then wondered about.
  */
 const props = defineProps({
     tokens: { type: Array, default: () => [] },
-    tools: { type: Array, default: () => [] },
+    capabilities: { type: Array, default: () => [] },
+    settings: { type: Object, default: () => ({}) },
+    serverName: { type: String, default: 'Ubuntu Panel' },
+    serverSlug: { type: String, default: 'ubuntu-panel' },
+    defaultName: { type: String, default: 'Ubuntu Panel' },
     endpoint: { type: String, default: '' },
     issued: { type: String, default: null },
 });
 
-const form = useForm({ name: '' });
+// ------------------------------------------------------------------ copying
+
+const copied = ref('');
+const copyFailed = ref('');
+
+const copy = async (text, which) => {
+    const done = await copyText(text);
+
+    copied.value = done ? which : '';
+    copyFailed.value = done ? '' : which;
+
+    if (done) setTimeout(() => (copied.value = ''), 2000);
+};
+
+// ------------------------------------------------------- server and switches
+
+const settings = useForm({
+    enabled: props.settings.enabled ?? true,
+    confirm_destructive: props.settings.confirm_destructive ?? true,
+    allow_all: props.settings.allow_all ?? true,
+    name: props.settings.name || props.defaultName,
+    permissions: props.capabilities.filter((c) => c.granted).map((c) => c.key),
+});
+
+// Ticking "everything" is a statement, not a shortcut: the individual list goes
+// with it so the two can never disagree on screen.
+watch(
+    () => settings.allow_all,
+    (all) => {
+        if (all) settings.permissions = props.capabilities.map((c) => c.key);
+    },
+);
+
+const toggle = (key) => {
+    if (settings.allow_all) settings.allow_all = false;
+
+    settings.permissions = settings.permissions.includes(key)
+        ? settings.permissions.filter((granted) => granted !== key)
+        : [...settings.permissions, key];
+};
+
+const saveSettings = () => settings.post(route('ai.settings'), { preserveScroll: true });
+
+// ---------------------------------------------------------------- the keys
+
+const form = useForm({ name: '', server_name: props.serverName });
 
 const create = () => {
     form.post(route('ai.tokens.store'), {
@@ -45,51 +96,41 @@ const revoke = async (token) => {
     router.delete(route('ai.tokens.destroy', token.id), { preserveScroll: true });
 };
 
-// The key in every snippet: the one just issued when there is one, and a
-// placeholder otherwise — a page reloaded tomorrow cannot show a key again, and
-// a snippet with somebody else's in it would be worse than one with a blank.
-const key = computed(() => props.issued || 'YOUR-KEY');
+// ------------------------------------------------------------- connecting
 
-const snippets = computed(() => [
-    {
-        key: 'claude-code',
-        label: 'Claude Code',
-        note: 'Run this in a terminal on the machine you use Claude Code from.',
-        body: `claude mcp add --transport http ubuntu-panel ${props.endpoint} \\\n    --header "Authorization: Bearer ${key.value}"`,
-    },
-    {
-        key: 'codex',
-        label: 'Codex CLI',
-        note: 'Add this to ~/.codex/config.toml.',
-        body: `[mcp_servers.ubuntu_panel]\nurl = "${props.endpoint}"\nhttp_headers = { Authorization = "Bearer ${key.value}" }`,
-    },
-    {
-        key: 'json',
-        label: 'Claude Desktop, Cursor, Windsurf',
-        note:
-            'Add this to the client\'s mcpServers configuration. It goes through mcp-remote, ' +
-            'which is what bridges a client that only speaks stdio to an HTTP server.',
-        body: `{\n  "mcpServers": {\n    "ubuntu-panel": {\n      "command": "npx",\n      "args": [\n        "-y", "mcp-remote", "${props.endpoint}",\n        "--header", "Authorization: Bearer ${key.value}"\n      ]\n    }\n  }\n}`,
-    },
-]);
+// The key in the instructions: the one just issued when there is one, and a
+// placeholder otherwise. A key cannot be shown twice — the panel keeps a hash —
+// so a page opened tomorrow says where to put yours instead of pretending.
+const key = computed(() => props.issued || 'PASTE-YOUR-KEY-HERE');
 
-const showing = ref('claude-code');
-const copied = ref('');
+const prompt = computed(
+    () => `Add an MCP server to my AI setup, or update it if it is already there.
 
-const copy = async (text, which) => {
-    try {
-        await navigator.clipboard.writeText(text);
-        copied.value = which;
-    } catch {
-        // A browser that refuses the clipboard leaves the text on screen to be
-        // selected by hand, which is what it was rendered for anyway.
-        copied.value = '';
-    }
-};
+    name:      ${props.serverSlug}
+    transport: HTTP (streamable HTTP, not SSE)
+    url:       ${props.endpoint}
+    header:    Authorization: Bearer ${key.value}
 
-const current = computed(
-    () => snippets.value.find((snippet) => snippet.key === showing.value) || snippets.value[0],
+If a server called "${props.serverSlug}" is already configured, replace its URL and its Authorization header with these rather than adding a second one. Use whichever mechanism my client has — the CLI command, the config file, the settings UI, whatever is right for it.
+
+Then reconnect to it, call its server_status tool, and tell me what came back so I know it works. The server introduces itself as "${props.serverName}".`,
 );
+
+const manual = computed(
+    () => `{
+  "mcpServers": {
+    "${props.serverSlug}": {
+      "type": "http",
+      "url": "${props.endpoint}",
+      "headers": {
+        "Authorization": "Bearer ${key.value}"
+      }
+    }
+  }
+}`,
+);
+
+const showing = ref('prompt');
 
 const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.endpoint));
 </script>
@@ -109,6 +150,129 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
         </template>
 
         <div class="space-y-6">
+            <!-- What it is allowed to do. -->
+            <form
+                class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+                @submit.prevent="saveSettings"
+            >
+                <div class="border-b border-slate-200 px-5 py-4">
+                    <h3 class="font-semibold text-slate-800">MCP server</h3>
+                    <p class="mt-1 text-sm text-slate-500">
+                        What an assistant may do with this machine, and whether
+                        it may reach it at all.
+                    </p>
+                </div>
+
+                <div class="space-y-5 px-5 py-4">
+                    <label class="flex items-start gap-3">
+                        <Checkbox v-model:checked="settings.enabled" class="mt-1" />
+                        <span>
+                            <span class="block font-medium text-slate-800">
+                                Answer assistants
+                            </span>
+                            <span class="block text-sm text-slate-500">
+                                Off, the endpoint refuses every request and the
+                                keys below stay where they are.
+                            </span>
+                        </span>
+                    </label>
+
+                    <label class="flex items-start gap-3">
+                        <Checkbox
+                            v-model:checked="settings.confirm_destructive"
+                            class="mt-1"
+                        />
+                        <span>
+                            <span class="block font-medium text-slate-800">
+                                Ask me before anything destructive
+                            </span>
+                            <span class="block text-sm text-slate-500">
+                                Deleting a site, replacing a file, running a
+                                command that is not plainly read-only: the panel
+                                refuses the first attempt and tells the
+                                assistant to put it to you in words and come
+                                back with your answer. It cannot make an
+                                assistant ask honestly — nothing on this side of
+                                the connection can — but it stops the version
+                                where one sentence deletes a site.
+                            </span>
+                        </span>
+                    </label>
+
+                    <div>
+                        <InputLabel for="server-name" value="What this server is called" />
+                        <TextInput
+                            id="server-name"
+                            v-model="settings.name"
+                            class="mt-1 block w-full sm:max-w-sm"
+                            :placeholder="defaultName"
+                        />
+                        <p class="mt-1 text-sm text-slate-500">
+                            How your assistant introduces this panel, and the key
+                            its configuration file uses. Worth changing when you
+                            have more than one of these connected to the same
+                            machine.
+                        </p>
+                    </div>
+
+                    <div class="rounded-xl ring-1 ring-slate-200">
+                        <label
+                            class="flex items-start gap-3 border-b border-slate-200 px-4 py-3"
+                        >
+                            <Checkbox v-model:checked="settings.allow_all" class="mt-1" />
+                            <span>
+                                <span class="block font-medium text-slate-800">
+                                    Everything
+                                </span>
+                                <span class="block text-sm text-slate-500">
+                                    Every tool the panel has, including the shell.
+                                </span>
+                            </span>
+                        </label>
+
+                        <div class="divide-y divide-slate-100">
+                            <label
+                                v-for="capability in capabilities"
+                                :key="capability.key"
+                                class="flex items-start gap-3 px-4 py-3"
+                                :class="settings.allow_all ? 'opacity-60' : ''"
+                            >
+                                <Checkbox
+                                    class="mt-1"
+                                    :checked="settings.permissions.includes(capability.key)"
+                                    @update:checked="toggle(capability.key)"
+                                />
+                                <span>
+                                    <span class="flex items-center gap-2">
+                                        <span class="font-medium text-slate-800">
+                                            {{ capability.label }}
+                                        </span>
+                                        <span
+                                            v-if="capability.destructive"
+                                            class="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-600/20"
+                                        >
+                                            can destroy things
+                                        </span>
+                                    </span>
+                                    <span class="block text-sm text-slate-500">
+                                        {{ capability.help }}
+                                    </span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3 border-t border-slate-100 px-5 py-4">
+                    <PrimaryButton :disabled="settings.processing">
+                        {{ settings.processing ? 'Saving…' : 'Save' }}
+                    </PrimaryButton>
+                    <span v-if="settings.recentlySuccessful" class="text-sm text-slate-500">
+                        Saved.
+                    </span>
+                </div>
+            </form>
+
             <!-- The key, once. -->
             <div
                 v-if="issued"
@@ -137,74 +301,11 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         {{ copied === 'key' ? 'Copied' : 'Copy' }}
                     </button>
                 </div>
-            </div>
 
-            <!-- Connecting a client. -->
-            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
-                <div class="border-b border-slate-200 px-5 py-4">
-                    <h3 class="font-semibold text-slate-800">
-                        Connect an assistant
-                    </h3>
-                    <p class="mt-1 text-sm text-slate-500">
-                        The panel speaks the Model Context Protocol over HTTP at
-                        <code class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">{{
-                            endpoint
-                        }}</code
-                        >. Point a client at it with a key below.
-                    </p>
-                </div>
-
-                <div class="px-5 py-4">
-                    <p
-                        v-if="local"
-                        class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-600/20"
-                    >
-                        This panel has no hostname of its own yet, so the address
-                        above is only reachable from the server itself. Set one
-                        on the Settings page — an assistant running on your own
-                        machine has to be able to reach the panel over the
-                        network, and a certificate is what stops the key
-                        travelling in the clear.
-                    </p>
-
-                    <div class="flex flex-wrap gap-2">
-                        <button
-                            v-for="snippet in snippets"
-                            :key="snippet.key"
-                            type="button"
-                            class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
-                            :class="
-                                showing === snippet.key
-                                    ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-600/20'
-                                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
-                            "
-                            @click="showing = snippet.key"
-                        >
-                            {{ snippet.label }}
-                        </button>
-                    </div>
-
-                    <p class="mt-3 text-sm text-slate-500">{{ current.note }}</p>
-
-                    <div class="relative mt-2">
-                        <pre
-                            class="overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 pe-24 font-mono text-xs leading-relaxed text-slate-100"
-                        >{{ current.body }}</pre>
-                        <button
-                            type="button"
-                            class="absolute end-3 top-3 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-white/20"
-                            @click="copy(current.body, current.key)"
-                        >
-                            {{ copied === current.key ? 'Copied' : 'Copy' }}
-                        </button>
-                    </div>
-
-                    <p v-if="!issued" class="mt-3 text-xs text-slate-500">
-                        Replace <code class="font-mono">YOUR-KEY</code> with a
-                        key from below — an existing one if you kept it, a new
-                        one if you did not.
-                    </p>
-                </div>
+                <p v-if="copyFailed === 'key'" class="mt-2 text-xs text-emerald-800">
+                    This browser would not let the page copy for you — select the
+                    key above and copy it yourself.
+                </p>
             </div>
 
             <!-- The keys. -->
@@ -212,19 +313,18 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                 <div class="border-b border-slate-200 px-5 py-4">
                     <h3 class="font-semibold text-slate-800">Access keys</h3>
                     <p class="mt-1 text-sm text-slate-500">
-                        A key can do everything you can do on this panel: create
-                        sites, read and write their files, and delete them. Give
-                        each assistant its own, so one can be revoked without
-                        stopping the rest.
+                        A key carries everything ticked above. Give each
+                        assistant its own, so one can be revoked without stopping
+                        the rest.
                     </p>
                 </div>
 
                 <form
-                    class="flex flex-wrap items-end gap-3 border-b border-slate-100 px-5 py-4"
+                    class="grid gap-3 border-b border-slate-100 px-5 py-4 sm:grid-cols-2"
                     @submit.prevent="create"
                 >
-                    <div class="min-w-0 flex-1">
-                        <InputLabel for="name" value="What is it for?" />
+                    <div>
+                        <InputLabel for="name" value="What is this key for?" />
                         <TextInput
                             id="name"
                             v-model="form.name"
@@ -232,9 +332,22 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                             placeholder="Claude on my laptop"
                         />
                     </div>
-                    <PrimaryButton :disabled="form.processing">
-                        {{ form.processing ? 'Creating…' : 'Create a key' }}
-                    </PrimaryButton>
+
+                    <div>
+                        <InputLabel for="key-server-name" value="Call this server" />
+                        <TextInput
+                            id="key-server-name"
+                            v-model="form.server_name"
+                            class="mt-1 block w-full"
+                            :placeholder="defaultName"
+                        />
+                    </div>
+
+                    <div class="sm:col-span-2">
+                        <PrimaryButton :disabled="form.processing">
+                            {{ form.processing ? 'Creating…' : 'Create a key' }}
+                        </PrimaryButton>
+                    </div>
                 </form>
 
                 <ul class="divide-y divide-slate-100">
@@ -268,46 +381,120 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         v-if="!tokens.length"
                         class="px-5 py-12 text-center text-sm text-slate-500"
                     >
-                        No keys yet. Create one above, then paste the snippet
-                        into your assistant.
+                        No keys yet. Create one above and the instructions for
+                        connecting an assistant appear here.
                     </li>
                 </ul>
             </div>
 
-            <!-- What an assistant can actually do. -->
-            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+            <!-- Connecting, once there is something to connect with. -->
+            <div
+                v-if="tokens.length"
+                class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+            >
                 <div class="border-b border-slate-200 px-5 py-4">
                     <h3 class="font-semibold text-slate-800">
-                        What an assistant can do
+                        Connect an assistant
                     </h3>
                     <p class="mt-1 text-sm text-slate-500">
-                        These are the {{ tools.length }} tools it is given. Ask
-                        in your own words — "make me a Next.js site at
-                        app.example.com from this GitHub repository" is enough —
-                        and it picks from this list.
+                        Paste the prompt into whatever you already talk to —
+                        Claude Code, Codex, Cursor — and it adds this server
+                        itself, or updates the key if it is already there. The
+                        manual tab has the same thing as configuration.
                     </p>
                 </div>
 
-                <ul class="divide-y divide-slate-100">
-                    <li
-                        v-for="tool in tools"
-                        :key="tool.name"
-                        class="px-5 py-3"
+                <div class="px-5 py-4">
+                    <p
+                        v-if="local"
+                        class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-600/20"
                     >
-                        <p class="flex items-center gap-2">
-                            <code class="font-mono text-sm text-slate-800">{{ tool.name }}</code>
-                            <span
-                                v-if="tool.read_only"
-                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
+                        This panel has no hostname of its own yet, so the address
+                        below is only reachable from the server itself. Set one
+                        on the Settings page — an assistant on your own machine
+                        has to be able to reach the panel, and a certificate is
+                        what stops the key travelling in the clear.
+                    </p>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button
+                            v-for="tab in [
+                                { key: 'prompt', label: 'Prompt' },
+                                { key: 'manual', label: 'Manual' },
+                            ]"
+                            :key="tab.key"
+                            type="button"
+                            class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
+                            :class="
+                                showing === tab.key
+                                    ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-600/20'
+                                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                            "
+                            @click="showing = tab.key"
+                        >
+                            {{ tab.label }}
+                        </button>
+                    </div>
+
+                    <div v-if="showing === 'prompt'" class="relative mt-3">
+                        <pre
+                            class="overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-900 px-4 py-3 pe-24 font-mono text-xs leading-relaxed text-slate-100"
+                        >{{ prompt }}</pre>
+                        <button
+                            type="button"
+                            class="absolute end-3 top-3 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+                            @click="copy(prompt, 'prompt')"
+                        >
+                            {{ copied === 'prompt' ? 'Copied' : 'Copy' }}
+                        </button>
+                    </div>
+
+                    <div v-else class="mt-3 space-y-3">
+                        <dl class="grid gap-2 text-sm sm:grid-cols-[10rem_1fr]">
+                            <dt class="text-slate-500">Name</dt>
+                            <dd class="font-mono text-slate-800">{{ serverSlug }}</dd>
+
+                            <dt class="text-slate-500">Transport</dt>
+                            <dd class="text-slate-800">HTTP (streamable)</dd>
+
+                            <dt class="text-slate-500">URL</dt>
+                            <dd class="break-all font-mono text-slate-800">{{ endpoint }}</dd>
+
+                            <dt class="text-slate-500">Header</dt>
+                            <dd class="break-all font-mono text-slate-800">
+                                Authorization: Bearer {{ key }}
+                            </dd>
+                        </dl>
+
+                        <div class="relative">
+                            <pre
+                                class="overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 pe-24 font-mono text-xs leading-relaxed text-slate-100"
+                            >{{ manual }}</pre>
+                            <button
+                                type="button"
+                                class="absolute end-3 top-3 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+                                @click="copy(manual, 'manual')"
                             >
-                                reads only
-                            </span>
-                        </p>
-                        <p class="mt-0.5 text-sm text-slate-500">
-                            {{ tool.description }}
-                        </p>
-                    </li>
-                </ul>
+                                {{ copied === 'manual' ? 'Copied' : 'Copy' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <p
+                        v-if="copyFailed === 'prompt' || copyFailed === 'manual'"
+                        class="mt-2 text-xs text-slate-500"
+                    >
+                        This browser would not let the page copy for you — select
+                        the text and copy it yourself.
+                    </p>
+
+                    <p v-if="!issued" class="mt-3 text-xs text-slate-500">
+                        Put your own key where it says
+                        <code class="font-mono">PASTE-YOUR-KEY-HERE</code>. A key
+                        is only ever shown once, when it is created — make a new
+                        one above if you no longer have it.
+                    </p>
+                </div>
             </div>
         </div>
     </AuthenticatedLayout>

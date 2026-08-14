@@ -113,6 +113,51 @@ func TestItOnlyEverRunsOnce(t *testing.T) {
 	}
 }
 
+// The installer's own path. Only the refusals are exercised here: the third
+// case would install the catalogue on the machine running the tests, which is
+// what the guards exist to prevent and not something a test should discover.
+func TestTheInstallerRefusesWhenThereIsNothingToDo(t *testing.T) {
+	cases := []struct {
+		name   string
+		choice string
+		set    func(app *App)
+	}{
+		{
+			name:   "none installs nothing",
+			choice: "none",
+			set:    func(*App) {},
+		},
+		{
+			name:   "a machine that has already been bootstrapped is left alone",
+			choice: "all",
+			set:    func(app *App) { app.Store.SetSetting(bootstrapSetting, "1") },
+		},
+		{
+			name:   "a machine that already has an app is left alone",
+			choice: "all",
+			set: func(app *App) {
+				app.Catalog.SyncRows()
+				app.Store.SetServiceStatus("nginx", store.ServiceInstalled, "1.24.0", "")
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			app := bootstrapApp(t, test.choice)
+			test.set(app)
+
+			if err := app.InstallAppsNow(context.Background(), test.choice, nil); err != nil {
+				t.Fatalf("a no-op install returned %v", err)
+			}
+
+			if queued := app.Store.QueuedServices(context.Background()); len(queued) > 0 {
+				t.Fatalf("it queued %v", queued)
+			}
+		})
+	}
+}
+
 // A panel that already has apps on it was set up by somebody; installing the
 // rest behind their back is not the same favour.
 func TestAMachineThatAlreadyHasAppsIsLeftAlone(t *testing.T) {

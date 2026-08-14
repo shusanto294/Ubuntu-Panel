@@ -17,6 +17,7 @@ const FILTERS = [
     { key: 'site', label: 'Sites' },
     { key: 'database', label: 'Databases' },
     { key: 'mail', label: 'Email' },
+    { key: 'mcp', label: 'AI' },
 ];
 
 const anyRunning = computed(() => props.logs.some((log) => log.status === 'running'));

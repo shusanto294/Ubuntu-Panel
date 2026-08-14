@@ -2,10 +2,16 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
 	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
+	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 )
 
 // bootstrapSetting is how the panel remembers it has done this. It is a
@@ -46,6 +52,12 @@ func (a *App) EnsureMailConfigured() {
 // This queues them on the first start and lets the ordinary installer run:
 // same task, same console, same page — the operator opens Apps and watches it
 // happen rather than starting it.
+//
+// On a machine set up by install.sh this finds the work already done:
+// InstallAppsNow runs before the service is started, so the panel is finished
+// the first time anybody signs in. This stays for every other way the panel
+// gets started — a binary run by hand, a container, a machine whose first
+// install was interrupted before the apps step.
 //
 // PANEL_INSTALL_APPS decides how much: `all` is the catalogue, `core` is what
 // no site can run without, `none` is nothing.
@@ -97,6 +109,173 @@ func (a *App) BootstrapApps(ctx context.Context) {
 
 	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
 		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+}
+
+// InstallAppsNow installs the same set BootstrapApps queues, in the foreground,
+// and does not return until the machine has it.
+//
+// This is what the installer runs before it starts the service, so that the
+// first sign-in lands on a server that is already finished. Queueing the work
+// meant the panel came up in a few seconds and then spent the next ten minutes
+// installing nginx, PHP and MariaDB underneath whoever was clicking around in
+// it — every page qualified by "installing…", and a site created in that window
+// refused for a missing app that was on its way.
+//
+// Same catalogue, same steps, same task row, so the Apps page afterwards shows
+// exactly what happened and the console is there to read. The difference is
+// only who waits: the installer, once, instead of the operator, every time.
+//
+// progress is given a line per step as it lands, because this runs on somebody's
+// terminal and ten silent minutes reads as a hang.
+func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(string)) error {
+	if progress == nil {
+		progress = func(string) {}
+	}
+
+	choice = strings.ToLower(strings.TrimSpace(choice))
+
+	if choice == "" {
+		choice = a.Config.InstallApps
+	}
+
+	if choice == "" {
+		choice = "all"
+	}
+
+	if choice == "none" {
+		progress("Nothing to install: the panel is configured to install no apps.")
+
+		return nil
+	}
+
+	a.Catalog.SyncRows()
+
+	// The same guard BootstrapApps has, for the same reason: an operator who
+	// removed MongoDB is not asking for it back because they re-ran the
+	// installer.
+	if a.Store.SettingBool(bootstrapSetting, false) || len(a.Store.InstalledServiceKeys(ctx)) > 0 {
+		a.Store.SetSetting(bootstrapSetting, "1")
+		progress("This machine already has apps on it; leaving them as they are.")
+
+		return nil
+	}
+
+	keys := []string{}
+
+	for _, entry := range catalog.Entries {
+		if choice == "all" || entry.Core {
+			keys = append(keys, entry.Key)
+		}
+	}
+
+	queued := a.Catalog.Queue(keys, false)
+
+	// Written before the work rather than after it: a half-finished install is
+	// still an install, and the service starting behind it must not queue the
+	// whole catalogue a second time.
+	a.Store.SetSetting(bootstrapSetting, "1")
+
+	if queued == 0 {
+		return nil
+	}
+
+	labels := make([]string, 0, len(keys))
+	for _, key := range keys {
+		labels = append(labels, catalog.Label(key))
+	}
+
+	progress(fmt.Sprintf("Installing %d apps: %s", queued, strings.Join(labels, ", ")))
+
+	done := make(chan error, 1)
+
+	go func() { done <- a.Catalog.InstallQueued(ctx, 0) }()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	seen := map[string]bool{}
+
+	for {
+		select {
+		case err := <-done:
+			a.mirrorSteps(ctx, seen, progress)
+			a.reportApps(ctx, progress)
+
+			return err
+
+		case <-ticker.C:
+			a.mirrorSteps(ctx, seen, progress)
+		}
+	}
+}
+
+// mirrorSteps prints the steps that have finished since the last look. The task
+// row is the same one the Apps page reads, so this is a view of it rather than a
+// second account of what happened.
+func (a *App) mirrorSteps(ctx context.Context, seen map[string]bool, progress func(string)) {
+	id := a.Store.LatestTaskByAction(ctx, "provision", "services.install", false)
+	if id <= 0 {
+		return
+	}
+
+	task, err := a.Store.FindTask(ctx, id)
+	if err != nil || strings.TrimSpace(task.Steps) == "" {
+		return
+	}
+
+	var steps []store.TaskStep
+
+	if err := json.Unmarshal([]byte(task.Steps), &steps); err != nil {
+		return
+	}
+
+	for _, step := range steps {
+		if step.Status == "pending" || step.Status == "running" || seen[step.Name] {
+			continue
+		}
+
+		seen[step.Name] = true
+
+		switch step.Status {
+		case "failed":
+			progress("! " + step.Name)
+		case "skipped":
+			continue
+		default:
+			progress("+ " + step.Name)
+		}
+	}
+}
+
+// reportApps is the last word: what is on the machine, and what is not.
+func (a *App) reportApps(ctx context.Context, progress func(string)) {
+	services, err := a.Store.Services(ctx)
+	if err != nil {
+		return
+	}
+
+	installed, failed := []string{}, []string{}
+
+	for key, service := range services {
+		switch service.Status {
+		case store.ServiceInstalled:
+			installed = append(installed, catalog.Label(key))
+		case store.ServiceFailed:
+			failed = append(failed, catalog.Label(key))
+		}
+	}
+
+	sort.Strings(installed)
+	sort.Strings(failed)
+
+	if len(installed) > 0 {
+		progress(fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")))
+	}
+
+	if len(failed) > 0 {
+		progress(fmt.Sprintf("Did not install: %s — the Apps page has the console, "+
+			"and a Retry button beside each", strings.Join(failed, ", ")))
+	}
 }
 
 // mysqlAccountsOpened records that every MariaDB account the panel created has

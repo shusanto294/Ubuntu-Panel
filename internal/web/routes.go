@@ -152,6 +152,7 @@ func (a *App) routes() *router {
 	// endpoint itself is not in this table — it is routed before the session
 	// middleware, in Handler(), because it authenticates itself.
 	rt.get("/ai", "ai.index", authenticated, a.aiIndex)
+	rt.post("/ai/settings", "ai.settings", authenticated, a.aiSettings)
 	rt.post("/ai/tokens", "ai.tokens.store", authenticated, a.aiStoreToken)
 	rt.delete("/ai/tokens/{token}", "ai.tokens.destroy", authenticated, a.aiDestroyToken)
 

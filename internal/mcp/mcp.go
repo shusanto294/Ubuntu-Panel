@@ -202,6 +202,11 @@ type Tool struct {
 	ReadOnly    bool
 	Destructive bool
 
+	// Capability is what this tool needs permission for, in whatever names the
+	// caller uses. The registry does nothing with it beyond handing it to Allow:
+	// which capabilities exist, and who has them, is the panel's business.
+	Capability string
+
 	// Run does the work. Returning an error is an ordinary outcome — "no such
 	// site", "MariaDB is not installed" — and is handed back as a failed tool
 	// result the assistant can read and act on, not as a protocol error.
@@ -244,8 +249,26 @@ type Server struct {
 	Instructions string
 	Log          *slog.Logger
 
+	// Allow, when set, decides whether a tool is offered and whether a call to
+	// one runs. Both, rather than either: a client lists the tools once and
+	// keeps them, so a permission taken away after that is only real if the
+	// call is refused too.
+	Allow func(ctx context.Context, tool *Tool) bool
+
+	// NameFor, when set, is asked for the name to introduce this server by.
+	// Name is the fallback. It is a function because the name is the operator's
+	// to change — somebody with three of these connected needs to be able to
+	// tell which is which — and a client reads it once, on connection.
+	NameFor func(ctx context.Context) string
+
 	tools []*Tool
 	index map[string]*Tool
+}
+
+// allowed is Allow with the default: everything, for a server whose caller has
+// no permissions to apply.
+func (s *Server) allowed(ctx context.Context, tool *Tool) bool {
+	return s.Allow == nil || s.Allow(ctx, tool)
 }
 
 // NewServer prepares an empty server. Instructions are handed to the assistant
@@ -284,9 +307,6 @@ func (s *Server) Add(tools ...*Tool) {
 
 	sort.Slice(s.tools, func(a, b int) bool { return s.tools[a].Name < s.tools[b].Name })
 }
-
-// Tools is the registry, for the panel's own page about it.
-func (s *Server) Tools() []*Tool { return s.tools }
 
 // request is one JSON-RPC call. A request with no id is a notification, which
 // is answered with no body at all.
@@ -401,7 +421,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dispatch(ctx context.Context, call request) (any, *rpcError) {
 	switch call.Method {
 	case "initialize":
-		return s.initialize(call.Params), nil
+		return s.initialize(ctx, call.Params), nil
 
 	case "ping":
 		return map[string]any{}, nil
@@ -410,6 +430,10 @@ func (s *Server) dispatch(ctx context.Context, call request) (any, *rpcError) {
 		tools := make([]map[string]any, 0, len(s.tools))
 
 		for _, tool := range s.tools {
+			if !s.allowed(ctx, tool) {
+				continue
+			}
+
 			tools = append(tools, tool.describe())
 		}
 
@@ -436,7 +460,7 @@ func (s *Server) dispatch(ctx context.Context, call request) (any, *rpcError) {
 	}
 }
 
-func (s *Server) initialize(params json.RawMessage) map[string]any {
+func (s *Server) initialize(ctx context.Context, params json.RawMessage) map[string]any {
 	var asked struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
@@ -455,6 +479,14 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 		}
 	}
 
+	name := s.Name
+
+	if s.NameFor != nil {
+		if chosen := strings.TrimSpace(s.NameFor(ctx)); chosen != "" {
+			name = chosen
+		}
+	}
+
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities": map[string]any{
@@ -463,8 +495,8 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 			"tools": map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
-			"name":    s.Name,
-			"title":   s.Name,
+			"name":    name,
+			"title":   name,
 			"version": s.Version,
 		},
 		"instructions": s.Instructions,
@@ -490,6 +522,15 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, *rpcErr
 
 	if asked.Arguments == nil {
 		asked.Arguments = Args{}
+	}
+
+	// A refused tool is a failed result rather than a protocol error, for the
+	// same reason a refused argument is: the assistant is meant to read why and
+	// tell the person, not to report that the server broke.
+	if !s.allowed(ctx, tool) {
+		return toolResult("The panel does not allow "+tool.Name+" right now. Whoever owns it can "+
+			"turn that on under AI access, in the list of what an assistant is allowed to do.",
+			true), nil
 	}
 
 	result, err := s.run(ctx, tool, asked.Arguments)

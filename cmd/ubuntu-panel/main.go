@@ -31,6 +31,8 @@ import (
 func main() {
 	configPath := flag.String("config", "", "path to panel.conf (default /etc/ubuntu-panel/panel.conf)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	installApps := flag.String("install-apps", "",
+		"install the server's apps and exit: all | core | none (default: PANEL_INSTALL_APPS)")
 
 	flag.Parse()
 
@@ -39,10 +41,59 @@ func main() {
 		return
 	}
 
+	// One-shot: the installer runs this before it starts the service, so the
+	// machine is finished by the time anybody signs in. Nothing listens, and it
+	// exits when the last app is down.
+	if *installApps != "" {
+		if err := installAppsAndExit(*configPath, *installApps); err != nil {
+			fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
 	if err := run(*configPath); err != nil {
 		fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
 		os.Exit(1)
 	}
+}
+
+// installAppsAndExit puts the software a server needs on the machine, printing
+// each step as it lands, and returns when there is nothing left to do.
+func installAppsAndExit(configPath, choice string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("reading the configuration: %w", err)
+	}
+
+	log, closeLog := logger(cfg)
+	defer closeLog()
+
+	db, err := store.Open(cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	cipher, err := crypto.New(cfg.AppKey)
+	if err != nil {
+		log.Error("the application key could not be used", "error", err)
+	}
+
+	db.UseCipher(cipher)
+
+	app := web.New(cfg, db, assets.FS(cfg.PublicPath, cfg.Debug), log)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Straight to stdout rather than through the logger: this is the installer's
+	// own progress, read by whoever is watching it scroll, and a line of
+	// key=value logging per apt step is not that.
+	return app.InstallAppsNow(ctx, choice, func(line string) {
+		fmt.Println("       ", line)
+	})
 }
 
 func run(configPath string) error {
