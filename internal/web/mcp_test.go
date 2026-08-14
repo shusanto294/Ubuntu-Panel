@@ -418,6 +418,99 @@ func TestTheEndpointIsTheAddressNginxServesNotTheBindPort(t *testing.T) {
 	}
 }
 
+// DNS is part of creating a site. With no credential connected the site is
+// still created, and the answer says exactly what has to be pointed where —
+// which is the sentence the person needs, rather than a site that silently
+// resolves nowhere.
+func TestCreatingASiteSaysWhatHappenedToItsDNS(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	text, failed := toolText(t, p, token, "create_site",
+		`{"type":"static","domain":"example.test"}`)
+
+	if failed {
+		t.Fatalf("creating a static site failed: %s", text)
+	}
+
+	var answer struct {
+		SiteID    int64 `json:"site_id"`
+		ManageDNS bool  `json:"manage_dns"`
+		DNS       struct {
+			Managed bool   `json:"managed"`
+			Reason  string `json:"reason"`
+			Tell    string `json:"tell_the_person"`
+		} `json:"dns"`
+	}
+
+	if err := json.Unmarshal([]byte(text), &answer); err != nil {
+		t.Fatalf("the answer was not JSON: %v\n%s", err, text)
+	}
+
+	if answer.SiteID <= 0 {
+		t.Fatalf("no site id came back: %s", text)
+	}
+
+	if answer.ManageDNS {
+		t.Error("it claimed to manage DNS with no credential connected")
+	}
+
+	if !strings.Contains(answer.DNS.Reason, "no DNS provider is connected") {
+		t.Errorf("the reason was %q", answer.DNS.Reason)
+	}
+
+	if !strings.Contains(answer.DNS.Tell, "A record for example.test") {
+		t.Errorf("it did not say what to point: %q", answer.DNS.Tell)
+	}
+}
+
+func TestTheDNSToolsAreOffered(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	_, list := rpc(t, p, token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+
+	tools, _ := list["result"].(map[string]any)["tools"].([]any)
+
+	found := map[string]bool{}
+
+	for _, entry := range tools {
+		if tool, ok := entry.(map[string]any); ok {
+			found[tool["name"].(string)] = true
+		}
+	}
+
+	for _, name := range []string{"list_dns_accounts", "sync_dns"} {
+		if !found[name] {
+			t.Errorf("the tool list is missing %s", name)
+		}
+	}
+}
+
+// A site the panel does not manage DNS for says so, and says why, rather than
+// failing with something about a missing credential id.
+func TestSyncingDNSForASiteWithoutItExplainsItself(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	if _, failed := toolText(t, p, token, "create_site",
+		`{"type":"static","domain":"example.test"}`); failed {
+		t.Fatal("the site could not be created")
+	}
+
+	text, failed := toolText(t, p, token, "sync_dns", `{"site":"example.test"}`)
+
+	if !failed || !strings.Contains(text, "does not manage DNS") {
+		t.Errorf("sync_dns answered %q", text)
+	}
+}
+
 func TestRevokingAKeyStopsIt(t *testing.T) {
 	p := start(t)
 	signIn(t, p)

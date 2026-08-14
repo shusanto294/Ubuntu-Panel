@@ -12,6 +12,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
 	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
 	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
@@ -50,7 +51,12 @@ Before creating a site, check list_site_types: it says what this machine can hos
 	`which apps are missing for the rest. Missing apps can be installed with install_apps, which is ` +
 	`also asynchronous.
 
-Every domain must point at this server for TLS to be issued. server_status has the public IP.
+DNS is part of creating a site, not a separate errand. Leave manage_dns alone and the panel finds ` +
+	`the connected provider that holds the domain, publishes the records during the deployment, and ` +
+	`removes them when the site is deleted. create_site's answer says which provider it used — or, ` +
+	`when no connected credential covers the domain, exactly which record the person has to add and ` +
+	`where it has to point. Tell them that plainly; a domain that resolves somewhere else is why a ` +
+	`certificate fails and why the site does not answer.
 
 The person who owns this panel decides what you may do, on its AI access page. A tool that answers ` +
 	`"not allowed" is a setting, not a fault — say so and stop rather than looking for another way ` +
@@ -317,6 +323,8 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpListTasks(),
 		a.mcpListDatabases(),
 		a.mcpCreateDatabase(),
+		a.mcpListDNSAccounts(),
+		a.mcpSyncDNS(),
 		a.mcpListApps(),
 		a.mcpInstallApps(),
 		a.mcpRunCommand(),
@@ -363,6 +371,42 @@ func (a *App) mcpSite(ctx context.Context, args mcp.Args) (*store.Site, error) {
 	}
 
 	return site, nil
+}
+
+// dnsAccountFor is the credential that can publish records for this hostname.
+//
+// Asked of the provider rather than guessed: an account is right for a domain
+// when one of its zones covers it, which is a question only the provider can
+// answer. With several credentials connected, the first whose zone matches
+// wins — a domain lives in one zone, so there is nothing to choose between.
+//
+// The second return is why there is no answer, in a sentence meant to be read
+// by whoever asked for the site.
+func (a *App) dnsAccountFor(ctx context.Context, userID int64, domain string) (*store.DNSAccount, string) {
+	accounts, err := a.Store.DNSAccounts(ctx, userID)
+	if err != nil {
+		return nil, "the panel could not read its DNS credentials"
+	}
+
+	if len(accounts) == 0 {
+		return nil, "no DNS provider is connected to this panel, so its records have to be " +
+			"added wherever the domain's DNS lives"
+	}
+
+	for _, account := range accounts {
+		if _, _, err := dns.New(account).FindZone(domain); err == nil {
+			return account, ""
+		}
+	}
+
+	names := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		names = append(names, account.Label)
+	}
+
+	return nil, fmt.Sprintf("none of the connected DNS credentials (%s) has a zone covering "+
+		"this domain, so its records have to be added wherever its DNS lives",
+		strings.Join(names, ", "))
 }
 
 // siteReport is what every site-shaped answer looks like: the row, plus where
@@ -552,6 +596,19 @@ func (a *App) mcpCreateSite() *mcp.Tool {
 			"build_command": {Description: "For a Node.js or Next.js site. Defaults to the type's own."},
 			"start_command": {Description: "For a Node.js or Next.js site. Defaults to the type's own."},
 			"ssl":           {Type: "boolean", Description: "Request a certificate on deployment.", Default: true},
+			"manage_dns": {Type: "boolean", Default: true,
+				Description: "Publish this site's DNS records at whichever connected provider " +
+					"holds the domain, and take them away again when the site is deleted. Left on, " +
+					"the panel finds the credential itself — there is nothing to look up first."},
+			"dns_account_id": {Type: "integer",
+				Description: "Which DNS credential to publish with, from list_dns_accounts. Only " +
+					"worth sending when the domain is in more than one of them."},
+			"dns_proxied": {Type: "boolean", Default: true,
+				Description: "For Cloudflare: serve the site through their proxy. Every other " +
+					"provider ignores it."},
+			"dns_type": {Description: "The record type to publish.", Default: "A",
+				Enum: []string{"A", "AAAA", "CNAME"}},
+			"dns_content": {Description: "What the record points at. Defaults to this server's public IP."},
 			"admin_email": {Description: "The administrator address for a managed application " +
 				"like WordPress or Nextcloud. Defaults to the account this key belongs to."},
 			"admin_user": {Description: "The administrator username for a managed application.", Default: "admin"},
@@ -618,6 +675,46 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 		}
 	}
 
+	// DNS, without being asked. A site whose records nobody publishes resolves
+	// nowhere, its certificate cannot be issued, and the person who wanted a
+	// website is left copying an IP address into a control panel somewhere else
+	// — which is the part of this the panel exists to do.
+	//
+	// So it is on by default and the credential is found rather than named: the
+	// assistant does not have to know which provider holds the domain, or that
+	// there is a question here at all. Where no connected credential covers the
+	// domain, the site is still created and the answer says what to point at
+	// this server by hand.
+	dnsType := strings.ToUpper(args.StringOr("dns_type", "A"))
+
+	if !config.IsSiteDNSType(dnsType) {
+		return nil, fmt.Errorf("%q is not a record type the panel publishes for a site; it does %v",
+			dnsType, config.SiteDNSTypes)
+	}
+
+	manageDNS := args.Bool("manage_dns", true)
+
+	var (
+		dnsAccount *store.DNSAccount
+		dnsNote    string
+	)
+
+	if manageDNS {
+		if asked := args.Int("dns_account_id"); asked > 0 {
+			account, err := a.Store.FindDNSAccount(ctx, asked, user.ID)
+			if err != nil {
+				return nil, fmt.Errorf("no DNS credential with id %d — list_dns_accounts has them",
+					asked)
+			}
+
+			dnsAccount = account
+		} else {
+			dnsAccount, dnsNote = a.dnsAccountFor(ctx, user.ID, domain)
+		}
+
+		manageDNS = dnsAccount != nil
+	}
+
 	site := &store.Site{
 		UserID:       user.ID,
 		Domain:       domain,
@@ -630,8 +727,14 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 		SSL:          args.Bool("ssl", true),
 		Repository:   args.String("repository"),
 		Branch:       args.StringOr("branch", "main"),
-		DNSType:      "A",
-		DNSContent:   system.PublicIP(),
+		ManageDNS:    manageDNS,
+		DNSType:      dnsType,
+		DNSContent:   args.StringOr("dns_content", system.PublicIP()),
+		DNSProxied:   args.Bool("dns_proxied", true),
+	}
+
+	if dnsAccount != nil {
+		site.DNSAccountID = dnsAccount.ID
 	}
 
 	if meta.Managed && site.Repository != "" {
@@ -665,16 +768,43 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 		return nil, errors.New("the site was stored but its deployment could not be queued")
 	}
 
-	return map[string]any{
-		"site_id": id,
-		"domain":  domain,
-		"type":    kind,
-		"status":  "pending",
-		"url":     site.URL(),
-		"queued":  true,
+	answer := map[string]any{
+		"site_id":    id,
+		"domain":     domain,
+		"type":       kind,
+		"status":     "pending",
+		"url":        site.URL(),
+		"queued":     true,
+		"manage_dns": manageDNS,
 		"next": fmt.Sprintf("The deployment is running on the server's queue. Poll get_site with "+
 			"site %d until its status is active or failed; get_task has the console if it fails.", id),
-	}, nil
+	}
+
+	if manageDNS {
+		answer["dns"] = map[string]any{
+			"provider":   dns.ProviderLabel(dnsAccount.Provider),
+			"credential": dnsAccount.Label,
+			"record":     fmt.Sprintf("%s %s -> %s", dnsType, domain, site.DNSContent),
+			"proxied":    site.DNSProxied && dns.SupportsProxy(dnsAccount.Provider),
+			"note": "The panel publishes this during the deployment and removes it again when " +
+				"the site is deleted. Nothing to add by hand.",
+		}
+
+		return answer, nil
+	}
+
+	// The one case worth a sentence to the person rather than a field: their
+	// domain will not resolve here until somebody points it, and the assistant
+	// is the one holding the address.
+	answer["dns"] = map[string]any{
+		"managed": false,
+		"reason":  dnsNote,
+		"tell_the_person": fmt.Sprintf("Add a %s record for %s pointing at %s wherever this "+
+			"domain's DNS is managed. Until that resolves here, the site will not answer and its "+
+			"certificate cannot be issued.", dnsType, domain, site.DNSContent),
+	}
+
+	return answer, nil
 }
 
 func (a *App) mcpDeleteSite() *mcp.Tool {
@@ -1157,6 +1287,86 @@ func (a *App) mcpCreateDatabase() *mcp.Tool {
 				"host":        "127.0.0.1",
 				"queued":      true,
 				"next":        "The database is being created on the queue; list_databases has its status.",
+			}, nil
+		},
+	}
+}
+
+func (a *App) mcpListDNSAccounts() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "list_dns_accounts",
+		Title:      "List DNS credentials",
+		Capability: capSitesRead,
+		ReadOnly:   true,
+		Description: "The DNS providers connected to this panel. create_site finds the right one " +
+			"by itself, so this is for saying which are connected, or for picking between two " +
+			"that both hold the domain.",
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			user := mcpUser(ctx)
+			if user == nil {
+				return nil, errors.New("this key is not attached to an account")
+			}
+
+			accounts, err := a.Store.DNSAccounts(ctx, user.ID)
+			if err != nil {
+				return nil, errors.New("the panel could not read its DNS credentials")
+			}
+
+			list := make([]map[string]any, 0, len(accounts))
+
+			for _, account := range accounts {
+				list = append(list, map[string]any{
+					"id":             account.ID,
+					"label":          account.Label,
+					"provider":       account.Provider,
+					"provider_label": dns.ProviderLabel(account.Provider),
+					"supports_proxy": dns.SupportsProxy(account.Provider),
+					"verified_at":    nullable(account.VerifiedAt),
+					"sites_count":    account.SitesCount,
+				})
+			}
+
+			return map[string]any{"dns_accounts": list, "count": len(list)}, nil
+		},
+	}
+}
+
+func (a *App) mcpSyncDNS() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "sync_dns",
+		Title:      "Publish a site's DNS records",
+		Capability: capSitesWrite,
+		Description: "Write this site's records at its DNS provider again — after changing what " +
+			"they point at, or when the deployment's own attempt failed. Only for a site the panel " +
+			"manages DNS for; the answer says what it wrote.",
+		Properties: map[string]mcp.Property{
+			"site": {Description: "The site's id, or its domain."},
+		},
+		Required: []string{"site"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			site, err := a.mcpSite(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			if !site.ManageDNS || site.DNSAccountID <= 0 {
+				return nil, fmt.Errorf("the panel does not manage DNS for %s — no connected "+
+					"credential held the domain when it was created. Connect the provider on the "+
+					"panel's DNS page, then create the site again, or add the record by hand",
+					site.Domain)
+			}
+
+			written, err := dns.SyncForSite(ctx, a.Store, site)
+			if err != nil {
+				return nil, err
+			}
+
+			system.ForgetResolution(site.Domain)
+
+			return map[string]any{
+				"site_id": site.ID,
+				"domain":  site.Domain,
+				"written": written,
 			}, nil
 		},
 	}
