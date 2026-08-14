@@ -1486,9 +1486,14 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 // a client is pointed at.
 //
 // The hostname somebody set on the Settings page when there is one, because
-// that is the name with a certificate on it. Otherwise the public IP and the
-// port the panel binds — an assistant's client cannot reach 127.0.0.1, and an
-// address without the port is one that connects to nothing.
+// that is the name with a certificate on it. Otherwise the public IP, on port
+// 80.
+//
+// Not the port the panel binds. That is 127.0.0.1:8088, and it is loopback on
+// purpose: nginx is the front door and proxies every path — /mcp included — from
+// port 80. Printing the bind port here sent people to an address that is
+// firewalled from the outside by design, and the symptom was a client that sat
+// there until it timed out.
 func (a *App) panelURL() string {
 	domain := a.Store.Setting("panel_domain", "")
 
@@ -1500,9 +1505,7 @@ func (a *App) panelURL() string {
 		return "http://" + domain
 	}
 
-	host := orDefault(system.PublicIP(), a.Config.BindHost)
-
-	return "http://" + host + ":" + strconv.Itoa(a.Config.BindPort)
+	return "http://" + orDefault(system.PublicIP(), a.Config.BindHost)
 }
 
 // aiIndex is the page that issues keys and says how to connect a client to
@@ -1521,9 +1524,12 @@ func (a *App) aiIndex(w http.ResponseWriter, r *http.Request) {
 
 	for _, token := range tokens {
 		list = append(list, map[string]any{
-			"id":           token.ID,
-			"name":         token.Name,
-			"prefix":       token.Prefix,
+			"id":     token.ID,
+			"name":   token.Name,
+			"prefix": token.Prefix,
+			// A key issued before the panel kept this shows the name it answers
+			// by now, which is the only one it has ever had.
+			"server_name":  orDefault(token.ServerName, a.mcpServerName()),
 			"last_used_at": nullable(token.LastUsedAt),
 			"created_at":   token.CreatedAt,
 		})
@@ -1654,8 +1660,11 @@ func (a *App) aiStoreToken(w http.ResponseWriter, r *http.Request) {
 
 	secret, hash := store.NewAPIToken()
 
+	// Stamped on the row as well as stored as the setting: this is the name the
+	// configuration this key goes into is keyed on, and it stays true after
+	// somebody renames the panel.
 	if _, err := a.Store.CreateAPIToken(r.Context(), user.ID, name, hash,
-		store.TokenLabel(secret)); err != nil {
+		store.TokenLabel(secret), a.mcpServerName()); err != nil {
 		a.Log.Error("could not store an access key", "error", err)
 		a.failBack(w, r, "The access key could not be stored.")
 

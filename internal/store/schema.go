@@ -220,6 +220,7 @@ var schema = []string{
 		name         TEXT NOT NULL,
 		token_hash   TEXT NOT NULL UNIQUE,
 		prefix       TEXT NOT NULL,
+		server_name  TEXT,
 		last_used_at TEXT,
 		created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
@@ -254,6 +255,7 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN cache_enabled INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sites ADD COLUMN cache_ttl TEXT`,
 	`ALTER TABLE sites ADD COLUMN cache_mode TEXT`,
+	`ALTER TABLE api_tokens ADD COLUMN server_name TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -16,10 +16,17 @@ import (
 // It is shown once, on the request that created it — the same arrangement every
 // other panel uses for an API key, and the reason the page says to copy it now.
 type APIToken struct {
-	ID         int64  `json:"id"`
-	UserID     int64  `json:"-"`
-	Name       string `json:"name"`
-	Prefix     string `json:"prefix"`
+	ID     int64  `json:"id"`
+	UserID int64  `json:"-"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+
+	// ServerName is what the panel was calling itself when this key was made,
+	// which is the name the configuration it was pasted into is keyed on. Kept
+	// per key rather than read from the setting: renaming the panel afterwards
+	// does not go back and rewrite the config files on somebody's laptop.
+	ServerName string `json:"server_name"`
+
 	LastUsedAt string `json:"last_used_at"`
 	CreatedAt  string `json:"created_at"`
 }
@@ -58,10 +65,12 @@ func TokenLabel(secret string) string {
 }
 
 // CreateAPIToken stores a minted token and returns its id.
-func (s *Store) CreateAPIToken(ctx context.Context, userID int64, name, hash, prefix string) (int64, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, userID int64,
+	name, hash, prefix, serverName string) (int64, error) {
 	result, err := s.db.ExecContext(ctxOrBackground(ctx),
-		`INSERT INTO api_tokens (user_id, name, token_hash, prefix) VALUES (?, ?, ?, ?)`,
-		userID, name, hash, prefix)
+		`INSERT INTO api_tokens (user_id, name, token_hash, prefix, server_name)
+		 VALUES (?, ?, ?, ?, ?)`,
+		userID, name, hash, prefix, nullText(serverName))
 	if err != nil {
 		return 0, err
 	}
@@ -72,7 +81,7 @@ func (s *Store) CreateAPIToken(ctx context.Context, userID int64, name, hash, pr
 // APITokens is the list the page renders, newest first.
 func (s *Store) APITokens(ctx context.Context, userID int64) ([]*APIToken, error) {
 	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
-		`SELECT id, user_id, name, prefix, last_used_at, created_at
+		`SELECT id, user_id, name, prefix, server_name, last_used_at, created_at
 		   FROM api_tokens WHERE user_id = ? ORDER BY id DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -84,13 +93,14 @@ func (s *Store) APITokens(ctx context.Context, userID int64) ([]*APIToken, error
 	for rows.Next() {
 		token := &APIToken{}
 
-		var lastUsed text
+		var serverName, lastUsed text
 
 		if err := rows.Scan(&token.ID, &token.UserID, &token.Name, &token.Prefix,
-			&lastUsed, &token.CreatedAt); err != nil {
+			&serverName, &lastUsed, &token.CreatedAt); err != nil {
 			return nil, err
 		}
 
+		token.ServerName = serverName.String()
 		token.LastUsedAt = lastUsed.String()
 
 		tokens = append(tokens, token)

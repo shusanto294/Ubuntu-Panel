@@ -134,7 +134,14 @@ const manual = computed(
 
 const showing = ref('prompt');
 
+// Two different problems, and only one of them is fatal.
+//
+// `local` is a panel whose own public address could not be worked out — the
+// endpoint is loopback, and an assistant on your laptop cannot reach it at all.
+// `insecure` is a working address over plain HTTP, where the key travels in the
+// clear and anyone on the path can read it.
 const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.endpoint));
+const insecure = computed(() => props.endpoint.startsWith('http://') && !local.value);
 </script>
 
 <template>
@@ -370,6 +377,16 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         <div class="min-w-0">
                             <p class="font-medium text-slate-800">
                                 {{ token.name }}
+                                <!--
+                                    The server this key was made for, by the name
+                                    it was made under: that is the name the
+                                    configuration it was pasted into is keyed on,
+                                    which is what you are looking for when you
+                                    come back to work out which key is which.
+                                -->
+                                <span class="ms-2 text-sm font-normal text-slate-500">
+                                    {{ token.server_name }}
+                                </span>
                                 <span class="ms-2 font-mono text-xs font-normal text-slate-400">
                                     {{ token.prefix }}…
                                 </span>
@@ -433,11 +450,21 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         v-if="local"
                         class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-600/20"
                     >
-                        This panel has no hostname of its own yet, so the address
-                        below is only reachable from the server itself. Set one
-                        on the Settings page — an assistant on your own machine
-                        has to be able to reach the panel, and a certificate is
-                        what stops the key travelling in the clear.
+                        The panel could not work out its own public address, so
+                        what follows points at the server itself and nothing
+                        outside it can reach it. Set a hostname on the Settings
+                        page and this becomes the address of that hostname.
+                    </p>
+
+                    <p
+                        v-else-if="insecure"
+                        class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-600/20"
+                    >
+                        This address is plain HTTP, so the key below travels
+                        across the internet where it can be read. It works — but
+                        set a hostname on the Settings page and the panel gets a
+                        certificate for it, after which this becomes an https
+                        address and the key is only ever seen by this server.
                     </p>
 
                     <div class="flex flex-wrap gap-2">

@@ -59,8 +59,11 @@ func issueToken(t *testing.T, p *panel, serverName ...string) string {
 
 	var page struct {
 		Props struct {
-			Issued *string          `json:"issued"`
-			Tokens []map[string]any `json:"tokens"`
+			Issued *string `json:"issued"`
+			Tokens []struct {
+				Name       string `json:"name"`
+				ServerName string `json:"server_name"`
+			} `json:"tokens"`
 		} `json:"props"`
 	}
 
@@ -74,6 +77,18 @@ func issueToken(t *testing.T, p *panel, serverName ...string) string {
 
 	if len(page.Props.Tokens) != 1 {
 		t.Fatalf("the key list has %d rows, want 1", len(page.Props.Tokens))
+	}
+
+	// Every row says which server it was made for, by the name it was made
+	// under — that is how a key is recognised when you come back to the page.
+	wanted := "Ubuntu Panel"
+	if len(serverName) > 0 {
+		wanted = serverName[0]
+	}
+
+	if page.Props.Tokens[0].ServerName != wanted {
+		t.Errorf("the key row names the server %q, want %q",
+			page.Props.Tokens[0].ServerName, wanted)
 	}
 
 	return *page.Props.Issued
@@ -369,6 +384,37 @@ func TestTheServerIntroducesItselfByTheNameThatWasSet(t *testing.T) {
 
 	if info["name"] != "Client staging box" {
 		t.Errorf("it introduced itself as %v", info["name"])
+	}
+}
+
+// The address the page hands out has to be the one nginx answers on.
+//
+// It used to be the public IP with the panel's bind port on the end, which is
+// 127.0.0.1:8088 — loopback by design, firewalled from the outside, and a
+// client pointed at it sits there until it times out.
+func TestTheEndpointIsTheAddressNginxServesNotTheBindPort(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	response := p.do(http.MethodGet, "/ai", "", p.inertia())
+	defer response.Body.Close()
+
+	var page struct {
+		Props struct {
+			Endpoint string `json:"endpoint"`
+		} `json:"props"`
+	}
+
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatalf("decoding the AI page: %v", err)
+	}
+
+	if strings.Contains(page.Props.Endpoint, ":8088") {
+		t.Errorf("the endpoint names the bind port: %s", page.Props.Endpoint)
+	}
+
+	if !strings.HasSuffix(page.Props.Endpoint, "/mcp") {
+		t.Errorf("the endpoint is %s, which is not the MCP path", page.Props.Endpoint)
 	}
 }
 
