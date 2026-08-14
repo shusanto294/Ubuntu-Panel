@@ -144,121 +144,43 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind := input["type"]
-	domain := strings.ToLower(strings.TrimSpace(input["domain"]))
-	php := input["php_version"]
-	dnsType := stringInput(input, "dns_type", "A")
+	// The form's fields, handed to the one place that knows what a site is.
+	// Every default lives there, so this page and the MCP tool cannot drift
+	// apart again.
+	site, err := a.prepareSite(r.Context(), user, siteRequest{
+		Type:          input["type"],
+		Domain:        input["domain"],
+		Aliases:       listInput(input, "aliases"),
+		PHPVersion:    input["php_version"],
+		WebDirectory:  input["web_directory"],
+		Repository:    input["repository"],
+		Branch:        input["branch"],
+		StartCommand:  input["start_command"],
+		BuildCommand:  input["build_command"],
+		SSL:           boolPointer(boolInput(input, "ssl", true)),
+		ManageDNS:     boolPointer(boolInput(input, "manage_dns", false)),
+		DNSAccountID:  intInput(input, "dns_account_id", 0),
+		DNSType:       input["dns_type"],
+		DNSContent:    input["dns_content"],
+		DNSProxied:    boolPointer(boolInput(input, "dns_proxied", true)),
+		AdminUser:     input["wp_admin_user"],
+		AdminEmail:    input["wp_admin_email"],
+		AdminPassword: input["wp_admin_password"],
+		Title:         input["wp_title"],
+	})
 
-	meta := config.FindSiteType(kind)
+	if err != nil {
+		var refusal siteProblem
 
-	if meta == nil {
-		sess.Error("type", "That is not a site type the panel can deploy.")
-	}
-	if !validDomain(domain) {
-		sess.Error("domain", "Enter a domain, like example.com.")
-	}
-	if !config.IsPHPVersion(php) {
-		sess.Error("php_version", "That is not a PHP version the panel installs.")
-	}
-	if !config.IsDNSRecordType(dnsType) {
-		sess.Error("dns_type", "That is not a record type this form offers.")
-	}
-
-	manageDNS := boolInput(input, "manage_dns", false)
-	ssl := boolInput(input, "ssl", true)
-
-	var dnsAccountID int64
-
-	if manageDNS {
-		dnsAccountID = intInput(input, "dns_account_id", 0)
-
-		if dnsAccountID <= 0 {
-			sess.Error("dns_account_id", "Pick a DNS credential the panel can write with.")
-		} else if _, err := a.Store.FindDNSAccount(r.Context(), dnsAccountID, user.ID); err != nil {
-			sess.Error("dns_account_id", "Pick a DNS credential the panel can write with.")
+		if errors.As(err, &refusal) && refusal.Field != "" {
+			sess.Error(refusal.Field, refusal.Message)
+		} else {
+			sess.Error("domain", err.Error())
 		}
-	}
 
-	if sess.HasErrors() {
-		inertia.Back(w, r, "/sites/create")
-		return
-	}
-
-	if _, err := a.Store.FindSiteByDomain(r.Context(), domain); err == nil {
-		sess.Error("domain", "A site for this domain already exists.")
 		inertia.Back(w, r, "/sites/create")
 
 		return
-	}
-
-	// Asked of the machine rather than the row: a stale `failed` from a
-	// half-finished install would refuse a site this server can host perfectly
-	// well.
-	a.Catalog.Detect([]string{"node", "mysql", "wpcli", "php"})
-
-	if problem := a.missingRequirement(kind); problem != "" {
-		sess.Error("type", problem)
-		inertia.Back(w, r, "/sites/create")
-
-		return
-	}
-
-	// An explicit web directory wins; otherwise the type's own default.
-	webDirectory := stringInput(input, "web_directory", meta.WebDirectory)
-	webDirectory = strings.Trim(webDirectory, "/")
-
-	if webDirectory != "" {
-		webDirectory = "/" + webDirectory
-	}
-
-	// An alias that is not a hostname would go straight into an nginx
-	// server_name, so it is dropped rather than written.
-	aliases := []string{}
-
-	for _, alias := range listInput(input, "aliases") {
-		alias = strings.ToLower(strings.TrimSpace(alias))
-
-		if validDomain(alias) && alias != domain {
-			aliases = append(aliases, alias)
-		}
-	}
-
-	dnsContent := stringInput(input, "dns_content", system.PublicIP())
-
-	site := &store.Site{
-		UserID:       user.ID,
-		DNSAccountID: dnsAccountID,
-		Domain:       domain,
-		Type:         kind,
-		Aliases:      aliases,
-		RootPath:     strings.TrimRight(a.Config.SitesRoot, "/") + "/" + domain,
-		WebDirectory: webDirectory,
-		PHPVersion:   php,
-		NodeVersion:  a.Store.NodeVersion(),
-		SSL:          ssl,
-		Repository:   strings.TrimSpace(input["repository"]),
-		Branch:       stringInput(input, "branch", "main"),
-		ManageDNS:    manageDNS,
-		DNSType:      dnsType,
-		DNSContent:   dnsContent,
-		DNSProxied:   boolInput(input, "dns_proxied", true),
-	}
-
-	if meta.Proxied {
-		site.AppPort = a.Store.NextFreePort(r.Context())
-		site.StartCommand = stringInput(input, "start_command", orDefault(meta.Start, "npm run start"))
-		site.BuildCommand = stringInput(input, "build_command", meta.Build)
-	}
-
-	// The application's own administrator, for the types where the panel
-	// creates one. The panel
-	// puts one in front of it: same username, and a password it generates.
-	if meta.AdminAccount {
-		site.WPTitle = stringInput(input, "wp_title", store.DefaultWPTitle)
-		site.WPAdminEmail = stringInput(input, "wp_admin_email", user.Email)
-		site.WPAdminPassword = strings.TrimSpace(input["wp_admin_password"])
-
-		site.WPAdminUser = stringInput(input, "wp_admin_user", "admin")
 	}
 
 	id, err := a.Store.CreateSite(r.Context(), site)

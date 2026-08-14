@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -541,5 +542,77 @@ func TestRevokingAKeyStopsIt(t *testing.T) {
 
 	if status != http.StatusUnauthorized {
 		t.Fatalf("a revoked key = %d, want 401", status)
+	}
+}
+
+// The bug this whole arrangement exists to prevent: a site created by an
+// assistant coming out different from one created in the browser.
+//
+// Both are asked for the least a person can give — a type and a domain — and
+// the rows they produce have to agree on every default the panel has.
+func TestASiteFromTheToolMatchesOneFromTheForm(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	headers := p.inertia()
+	headers["X-XSRF-TOKEN"] = p.csrf()
+
+	// The form posts every field, because a browser form does; the defaults
+	// under test are the ones the create page itself fills in.
+	response := p.do(http.MethodPost, "/sites", `{
+		"type": "static",
+		"domain": "form.example",
+		"aliases": [],
+		"php_version": "",
+		"web_directory": "",
+		"ssl": true,
+		"repository": "",
+		"branch": "main",
+		"manage_dns": false,
+		"dns_type": "A",
+		"dns_content": "",
+		"dns_proxied": true
+	}`, headers)
+	response.Body.Close()
+
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /sites = %d, want 303", response.StatusCode)
+	}
+
+	// The tool is given the two arguments the person actually said.
+	if text, failed := toolText(t, p, token, "create_site",
+		`{"type":"static","domain":"tool.example"}`); failed {
+		t.Fatalf("create_site failed: %s", text)
+	}
+
+	read := func(domain string) map[string]any {
+		t.Helper()
+
+		text, failed := toolText(t, p, token, "get_site", `{"site":"`+domain+`"}`)
+		if failed {
+			t.Fatalf("get_site %s failed: %s", domain, text)
+		}
+
+		site := map[string]any{}
+
+		if err := json.Unmarshal([]byte(text), &site); err != nil {
+			t.Fatalf("get_site %s was not JSON: %v", domain, err)
+		}
+
+		return site
+	}
+
+	form, tool := read("form.example"), read("tool.example")
+
+	for _, field := range []string{
+		"type", "ssl", "php_version", "manage_dns", "dns_type", "dns_content",
+		"dns_proxied", "web_directory", "branch", "tls_mode",
+	} {
+		if fmt.Sprint(form[field]) != fmt.Sprint(tool[field]) {
+			t.Errorf("%s differs: the form made %v, the tool made %v",
+				field, form[field], tool[field])
+		}
 	}
 }

@@ -33,6 +33,13 @@ const MCPPath = "/mcp"
 const mcpInstructions = `This server is Ubuntu Panel, a control panel running on one Ubuntu server. ` +
 	`Through it you can create and manage websites, databases and the applications the server needs.
 
+Use the panel's defaults. Every tool here does what the same action does in the panel's own pages, ` +
+	`with the same defaults, and an argument you leave out is filled in the way a person pressing ` +
+	`the button in the browser would get it. Send what the person asked for and nothing else: an ` +
+	`argument invented to be cautious — DNS management off, TLS off, a different branch — produces ` +
+	`a site that is not the one they asked for, and the panel cannot tell the difference between ` +
+	`that and a deliberate choice.
+
 Work the way the panel works. Anything the panel does, do with the panel's own tools — creating ` +
 	`sites, deploying them, installing apps, creating databases, issuing certificates. The panel ` +
 	`owns those files: the nginx vhosts under /etc/nginx/sites-available, the systemd units for ` +
@@ -373,42 +380,6 @@ func (a *App) mcpSite(ctx context.Context, args mcp.Args) (*store.Site, error) {
 	return site, nil
 }
 
-// dnsAccountFor is the credential that can publish records for this hostname.
-//
-// Asked of the provider rather than guessed: an account is right for a domain
-// when one of its zones covers it, which is a question only the provider can
-// answer. With several credentials connected, the first whose zone matches
-// wins — a domain lives in one zone, so there is nothing to choose between.
-//
-// The second return is why there is no answer, in a sentence meant to be read
-// by whoever asked for the site.
-func (a *App) dnsAccountFor(ctx context.Context, userID int64, domain string) (*store.DNSAccount, string) {
-	accounts, err := a.Store.DNSAccounts(ctx, userID)
-	if err != nil {
-		return nil, "the panel could not read its DNS credentials"
-	}
-
-	if len(accounts) == 0 {
-		return nil, "no DNS provider is connected to this panel, so its records have to be " +
-			"added wherever the domain's DNS lives"
-	}
-
-	for _, account := range accounts {
-		if _, _, err := dns.New(account).FindZone(domain); err == nil {
-			return account, ""
-		}
-	}
-
-	names := make([]string, 0, len(accounts))
-	for _, account := range accounts {
-		names = append(names, account.Label)
-	}
-
-	return nil, fmt.Sprintf("none of the connected DNS credentials (%s) has a zone covering "+
-		"this domain, so its records have to be added wherever its DNS lives",
-		strings.Join(names, ", "))
-}
-
 // siteReport is what every site-shaped answer looks like: the row, plus where
 // its deployment got to, because "did it work" is the next question every time.
 func (a *App) siteReport(ctx context.Context, site *store.Site, detailed bool) map[string]any {
@@ -575,11 +546,16 @@ func (a *App) mcpCreateSite() *mcp.Tool {
 		Name:       "create_site",
 		Capability: capSitesWrite,
 		Title:      "Create a site",
-		Description: "Create and deploy a site: nginx vhost, runtime, database where the type " +
-			"needs one, a Let's Encrypt certificate, and — for a git-backed site — a clone of the " +
+		Description: "Create and deploy a site: DNS records, nginx vhost, runtime, database where " +
+			"the type needs one, a certificate, and — for a git-backed site — a clone of the " +
 			"repository followed by its build. Returns as soon as the work is queued, so poll " +
-			"get_site until its status is `active` or `failed`. The domain must already resolve " +
-			"to this server, or the certificate step fails and the site is served over HTTP.",
+			"get_site until its status is `active` or `failed`.\n\n" +
+			"Send the type, the domain, and whatever else the person actually asked for. Leave " +
+			"everything else out: every argument here has the same default as the panel's own " +
+			"create form, and a site made through this tool with nothing but a type and a domain " +
+			"is the same site a person gets by opening that form and pressing the button. Do not " +
+			"turn things off to be careful — switching manage_dns or ssl off produces a site that " +
+			"resolves nowhere or has no certificate, which is not a safer site, only a broken one.",
 		Properties: map[string]mcp.Property{
 			"type": {
 				Description: "The site type. list_site_types has them and says which this machine can host.",
@@ -629,130 +605,44 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 		return nil, errors.New("this key is not attached to an account")
 	}
 
-	kind := strings.ToLower(args.String("type"))
-	domain := strings.ToLower(args.String("domain"))
-
-	meta := config.FindSiteType(kind)
-	if meta == nil {
-		return nil, fmt.Errorf("%q is not a site type this panel deploys — list_site_types has them", kind)
+	// The same request the create form builds, handed to the same place. An
+	// argument the assistant did not send is left unset on purpose: prepareSite
+	// then applies the panel's own default for it, which is what "do it the way
+	// the panel does it" has to mean if it is to stay true.
+	request := siteRequest{
+		Type:          args.String("type"),
+		Domain:        args.String("domain"),
+		Aliases:       args.List("aliases"),
+		PHPVersion:    args.String("php_version"),
+		WebDirectory:  args.String("web_directory"),
+		Repository:    args.String("repository"),
+		Branch:        args.String("branch"),
+		StartCommand:  args.String("start_command"),
+		BuildCommand:  args.String("build_command"),
+		DNSAccountID:  args.Int("dns_account_id"),
+		DNSType:       args.String("dns_type"),
+		DNSContent:    args.String("dns_content"),
+		AdminUser:     args.String("admin_user"),
+		AdminEmail:    args.String("admin_email"),
+		AdminPassword: args.String("admin_password"),
+		Title:         args.String("title"),
 	}
 
-	if !validDomain(domain) {
-		return nil, fmt.Errorf("%q is not a domain — it has to look like example.com", domain)
+	if args.Has("ssl") {
+		request.SSL = boolPointer(args.Bool("ssl", true))
 	}
 
-	if _, err := a.Store.FindSiteByDomain(ctx, domain); err == nil {
-		return nil, fmt.Errorf("a site for %s already exists", domain)
+	if args.Has("manage_dns") {
+		request.ManageDNS = boolPointer(args.Bool("manage_dns", true))
 	}
 
-	php := args.StringOr("php_version", a.Store.PHPVersion())
-
-	if !config.IsPHPVersion(php) {
-		return nil, fmt.Errorf("%q is not a PHP version this panel installs; it has %v",
-			php, config.PHPVersions)
+	if args.Has("dns_proxied") {
+		request.DNSProxied = boolPointer(args.Bool("dns_proxied", true))
 	}
 
-	// Asked of the machine rather than of the rows, for the same reason the
-	// create form asks: a stale row would refuse a site this server can host.
-	a.Catalog.Detect([]string{"node", "mysql", "wpcli", "php"})
-
-	if problem := a.missingRequirement(kind); problem != "" {
-		return nil, errors.New(problem + " (install_apps does that)")
-	}
-
-	webDirectory := strings.Trim(args.StringOr("web_directory", meta.WebDirectory), "/")
-	if webDirectory != "" {
-		webDirectory = "/" + webDirectory
-	}
-
-	aliases := []string{}
-
-	for _, alias := range args.List("aliases") {
-		alias = strings.ToLower(strings.TrimSpace(alias))
-
-		if validDomain(alias) && alias != domain {
-			aliases = append(aliases, alias)
-		}
-	}
-
-	// DNS, without being asked. A site whose records nobody publishes resolves
-	// nowhere, its certificate cannot be issued, and the person who wanted a
-	// website is left copying an IP address into a control panel somewhere else
-	// — which is the part of this the panel exists to do.
-	//
-	// So it is on by default and the credential is found rather than named: the
-	// assistant does not have to know which provider holds the domain, or that
-	// there is a question here at all. Where no connected credential covers the
-	// domain, the site is still created and the answer says what to point at
-	// this server by hand.
-	dnsType := strings.ToUpper(args.StringOr("dns_type", "A"))
-
-	if !config.IsSiteDNSType(dnsType) {
-		return nil, fmt.Errorf("%q is not a record type the panel publishes for a site; it does %v",
-			dnsType, config.SiteDNSTypes)
-	}
-
-	manageDNS := args.Bool("manage_dns", true)
-
-	var (
-		dnsAccount *store.DNSAccount
-		dnsNote    string
-	)
-
-	if manageDNS {
-		if asked := args.Int("dns_account_id"); asked > 0 {
-			account, err := a.Store.FindDNSAccount(ctx, asked, user.ID)
-			if err != nil {
-				return nil, fmt.Errorf("no DNS credential with id %d — list_dns_accounts has them",
-					asked)
-			}
-
-			dnsAccount = account
-		} else {
-			dnsAccount, dnsNote = a.dnsAccountFor(ctx, user.ID, domain)
-		}
-
-		manageDNS = dnsAccount != nil
-	}
-
-	site := &store.Site{
-		UserID:       user.ID,
-		Domain:       domain,
-		Type:         kind,
-		Aliases:      aliases,
-		RootPath:     strings.TrimRight(a.Config.SitesRoot, "/") + "/" + domain,
-		WebDirectory: webDirectory,
-		PHPVersion:   php,
-		NodeVersion:  a.Store.NodeVersion(),
-		SSL:          args.Bool("ssl", true),
-		Repository:   args.String("repository"),
-		Branch:       args.StringOr("branch", "main"),
-		ManageDNS:    manageDNS,
-		DNSType:      dnsType,
-		DNSContent:   args.StringOr("dns_content", system.PublicIP()),
-		DNSProxied:   args.Bool("dns_proxied", true),
-	}
-
-	if dnsAccount != nil {
-		site.DNSAccountID = dnsAccount.ID
-	}
-
-	if meta.Managed && site.Repository != "" {
-		return nil, fmt.Errorf("%s is installed by the panel itself, so it takes no repository",
-			meta.Label)
-	}
-
-	if meta.Proxied {
-		site.AppPort = a.Store.NextFreePort(ctx)
-		site.StartCommand = args.StringOr("start_command", orDefault(meta.Start, "npm run start"))
-		site.BuildCommand = args.StringOr("build_command", meta.Build)
-	}
-
-	if meta.AdminAccount {
-		site.WPTitle = args.StringOr("title", store.DefaultWPTitle)
-		site.WPAdminEmail = args.StringOr("admin_email", user.Email)
-		site.WPAdminUser = args.StringOr("admin_user", "admin")
-		site.WPAdminPassword = args.String("admin_password")
+	site, err := a.prepareSite(ctx, user, request)
+	if err != nil {
+		return nil, err
 	}
 
 	id, err := a.Store.CreateSite(ctx, site)
@@ -770,41 +660,48 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 
 	answer := map[string]any{
 		"site_id":    id,
-		"domain":     domain,
-		"type":       kind,
+		"domain":     site.Domain,
+		"type":       site.Type,
 		"status":     "pending",
 		"url":        site.URL(),
 		"queued":     true,
-		"manage_dns": manageDNS,
+		"manage_dns": site.ManageDNS,
 		"next": fmt.Sprintf("The deployment is running on the server's queue. Poll get_site with "+
 			"site %d until its status is active or failed; get_task has the console if it fails.", id),
 	}
 
-	if manageDNS {
-		answer["dns"] = map[string]any{
-			"provider":   dns.ProviderLabel(dnsAccount.Provider),
-			"credential": dnsAccount.Label,
-			"record":     fmt.Sprintf("%s %s -> %s", dnsType, domain, site.DNSContent),
-			"proxied":    site.DNSProxied && dns.SupportsProxy(dnsAccount.Provider),
-			"note": "The panel publishes this during the deployment and removes it again when " +
-				"the site is deleted — nothing to add by hand. Where the provider's proxy is on " +
-				"and already terminating TLS, the deployment also skips asking Let's Encrypt for " +
-				"a certificate nobody would be shown, which is two or three minutes off it. " +
-				"get_site's tls_mode says which happened.",
+	if site.ManageDNS && site.DNSAccountID > 0 {
+		proxied := site.DNSProxied
+
+		if account, err := a.Store.FindDNSAccount(ctx, site.DNSAccountID, user.ID); err == nil {
+			answer["dns"] = map[string]any{
+				"provider":   dns.ProviderLabel(account.Provider),
+				"credential": account.Label,
+				"record": fmt.Sprintf("%s %s -> %s", site.DNSType, site.Domain,
+					site.DNSContent),
+				"proxied": proxied && dns.SupportsProxy(account.Provider),
+				"note": "The panel publishes this during the deployment and removes it again " +
+					"when the site is deleted — nothing to add by hand. Where the provider's " +
+					"proxy is on and already terminating TLS, the deployment also skips asking " +
+					"Let's Encrypt for a certificate nobody would be shown. get_site's tls_mode " +
+					"says which happened, and get_task has the DNS step's own output.",
+			}
 		}
 
 		return answer, nil
 	}
 
-	// The one case worth a sentence to the person rather than a field: their
-	// domain will not resolve here until somebody points it, and the assistant
-	// is the one holding the address.
+	// No credential to publish with. The site is still created — the same as
+	// the form with the DNS box unticked — and the answer carries the sentence
+	// to read out, because this is the one case where somebody has to go and do
+	// something before the site can answer at all.
 	answer["dns"] = map[string]any{
 		"managed": false,
-		"reason":  dnsNote,
+		"reason": "no DNS provider is connected to this panel, so its records have to be added " +
+			"wherever the domain's DNS lives",
 		"tell_the_person": fmt.Sprintf("Add a %s record for %s pointing at %s wherever this "+
 			"domain's DNS is managed. Until that resolves here, the site will not answer and its "+
-			"certificate cannot be issued.", dnsType, domain, site.DNSContent),
+			"certificate cannot be issued.", site.DNSType, site.Domain, site.DNSContent),
 	}
 
 	return answer, nil
