@@ -98,10 +98,10 @@ const revoke = async (token) => {
 
 // ------------------------------------------------------------- connecting
 
-// The key in the instructions: the one just issued when there is one, and a
-// placeholder otherwise. A key cannot be shown twice — the panel keeps a hash —
-// so a page opened tomorrow says where to put yours instead of pretending.
-const key = computed(() => props.issued || 'PASTE-YOUR-KEY-HERE');
+// The key in the instructions is always the one just issued. A key cannot be
+// shown twice — the panel keeps a hash of it — so these instructions exist only
+// on the response that created one, and the whole card goes with it.
+const key = computed(() => props.issued || '');
 
 const prompt = computed(
     () => `Add an MCP server to my AI setup, or update it if it is already there.
@@ -382,14 +382,27 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         class="px-5 py-12 text-center text-sm text-slate-500"
                     >
                         No keys yet. Create one above and the instructions for
-                        connecting an assistant appear here.
+                        connecting an assistant appear with it.
                     </li>
                 </ul>
+
+                <p
+                    v-if="tokens.length && !issued"
+                    class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500"
+                >
+                    The instructions for connecting an assistant come with a new
+                    key, because they contain it. The panel keeps only a hash of
+                    the keys above, so it cannot put one of them back into them.
+                </p>
             </div>
 
-            <!-- Connecting, once there is something to connect with. -->
+            <!--
+                Connecting. Only on the response that issued a key, because the
+                key is in it: a version of this card with a blank where the
+                credential goes is something to paste and then wonder about.
+            -->
             <div
-                v-if="tokens.length"
+                v-if="issued"
                 class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
             >
                 <div class="border-b border-slate-200 px-5 py-4">
@@ -488,11 +501,10 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         the text and copy it yourself.
                     </p>
 
-                    <p v-if="!issued" class="mt-3 text-xs text-slate-500">
-                        Put your own key where it says
-                        <code class="font-mono">PASTE-YOUR-KEY-HERE</code>. A key
-                        is only ever shown once, when it is created — make a new
-                        one above if you no longer have it.
+                    <p class="mt-3 text-xs text-slate-500">
+                        Both carry the key above, which is why they are here and
+                        not on the page you come back to. Leaving without pasting
+                        one of them means making another key.
                     </p>
                 </div>
             </div>
