@@ -45,11 +45,13 @@ const copy = async (text, which) => {
 
 // ------------------------------------------------------- server and switches
 
+// The server's name is not here: it is set beside the key it goes into, which
+// is the only place it is needed and the only time anybody is thinking about
+// it. This form leaves it alone.
 const settings = useForm({
     enabled: props.settings.enabled ?? true,
     confirm_destructive: props.settings.confirm_destructive ?? true,
     allow_all: props.settings.allow_all ?? true,
-    name: props.settings.name || props.defaultName,
     permissions: props.capabilities.filter((c) => c.granted).map((c) => c.key),
 });
 
@@ -161,6 +163,20 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                         What an assistant may do with this machine, and whether
                         it may reach it at all.
                     </p>
+                    <!--
+                        The name is set beside the key it goes into, so it is
+                        read here rather than typed — and it is read here at all
+                        because otherwise nothing on this page says what your
+                        assistant calls this server.
+                    -->
+                    <p class="mt-2 text-sm text-slate-600">
+                        Assistants see it as
+                        <span class="font-medium text-slate-800">{{ serverName }}</span>
+                        <span class="text-slate-400">
+                            · <code class="font-mono text-xs">{{ serverSlug }}</code> in a
+                            configuration file
+                        </span>
+                    </p>
                 </div>
 
                 <div class="space-y-5 px-5 py-4">
@@ -198,22 +214,6 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                             </span>
                         </span>
                     </label>
-
-                    <div>
-                        <InputLabel for="server-name" value="What this server is called" />
-                        <TextInput
-                            id="server-name"
-                            v-model="settings.name"
-                            class="mt-1 block w-full sm:max-w-sm"
-                            :placeholder="defaultName"
-                        />
-                        <p class="mt-1 text-sm text-slate-500">
-                            How your assistant introduces this panel, and the key
-                            its configuration file uses. Worth changing when you
-                            have more than one of these connected to the same
-                            machine.
-                        </p>
-                    </div>
 
                     <div class="rounded-xl ring-1 ring-slate-200">
                         <label
@@ -334,7 +334,10 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                     </div>
 
                     <div>
-                        <InputLabel for="key-server-name" value="Call this server" />
+                        <InputLabel
+                            for="key-server-name"
+                            value="What this server is called"
+                        />
                         <TextInput
                             id="key-server-name"
                             v-model="form.server_name"
@@ -342,6 +345,14 @@ const local = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)/.test(props.e
                             :placeholder="defaultName"
                         />
                     </div>
+
+                    <p class="text-sm text-slate-500 sm:col-span-2">
+                        The first name is yours, for telling your own keys apart.
+                        The second is what the assistant calls this panel — worth
+                        changing when you have more than one of them connected to
+                        the same machine. It applies to every key, not only this
+                        one.
+                    </p>
 
                     <div class="sm:col-span-2">
                         <PrimaryButton :disabled="form.processing">

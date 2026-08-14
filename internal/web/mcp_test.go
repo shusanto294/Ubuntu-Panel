@@ -32,13 +32,22 @@ func signIn(t *testing.T, p *panel) {
 
 // issueToken asks the AI page for a key and reads it back off the page that
 // follows, which is the one and only place it is ever readable.
-func issueToken(t *testing.T, p *panel) string {
+//
+// serverName is optional and is the name the panel introduces itself by — set
+// on this form because this is the only form it is on.
+func issueToken(t *testing.T, p *panel, serverName ...string) string {
 	t.Helper()
 
 	headers := p.inertia()
 	headers["X-XSRF-TOKEN"] = p.csrf()
 
-	response := p.do(http.MethodPost, "/ai/tokens", `{"name":"Claude"}`, headers)
+	body := `{"name":"Claude"}`
+
+	if len(serverName) > 0 {
+		body = `{"name":"Claude","server_name":` + strconv.Quote(serverName[0]) + `}`
+	}
+
+	response := p.do(http.MethodPost, "/ai/tokens", body, headers)
 	response.Body.Close()
 
 	if response.StatusCode != http.StatusSeeOther {
@@ -351,10 +360,7 @@ func TestTheServerIntroducesItselfByTheNameThatWasSet(t *testing.T) {
 	p := start(t)
 	signIn(t, p)
 
-	token := issueToken(t, p)
-
-	saveSettings(t, p, `{"enabled":true,"confirm_destructive":true,"allow_all":true,
-		"name":"Client staging box"}`)
+	token := issueToken(t, p, "Client staging box")
 
 	_, answer := rpc(t, p, token,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)

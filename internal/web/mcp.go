@@ -1611,9 +1611,9 @@ func (a *App) aiSettings(w http.ResponseWriter, r *http.Request) {
 		a.Store.SetSetting(mcpPermissionsSetting, strings.Join(granted, ","))
 	}
 
-	if name := stringInput(input, "name", ""); name != "" {
-		a.Store.SetSetting(mcpNameSetting, truncate(name, 60))
-	}
+	// The server's name is not written here. It is set beside the key it goes
+	// into, and one writer is what keeps the two forms from disagreeing about
+	// which of them last had the truth.
 
 	if sess := session.FromContext(r.Context()); sess != nil {
 		sess.Flash("success", "Saved. A client that is already connected picks this up when it "+
