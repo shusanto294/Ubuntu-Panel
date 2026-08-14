@@ -13,6 +13,7 @@ import (
 	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
 	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
 	"github.com/shusanto294/ubuntu-panel-go/internal/mail"
+	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
@@ -37,6 +38,11 @@ type App struct {
 	Databases *databases.Service
 	Mail      *mail.Service
 	Terminal  *terminal.Service
+
+	// MCP is the Model Context Protocol server an AI assistant connects to.
+	// Its tools are the same services the handlers above call, so anything an
+	// assistant can do is something the panel already does.
+	MCP *mcp.Server
 
 	assets fs.FS
 	router *router
@@ -72,6 +78,8 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 
 	app.registerJobs()
 
+	app.MCP = app.buildMCP()
+
 	app.Render.SharedProps = app.sharedProps
 	app.router = app.routes()
 
@@ -104,10 +112,16 @@ func (a *App) Stop() { a.Queue.Stop() }
 func (a *App) Handler() http.Handler {
 	var handler http.Handler = a.router.mux
 
-	// Read outwards: a request is recovered, then logged, then given a
-	// session, then given its user, then routed.
+	// Read outwards: a request is recovered, then logged, then either answered
+	// as MCP or given a session, then given its user, then routed.
 	handler = a.withUser(handler)
 	handler = a.Sessions.Middleware(handler)
+
+	// Outside the session layer on purpose: an assistant sends a bearer token
+	// and no cookie, and a client polling a deployment would otherwise write a
+	// session row every couple of seconds for nobody to read.
+	handler = a.withMCP(handler)
+
 	handler = a.withLogging(handler)
 	handler = a.withRecovery(handler)
 

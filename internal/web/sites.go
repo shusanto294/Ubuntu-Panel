@@ -373,7 +373,7 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
 		"certbot":       a.Store.ServiceInstalled("certbot"),
 		"database":      database,
-		"logFiles":      a.siteLogFiles(site),
+		"logFiles":      a.siteLogFiles(site, 200),
 		"resolution":    resolution,
 		"phpDirectives": directives,
 		"accessUsers":   a.Sites.AccessUsers(site),
@@ -772,9 +772,7 @@ func (a *App) sitesCron(w http.ResponseWriter, r *http.Request) {
 //
 // The tail, not the file. An error log on a busy site is megabytes, and the
 // question being asked of it is always about the last few minutes.
-func (a *App) siteLogFiles(site *store.Site) []map[string]any {
-	const lines = 200
-
+func (a *App) siteLogFiles(site *store.Site, lines int) []map[string]any {
 	files := []struct {
 		key, label, path string
 	}{

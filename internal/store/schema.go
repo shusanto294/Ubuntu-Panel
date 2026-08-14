@@ -211,6 +211,20 @@ var schema = []string{
 		used_at    INTEGER
 	)`,
 
+	// The keys an AI assistant signs its MCP requests with. Only the hash is
+	// kept: the token is shown once, when it is issued, and a database somebody
+	// walks off with is then a list of names rather than a way in.
+	`CREATE TABLE IF NOT EXISTS api_tokens (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id      INTEGER NOT NULL,
+		name         TEXT NOT NULL,
+		token_hash   TEXT NOT NULL UNIQUE,
+		prefix       TEXT NOT NULL,
+		last_used_at TEXT,
+		created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS api_tokens_user ON api_tokens(user_id)`,
+
 	// The background work queue, so a restart does not lose a deployment.
 	`CREATE TABLE IF NOT EXISTS jobs (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,

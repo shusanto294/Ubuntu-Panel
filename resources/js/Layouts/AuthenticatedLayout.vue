@@ -43,6 +43,7 @@ const icons = {
     logs: 'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9zM8.25 12h7.5M8.25 15h4.5',
     profile:
         'M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z',
+    ai: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z',
 };
 
 // Two groups, the way the reference dashboard splits them: the places you
@@ -64,6 +65,7 @@ const sections = [
             { name: 'Apps', route: 'services.index', pattern: 'services.index', icon: icons.services },
             { name: 'DNS', route: 'dns.index', pattern: 'dns.index', icon: icons.dns },
             { name: 'Logs', route: 'logs.index', pattern: 'logs.*', icon: icons.logs },
+            { name: 'AI access', route: 'ai.index', pattern: 'ai.*', icon: icons.ai },
             { name: 'Settings', route: 'settings', pattern: 'settings', icon: icons.settings },
             { name: 'Profile', route: 'profile.edit', pattern: 'profile.edit', icon: icons.profile },
         ],

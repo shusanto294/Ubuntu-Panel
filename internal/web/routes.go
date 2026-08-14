@@ -148,6 +148,13 @@ func (a *App) routes() *router {
 	rt.delete("/dns-accounts/{account}/records", "dns.records.destroy", authenticated,
 		a.dnsDestroyRecord)
 
+	// AI access: the keys an assistant signs its MCP requests with. The MCP
+	// endpoint itself is not in this table — it is routed before the session
+	// middleware, in Handler(), because it authenticates itself.
+	rt.get("/ai", "ai.index", authenticated, a.aiIndex)
+	rt.post("/ai/tokens", "ai.tokens.store", authenticated, a.aiStoreToken)
+	rt.delete("/ai/tokens/{token}", "ai.tokens.destroy", authenticated, a.aiDestroyToken)
+
 	// Profile
 	rt.get("/profile", "profile.edit", authenticated, a.editProfile)
 	rt.patch("/profile", "profile.update", authenticated, a.updateProfile)

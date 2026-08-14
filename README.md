@@ -93,6 +93,16 @@ Everything the C panel does, from the same pages:
 - **Logs** — every deployment and install streams its console to the page
 - **Terminal** — a real shell in the browser, on a PTY over a websocket
 
+And one thing the C panel does not:
+
+- **AI access** — the panel is an MCP server. Point Claude Code, Codex or any
+  other Model Context Protocol client at `https://your-panel/mcp` with a key
+  issued on the AI access page, and the assistant can create a site from a
+  GitHub repository, deploy a WordPress or Next.js site, read a failing
+  deployment's console, edit a site's files, create databases and install what
+  the machine is missing — nineteen tools, each one a call onto the same
+  service the panel's own pages use
+
 The database schema matches the C panel's, so the same `panel.db` can be served
 by either binary.
 
@@ -206,6 +216,7 @@ internal/store        SQLite: schema and every model
 internal/session      sessions, CSRF, flash messages
 internal/inertia      the Inertia server protocol and the HTML shell
 internal/web          routes, middleware, handlers, the job registry
+internal/mcp          the Model Context Protocol server an assistant connects to
 internal/crypto       the application key: AES-256-GCM over stored credentials
 internal/proc         running commands, quoting, writing files
 internal/tasks        the step runner behind every live console
