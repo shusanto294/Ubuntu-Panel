@@ -441,7 +441,10 @@ func (a *App) mcpSetDNSRecord() *mcp.Tool {
 		Capability: capDNS,
 		Title:      "Write a DNS record",
 		Description: "Create a record in a zone, or replace the one already at that name and " +
-			"type. The panel finds the credential holding the zone itself.\n\n" +
+			"type — and any duplicates of it, so the name is left answering with one thing. " +
+			"The panel finds the credential holding the zone itself. A TXT record only replaces " +
+			"one of its own kind: an SPF replaces an SPF and leaves a verification string alone. " +
+			"The answer says what was overwritten.\n\n" +
 			"Not for a site's own records: create_site publishes those and delete_site removes " +
 			"them, and a record written here for a domain the panel manages is overwritten by the " +
 			"next deployment. sync_dns is what republishes a site's, sync_email_dns a mail " +
@@ -492,13 +495,13 @@ func (a *App) mcpSetDNSRecord() *mcp.Tool {
 				Proxied:  args.Bool("proxied", false) && dns.SupportsProxy(account.Provider),
 			}
 
-			id, err := dns.New(account).UpsertRecord(zoneID, zoneName, record)
+			result, err := dns.New(account).Upsert(zoneID, zoneName, record)
 			if err != nil {
 				return nil, err
 			}
 
-			return map[string]any{
-				"record_id":      id,
+			answer := map[string]any{
+				"record_id":      result.ID,
 				"zone":           zoneName,
 				"type":           record.Type,
 				"name":           record.Name,
@@ -506,7 +509,20 @@ func (a *App) mcpSetDNSRecord() *mcp.Tool {
 				"proxied":        record.Proxied,
 				"dns_account_id": account.ID,
 				"written":        true,
-			}, nil
+				"created":        result.Created,
+			}
+
+			// What was there before, because this call has just overwritten
+			// somebody's record and the answer is the only place that says so.
+			if !result.Created {
+				answer["replaced"] = result.Previous
+			}
+
+			if result.Removed > 0 {
+				answer["duplicates_removed"] = result.Removed
+			}
+
+			return answer, nil
 		},
 	}
 }

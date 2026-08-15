@@ -87,7 +87,7 @@ func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string
 			Proxied:  site.DNSProxied && SupportsProxy(account.Provider),
 		}
 
-		id, err := client.UpsertRecord(zoneID, zoneName, record)
+		result, err := client.Upsert(zoneID, zoneName, record)
 		if err != nil {
 			fmt.Fprintf(&log, "%s: %v\n", hostname, err)
 
@@ -98,11 +98,17 @@ func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string
 			continue
 		}
 
-		if id != "" {
-			ids[record.Name] = id
+		if result.ID != "" {
+			ids[record.Name] = result.ID
 		}
 
-		fmt.Fprintf(&log, "%s %s -> %s\n", record.Type, record.Name, record.Content)
+		// The other two address types at the same name, which would answer for
+		// this host as well: a CNAME left over from a previous host, or an AAAA
+		// pointing at the server this site has just moved off.
+		claimed, _ := client.ClaimHost(zoneID, zoneName, record.Name, record.Type)
+
+		fmt.Fprintf(&log, "%s %s -> %s%s\n", record.Type, record.Name, record.Content,
+			changed(result, claimed))
 	}
 
 	if encoded, err := json.Marshal(ids); err == nil {
@@ -110,6 +116,48 @@ func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string
 	}
 
 	return log.String(), failure
+}
+
+// changed is what the console adds after a record it has just written: what
+// was there before, and what else was taken away.
+//
+// Said out loud on purpose. Replacing a record is the panel changing something
+// somebody else put there — an MX pointing at another mail host, an SPF from a
+// previous provider — and the old value in the deployment log is the only copy
+// of it left. Where nothing was replaced there is nothing to say, and the line
+// stays short.
+func changed(result Upsert, claimed int) string {
+	if result.Created && claimed == 0 {
+		return ""
+	}
+
+	notes := []string{}
+
+	if !result.Created {
+		if content := strings.TrimSpace(result.Previous); content != "" {
+			notes = append(notes, "replaced "+content)
+		} else {
+			notes = append(notes, "updated the record already there")
+		}
+	}
+
+	if result.Removed == 1 {
+		notes = append(notes, "removed 1 duplicate")
+	} else if result.Removed > 1 {
+		notes = append(notes, fmt.Sprintf("removed %d duplicates", result.Removed))
+	}
+
+	if claimed == 1 {
+		notes = append(notes, "removed 1 conflicting record at the same name")
+	} else if claimed > 1 {
+		notes = append(notes, fmt.Sprintf("removed %d conflicting records at the same name", claimed))
+	}
+
+	if len(notes) == 0 {
+		return ""
+	}
+
+	return " (" + strings.Join(notes, ", ") + ")"
 }
 
 // RemoveForSite takes a site's records back down. Every failure is reported
@@ -206,7 +254,7 @@ func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain
 		record.Name = Qualify(record.Name, zoneName)
 		record.Proxied = false // mail must never be proxied
 
-		id, err := client.UpsertRecord(zoneID, zoneName, record)
+		result, err := client.Upsert(zoneID, zoneName, record)
 		if err != nil {
 			fmt.Fprintf(&log, "%s %s: %v\n", record.Type, record.Name, err)
 
@@ -217,11 +265,18 @@ func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain
 			continue
 		}
 
-		if id != "" {
-			ids[record.Type+" "+record.Name] = id
+		if result.ID != "" {
+			ids[record.Type+" "+record.Name] = result.ID
 		}
 
-		fmt.Fprintf(&log, "%s %s written\n", record.Type, record.Name)
+		// The host the MX points at answers with one address and no alias.
+		claimed := 0
+
+		if record.Type == "A" || record.Type == "AAAA" {
+			claimed, _ = client.ClaimHost(zoneID, zoneName, record.Name, record.Type)
+		}
+
+		fmt.Fprintf(&log, "%s %s written%s\n", record.Type, record.Name, changed(result, claimed))
 	}
 
 	if domain.DKIMPublicKey == "" {

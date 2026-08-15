@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -293,12 +294,27 @@ func (a *App) dnsStoreRecord(w http.ResponseWriter, r *http.Request) {
 		Proxied:  boolInput(input, "proxied", false) && dns.SupportsProxy(account.Provider),
 	}
 
-	if _, err := dns.New(account).UpsertRecord(zoneID, zoneName, record); err != nil {
+	result, err := dns.New(account).Upsert(zoneID, zoneName, record)
+	if err != nil {
 		a.failBack(w, r, "Could not write the record: "+err.Error())
 		return
 	}
 
-	a.okBack(w, r, record.Type+" record for "+record.Name+" written.")
+	// A record written over one that was already there, and any copies of it
+	// that had collected at the same name, are worth a sentence: the zone now
+	// says something it did not a moment ago, and the old value is gone.
+	message := record.Type + " record for " + record.Name + " written."
+
+	if !result.Created && result.Previous != "" {
+		message = record.Type + " record for " + record.Name + " updated — it was " +
+			result.Previous + "."
+	}
+
+	if result.Removed > 0 {
+		message += fmt.Sprintf(" %d duplicate record(s) at that name removed.", result.Removed)
+	}
+
+	a.okBack(w, r, message)
 }
 
 func (a *App) dnsDestroyRecord(w http.ResponseWriter, r *http.Request) {

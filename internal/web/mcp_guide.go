@@ -153,6 +153,14 @@ var panelGuide = []guideArea{
 				},
 			},
 		},
+		Warnings: []string{
+			"Creating a mail domain takes over its mail records: the MX is pointed at this server " +
+				"and any others at the apex are removed, and an SPF already there is replaced. " +
+				"That is what makes mail arrive here, and it stops mail arriving wherever it used " +
+				"to — so say so first if the domain is on Google Workspace or Microsoft 365. " +
+				"Records the panel does not publish, verification strings included, are left " +
+				"alone, and get_task has the old values.",
+		},
 	},
 	{
 		Key:  "databases",
@@ -199,6 +207,10 @@ var panelGuide = []guideArea{
 		Warnings: []string{
 			"A site's own records belong to create_site and delete_site. Writing them here leaves " +
 				"the panel's record and the zone disagreeing.",
+			"set_dns_record replaces rather than adds: the record already at that name and type, " +
+				"and any duplicates of it, are overwritten and removed. The answer's `replaced` " +
+				"says what was there. A TXT only replaces one of its own kind — SPF over SPF, " +
+				"DMARC over DMARC — so a verification string is never the thing overwritten.",
 		},
 	},
 	{

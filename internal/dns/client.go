@@ -680,21 +680,82 @@ func (c *Client) Records(zoneID, zoneName string) ([]Record, error) {
 	return records, nil
 }
 
-// FindRecordID is the id of an existing record of the same type and name.
+// FindRecordID is the id of an existing record the panel would replace.
 func (c *Client) FindRecordID(zoneID, zoneName string, record Record) (string, error) {
-	records, err := c.Records(zoneID, zoneName)
-	if err != nil {
+	matches, err := c.matchingRecords(zoneID, zoneName, record)
+	if err != nil || len(matches) == 0 {
 		return "", err
 	}
 
+	return matches[0].ID, nil
+}
+
+// matchingRecords is every record in the zone that `record` replaces, in the
+// order the provider lists them.
+//
+// More than one is the ordinary case rather than the odd one: a domain moved
+// between hosts collects two A records at the same name, and both answer, so
+// half the visitors land on the old server. The panel writes the first and
+// deletes the rest, because "point this name here" is not "point this name
+// here as well".
+func (c *Client) matchingRecords(zoneID, zoneName string, record Record) ([]Record, error) {
+	records, err := c.Records(zoneID, zoneName)
+	if err != nil {
+		return nil, err
+	}
+
+	matches := []Record{}
+
 	for _, existing := range records {
-		if strings.EqualFold(existing.Type, record.Type) &&
-			strings.EqualFold(existing.Name, record.Name) {
-			return existing.ID, nil
+		if replaces(existing, record) {
+			matches = append(matches, existing)
 		}
 	}
 
-	return "", nil
+	return matches, nil
+}
+
+// replaces reports whether an existing record is the one being written again.
+//
+// Type and name, except for TXT, where they are not enough. A domain's apex
+// carries an SPF record, a DMARC record and however many verification strings
+// Google, Microsoft and Atlassian have asked for, all of them TXT at the same
+// name. Matching on type and name alone made the panel's SPF overwrite
+// whichever of those the provider happened to list first — a domain that
+// stopped verifying, for a reason nothing in the panel mentioned.
+func replaces(existing, wanted Record) bool {
+	if !strings.EqualFold(existing.Type, wanted.Type) {
+		return false
+	}
+
+	if !strings.EqualFold(strings.TrimRight(existing.Name, "."),
+		strings.TrimRight(wanted.Name, ".")) {
+		return false
+	}
+
+	if strings.EqualFold(wanted.Type, "TXT") {
+		return txtKind(existing.Content) == txtKind(wanted.Content)
+	}
+
+	return true
+}
+
+// txtKind is what a TXT record is for, which is written in its own first
+// word. Anything the panel does not publish is `txt` — one bucket, so a
+// verification string is never mistaken for a policy the panel owns.
+func txtKind(content string) string {
+	content = strings.ToLower(strings.TrimSpace(strings.Trim(strings.TrimSpace(content), "\"")))
+
+	switch {
+	case strings.HasPrefix(content, "v=spf1"):
+		return "spf"
+	case strings.HasPrefix(content, "v=dmarc1"):
+		return "dmarc"
+	case strings.HasPrefix(content, "v=dkim1"):
+		return "dkim"
+	}
+
+	return "txt"
 }
 
 // payload is the body a create or update takes, in the provider's own
@@ -894,18 +955,101 @@ func (c *Client) DeleteRecord(zoneID, zoneName, recordID string) error {
 	return err
 }
 
+// Upsert is what writing one record did, so the console can say it: whether the
+// record was already there, what it used to say, and how many copies of it the
+// zone had collected.
+type Upsert struct {
+	ID       string
+	Created  bool
+	Previous string
+	Removed  int
+}
+
 // UpsertRecord creates or overwrites, which is what "add an A record for www"
 // means when there is one already, and what every provider's own UI does. It
 // returns the record's id.
 func (c *Client) UpsertRecord(zoneID, zoneName string, record Record) (string, error) {
-	existing, err := c.FindRecordID(zoneID, zoneName, record)
+	result, err := c.Upsert(zoneID, zoneName, record)
+
+	return result.ID, err
+}
+
+// Upsert writes one record and leaves exactly one record behind.
+//
+// The zone is asked first, and every record the new one replaces is collected:
+// the first is updated in place, keeping its id, and any others are deleted.
+// Adding a second A record beside the one already at the name is the failure
+// this exists to stop — the name then answers with both, so a browser reaches
+// the old server as often as the new one and the panel looks intermittently
+// broken.
+func (c *Client) Upsert(zoneID, zoneName string, record Record) (Upsert, error) {
+	existing, err := c.matchingRecords(zoneID, zoneName, record)
 	if err != nil {
-		return "", err
+		return Upsert{}, err
 	}
 
-	if existing != "" {
-		return existing, c.UpdateRecord(zoneID, zoneName, existing, record)
+	if len(existing) == 0 {
+		id, err := c.CreateRecord(zoneID, zoneName, record)
+
+		return Upsert{ID: id, Created: true}, err
 	}
 
-	return c.CreateRecord(zoneID, zoneName, record)
+	result := Upsert{ID: existing[0].ID, Previous: existing[0].Content}
+
+	if err := c.UpdateRecord(zoneID, zoneName, result.ID, record); err != nil {
+		return result, err
+	}
+
+	// The copies. A provider that will not delete one is not worth failing the
+	// write for — the record the panel wanted is already right — so it is
+	// counted and the caller says how many are left.
+	for _, duplicate := range existing[1:] {
+		if err := c.DeleteRecord(zoneID, zoneName, duplicate.ID); err == nil {
+			result.Removed++
+		}
+	}
+
+	return result, nil
+}
+
+// ClaimHost leaves one answer at a name.
+//
+// A, AAAA and CNAME all answer "where is this host", and a name carrying more
+// than one of them answers differently depending on who asks: an old AAAA
+// beside the panel's new A sends every visitor with IPv6 to the previous
+// server, which is the same site being up and down at once. The type being
+// written is kept; the other two go.
+//
+// Only ever at the exact name — nothing under it, nothing above it.
+func (c *Client) ClaimHost(zoneID, zoneName, name, keep string) (int, error) {
+	keep = strings.ToUpper(keep)
+
+	if keep != "A" && keep != "AAAA" && keep != "CNAME" {
+		return 0, nil
+	}
+
+	records, err := c.Records(zoneID, zoneName)
+	if err != nil {
+		return 0, err
+	}
+
+	removed := 0
+
+	for _, existing := range records {
+		kind := strings.ToUpper(existing.Type)
+
+		if kind == keep || (kind != "A" && kind != "AAAA" && kind != "CNAME") {
+			continue
+		}
+
+		if !strings.EqualFold(strings.TrimRight(existing.Name, "."), strings.TrimRight(name, ".")) {
+			continue
+		}
+
+		if err := c.DeleteRecord(zoneID, zoneName, existing.ID); err == nil {
+			removed++
+		}
+	}
+
+	return removed, nil
 }
