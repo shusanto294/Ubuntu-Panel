@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
@@ -31,7 +33,15 @@ const MCPPath = "/mcp"
 // prose it gets before it starts choosing tools, so it says what the panel is,
 // what work is asynchronous, and how to find out whether something worked.
 const mcpInstructions = `This server is Ubuntu Panel, a control panel running on one Ubuntu server. ` +
-	`Through it you can create and manage websites, databases and the applications the server needs.
+	`Through it you can do everything the panel's own pages do: websites, their files, their ` +
+	`certificates, their schedules and their SSH accounts; databases and their users; email ` +
+	`domains and mailboxes; DNS records; the applications the server needs; the panel's own ` +
+	`settings — and any command at all on the machine, as root.
+
+There is no part of this panel you have to send somebody to the browser for. If a task looks ` +
+	`like it has no tool, list the tools again and look for it under the page it belongs to; ` +
+	`failing that, run_command reaches the machine directly. "The panel can do this but I cannot" ` +
+	`is never the right answer.
 
 Use the panel's defaults. Every tool here does what the same action does in the panel's own pages, ` +
 	`with the same defaults, and an argument you leave out is filled in the way a person pressing ` +
@@ -57,6 +67,13 @@ Creating or deleting a site is asynchronous: the tool returns immediately with a
 Before creating a site, check list_site_types: it says what this machine can host right now and ` +
 	`which apps are missing for the rest. Missing apps can be installed with install_apps, which is ` +
 	`also asynchronous.
+
+Email is two steps, and asked for as one. "Set up name@example.com" means create_email_domain for ` +
+	`example.com if list_email_domains does not already have it — that publishes the MX, SPF, DKIM ` +
+	`and DMARC records and gets the certificate for its webmail — and then create_mailbox for the ` +
+	`address once the domain is active. The mailbox's password is shown once, in create_mailbox's ` +
+	`answer, along with the IMAP and SMTP settings and the webmail address: give the person all of ` +
+	`it, because the panel cannot show the password again.
 
 DNS is part of creating a site, not a separate errand. Leave manage_dns alone and the panel finds ` +
 	`the connected provider that holds the domain, publishes the records during the deployment, and ` +
@@ -134,7 +151,10 @@ const (
 	capFilesRead          = "files.read"
 	capFilesWrite         = "files.write"
 	capDatabases          = "databases"
+	capEmail              = "email"
+	capDNS                = "dns"
 	capApps               = "apps"
+	capSystem             = "system"
 	capShell              = "shell"
 )
 
@@ -156,9 +176,20 @@ var mcpCapabilities = []struct {
 	{Key: capFilesWrite, Label: "Write a site's files", Destructive: true,
 		Help: "Create and replace files inside a site."},
 	{Key: capDatabases, Label: "Databases",
-		Help: "List databases with their credentials, and create new ones."},
+		Help: "List databases with their credentials, create new ones, change their passwords, " +
+			"manage their users and drop them."},
+	{Key: capEmail, Label: "Email",
+		Help: "Set up mail domains, create and delete mailboxes with their passwords, and " +
+			"configure or test the mail server."},
+	{Key: capDNS, Label: "DNS records",
+		Help: "Connect DNS providers, and read and write the records in their zones — including " +
+			"records for domains this panel does not host."},
 	{Key: capApps, Label: "Install apps",
-		Help: "Install what the machine is missing — PHP, MariaDB, Node.js, Redis and the rest."},
+		Help: "Install what the machine is missing — PHP, MariaDB, Node.js, Redis and the rest — " +
+			"and uninstall what it no longer needs."},
+	{Key: capSystem, Label: "Server settings",
+		Help: "Change the server's defaults, the panel's own hostname and its account, and " +
+			"install panel updates."},
 	{Key: capShell, Label: "Run any command", Destructive: true,
 		Help: "Run shell commands as the panel's own user, which has passwordless sudo. " +
 			"This is everything the machine can do, so it is also every way it can be broken."},
@@ -312,8 +343,21 @@ func bearerToken(r *http.Request) string {
 func (a *App) buildMCP() *mcp.Server {
 	server := mcp.NewServer(config.Name, config.Version, mcpInstructions, a.Log)
 
+	// Every page of the panel, in the order the panel's own menu has them.
+	// Anything a person can do in the browser is in this list: a capability the
+	// panel grows and does not appear here is a client that has to be told to
+	// go and use the web interface instead, which is the one answer this server
+	// exists to avoid.
 	server.Add(
+		// This machine
 		a.mcpServerStatus(),
+		a.mcpServerMetrics(),
+		a.mcpPanelSettings(),
+		a.mcpSetPanelDomain(),
+		a.mcpPanelUpdate(),
+		a.mcpPanelAccount(),
+
+		// Sites
 		a.mcpListSiteTypes(),
 		a.mcpListSites(),
 		a.mcpGetSite(),
@@ -323,17 +367,69 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpPullSite(),
 		a.mcpRestartSite(),
 		a.mcpSiteLogs(),
+		a.mcpSetWebDirectory(),
+		a.mcpSitePHPSettings(),
+		a.mcpRequestCertificate(),
+		a.mcpSiteCache(),
+		a.mcpSiteCron(),
+		a.mcpSiteAccess(),
+		a.mcpWordPressLogin(),
+
+		// A site's files
 		a.mcpListFiles(),
 		a.mcpReadFile(),
 		a.mcpWriteFile(),
+		a.mcpManageFiles(),
+
+		// Logs
 		a.mcpGetTask(),
 		a.mcpListTasks(),
+
+		// Databases
 		a.mcpListDatabases(),
+		a.mcpGetDatabase(),
 		a.mcpCreateDatabase(),
+		a.mcpDeleteDatabase(),
+		a.mcpSetDatabasePassword(),
+		a.mcpRepairDatabase(),
+		a.mcpDatabaseUsers(),
+		a.mcpMongoConnection(),
+		a.mcpServiceCredentials(),
+
+		// Email
+		a.mcpListEmailDomains(),
+		a.mcpGetEmailDomain(),
+		a.mcpCreateEmailDomain(),
+		a.mcpDeleteEmailDomain(),
+		a.mcpRetryEmailDomain(),
+		a.mcpSyncEmailDNS(),
+		a.mcpCreateMailbox(),
+		a.mcpSetMailboxPassword(),
+		a.mcpRepairMailbox(),
+		a.mcpDeleteMailbox(),
+		a.mcpConfigureMailServer(),
+		a.mcpTestMailDelivery(),
+
+		// DNS
 		a.mcpListDNSAccounts(),
+		a.mcpListDNSProviders(),
+		a.mcpConnectDNSAccount(),
+		a.mcpUpdateDNSAccount(),
+		a.mcpVerifyDNSAccount(),
+		a.mcpDeleteDNSAccount(),
+		a.mcpListDNSZones(),
+		a.mcpListDNSRecords(),
+		a.mcpSetDNSRecord(),
+		a.mcpDeleteDNSRecord(),
 		a.mcpSyncDNS(),
+
+		// Apps
 		a.mcpListApps(),
 		a.mcpInstallApps(),
+		a.mcpUninstallApp(),
+		a.mcpDetectApps(),
+
+		// The machine itself
 		a.mcpRunCommand(),
 	)
 
@@ -1492,13 +1588,28 @@ func containsWord(text string, words ...string) bool {
 	return false
 }
 
+// canEscalate reports whether this process can become root without being asked
+// for a password.
+//
+// Asked once and remembered: it is a property of the machine's sudoers file,
+// not of the command being run, and the panel's own installer is what puts the
+// rule there. A machine where the answer is no — a developer's laptop running
+// the test suite, a panel installed by hand into an account without the rule —
+// runs the command as the panel's user instead, and the answer says so, which
+// is a better outcome than every command failing on a password prompt nobody
+// can see.
+var canEscalate = sync.OnceValue(func() bool {
+	return os.Geteuid() == 0 || proc.Ok("sudo -n true")
+})
+
 func (a *App) mcpRunCommand() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "run_command",
 		Title:      "Run a command",
 		Capability: capShell,
-		Description: "Run a shell command on the server. It runs as the panel's own user, which " +
-			"has passwordless sudo, so anything the machine can do is reachable from here.\n\n" +
+		Description: "Run a shell command on the server, as root. This is a root shell on the " +
+			"machine: apt, systemctl, editing anything under /etc, reading any log — whatever an " +
+			"administrator would do over SSH, without a password prompt.\n\n" +
 			"This is for what the other tools do not cover: inspecting a service, tailing a log, " +
 			"running composer, npm or wp inside a site, restarting a daemon. It is not the way to " +
 			"do what the panel does — creating sites, vhosts, systemd units, databases or " +
@@ -1511,6 +1622,14 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 			"directory": {Description: "Where to run it. Defaults to /."},
 			"timeout": {Type: "integer", Default: 120,
 				Description: "Seconds to allow before it is killed. Up to 1800."},
+			"root": {Type: "boolean", Default: true,
+				Description: "Run as root. Off runs as the panel's own user, which still has " +
+					"passwordless sudo."},
+			"force": {Type: "boolean", Default: false,
+				Description: "Run a command that does by hand what one of the panel's own tools " +
+					"owns. The panel names the tool instead unless this is set; setting it means " +
+					"the person has been told the panel's records and the machine may disagree " +
+					"afterwards."},
 			"confirm": {Type: "boolean", Default: false,
 				Description: "The person has been told what this command does and has said yes."},
 		},
@@ -1521,9 +1640,10 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 				return nil, errors.New("`command` is the command line to run")
 			}
 
-			if instead := panelOwnedWork(command); instead != "" {
+			if instead := panelOwnedWork(command); instead != "" && !args.Bool("force", false) {
 				return nil, errors.New("that is " + instead + ". If you have a reason this is " +
-					"genuinely different, say what it is to the person first")
+					"genuinely different, say what it is to the person, and call again with " +
+					"force: true once they agree")
 			}
 
 			if !readOnlyCommand(command) {
@@ -1545,6 +1665,21 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 
 			if directory := args.String("directory"); directory != "" {
 				full = "cd " + proc.Quote(directory) + " && " + command
+			}
+
+			// Root by default, because that is what somebody asking for a
+			// command on their server means: the panel's own user has
+			// passwordless sudo either way, so `sudo` in front of the whole line
+			// is the difference between `apt install …` working and it failing
+			// on a permission the caller then has to guess at.
+			//
+			// -n rather than a prompt: there is no terminal to type a password
+			// into, and a sudo that waits for one is a command that sits there
+			// until the timeout kills it.
+			asRoot := args.Bool("root", true) && canEscalate()
+
+			if asRoot && os.Geteuid() != 0 {
+				full = "sudo -n bash -c " + proc.Quote(full)
 			}
 
 			// Recorded like everything else the panel does, so the Logs page
@@ -1579,11 +1714,17 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 
 			// A command that failed is not a tool that failed: the exit status
 			// and the output are the answer, and the assistant reads both.
+			ran := "the panel's user, with sudo available"
+			if asRoot {
+				ran = "root"
+			}
+
 			return map[string]any{
 				"command":   command,
 				"exit_code": result.Code,
 				"timed_out": result.TimedOut,
 				"output":    tail(result.Output, 20000),
+				"ran_as":    ran,
 				"task_id":   taskID,
 			}, nil
 		},

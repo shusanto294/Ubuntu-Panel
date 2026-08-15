@@ -616,3 +616,108 @@ func TestASiteFromTheToolMatchesOneFromTheForm(t *testing.T) {
 		}
 	}
 }
+
+// Every page of the panel is reachable through a tool.
+//
+// The list is the panel's own menu, one name per thing a person can do in the
+// browser. It is written out rather than derived so that a page added with no
+// tool behind it fails here: the whole point of this server is that an
+// assistant is never the one who has to say "open the panel and do it yourself".
+func TestEveryPanelCapabilityHasATool(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	_, list := rpc(t, p, token, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+
+	tools, _ := list["result"].(map[string]any)["tools"].([]any)
+
+	found := map[string]bool{}
+
+	for _, entry := range tools {
+		if tool, ok := entry.(map[string]any); ok {
+			found[tool["name"].(string)] = true
+		}
+	}
+
+	for _, name := range []string{
+		// This machine
+		"server_status", "server_metrics", "panel_settings", "set_panel_domain",
+		"panel_update", "panel_account",
+
+		// Sites, and the tabs on one
+		"list_site_types", "list_sites", "get_site", "create_site", "delete_site",
+		"deploy_site", "pull_site", "restart_site", "site_logs", "set_web_directory",
+		"site_php_settings", "request_certificate", "site_cache", "site_cron",
+		"site_access", "wordpress_login_link",
+
+		// Files
+		"list_files", "read_file", "write_file", "manage_files",
+
+		// Logs
+		"get_task", "list_tasks",
+
+		// Databases
+		"list_databases", "get_database", "create_database", "delete_database",
+		"set_database_password", "repair_database", "manage_database_users",
+		"mongo_connection", "service_credentials",
+
+		// Email
+		"list_email_domains", "get_email_domain", "create_email_domain",
+		"delete_email_domain", "retry_email_domain", "sync_email_dns", "create_mailbox",
+		"set_mailbox_password", "repair_mailbox", "delete_mailbox",
+		"configure_mail_server", "test_mail_delivery",
+
+		// DNS
+		"list_dns_accounts", "list_dns_providers", "connect_dns_account",
+		"update_dns_account", "verify_dns_account", "delete_dns_account",
+		"list_dns_zones", "list_dns_records", "set_dns_record", "delete_dns_record",
+		"sync_dns",
+
+		// Apps, and the machine itself
+		"list_apps", "install_apps", "uninstall_app", "detect_apps", "run_command",
+	} {
+		if !found[name] {
+			t.Errorf("the tool list is missing %s", name)
+		}
+	}
+}
+
+// An address at a domain the server does not handle yet is answered with the
+// tool that fixes it, not with a shrug.
+func TestCreatingAMailboxNamesTheDomainToolWhenTheDomainIsMissing(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	text, failed := toolText(t, p, token, "create_mailbox",
+		`{"address":"shusanto@example.com","password":"a-long-enough-password"}`)
+
+	if !failed {
+		t.Fatalf("a mailbox on an unknown domain was accepted: %s", text)
+	}
+
+	if !strings.Contains(text, "create_email_domain") {
+		t.Errorf("the refusal does not name the tool that fixes it: %s", text)
+	}
+}
+
+// A mail domain on a machine with no mail server says which app is missing.
+func TestCreatingAMailDomainSaysWhatIsMissing(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	token := issueToken(t, p)
+
+	text, failed := toolText(t, p, token, "create_email_domain", `{"domain":"example.com"}`)
+
+	if !failed {
+		t.Fatalf("a mail domain was accepted with no mail server installed: %s", text)
+	}
+
+	if !strings.Contains(text, "install_apps") && !strings.Contains(text, "configure_mail_server") {
+		t.Errorf("the refusal does not say how to get a mail server: %s", text)
+	}
+}

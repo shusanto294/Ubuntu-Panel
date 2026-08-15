@@ -243,6 +243,24 @@ func (s *Store) CreateEmailAccount(ctx context.Context, account *EmailAccount) (
 	return result.LastInsertId()
 }
 
+// SetEmailAccountPassword replaces the stored password.
+//
+// Encrypted like the one CreateEmailAccount stores, and stored rather than
+// applied: the worker that sets a mailbox up reads this column and hashes it
+// into Dovecot, so changing a password is this write followed by the same
+// provisioning job the mailbox was created with.
+func (s *Store) SetEmailAccountPassword(id int64, password string) error {
+	encrypted, err := s.encrypt(password)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE email_accounts SET password = ?, updated_at = datetime('now')
+	                    WHERE id = ?`, encrypted, id)
+
+	return err
+}
+
 // SetEmailAccountStatus records where provisioning got to.
 func (s *Store) SetEmailAccountStatus(id int64, status, lastError string) {
 	s.db.Exec(`UPDATE email_accounts SET status = ?, last_error = ?, updated_at = datetime('now')
