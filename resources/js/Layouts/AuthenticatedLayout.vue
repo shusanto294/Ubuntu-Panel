@@ -1,11 +1,10 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import SidebarLink from '@/Components/SidebarLink.vue';
 import FlashMessages from '@/Components/FlashMessages.vue';
-import { route } from '@/route';
-import { Link, usePage } from '@inertiajs/vue3';
+import { Link } from '@inertiajs/vue3';
 
 // Served from the panel's own root rather than bundled: the same file is the
 // browser tab's icon and the login page's mark, and binding it keeps the build
@@ -61,16 +60,10 @@ const sections = [
             { name: 'Dashboard', route: 'dashboard', pattern: 'dashboard', icon: icons.dashboard },
             { name: 'Sites', route: 'sites.index', pattern: 'sites.*', icon: icons.sites },
             { name: 'Databases', route: 'databases.index', pattern: 'databases.*', icon: icons.databases },
-            {
-                name: 'Email',
-                route: 'email.domains.index',
-                pattern: 'email.*',
-                icon: icons.email,
-                children: [
-                    { name: 'Domains', route: 'email.domains.index' },
-                    { name: 'Mailboxes', route: 'email.mailboxes.index' },
-                ],
-            },
+            // One row, pointing at the first of the two mail lists. The tabs
+            // across the top of both are where you move between them; a menu
+            // that repeats them is the same two links twice.
+            { name: 'Email', route: 'email.domains.index', pattern: 'email.*', icon: icons.email },
             { name: 'Terminal', route: 'terminal', pattern: 'terminal', icon: icons.terminal },
         ],
     },
@@ -86,22 +79,6 @@ const sections = [
         ],
     },
 ];
-
-// Which child row is the one you are on.
-//
-// Not route().current(): two names can share a URI — /email/domains is both the
-// list and the endpoint the create form posts to — and the helper picks between
-// them by whichever the manifest happened to serialise first. The path is not
-// ambiguous, so it is what the child rows are matched against, and it comes
-// from the page rather than from window.location so it updates on navigation.
-const page = usePage();
-const path = computed(() => page.url.split('?')[0]);
-
-const childActive = (child) => {
-    const href = route(child.route);
-
-    return path.value === href || path.value.startsWith(href + '/');
-};
 </script>
 
 <template>
@@ -155,40 +132,15 @@ const childActive = (child) => {
                     <div v-else class="mx-4 mb-2 border-t border-slate-200" />
 
                     <div class="space-y-1">
-                        <div v-for="link in section.links" :key="link.route">
-                            <SidebarLink
-                                :href="route(link.route)"
-                                :icon="link.icon"
-                                :label="link.name"
-                                :active="route().current(link.pattern)"
-                                :collapsed="collapsed"
-                            />
-
-                            <!--
-                                Child rows, shown while you are in that section
-                                and never on the icon rail: a collapsed menu has
-                                no room for a second level, and two unlabelled
-                                dots under an icon say nothing.
-                            -->
-                            <div
-                                v-if="link.children && !collapsed && route().current(link.pattern)"
-                                class="mt-1 space-y-1 ps-11"
-                            >
-                                <Link
-                                    v-for="child in link.children"
-                                    :key="child.route"
-                                    :href="route(child.route)"
-                                    class="block rounded-lg px-3 py-1.5 text-sm transition"
-                                    :class="
-                                        childActive(child)
-                                            ? 'bg-brand-50 font-medium text-brand-700'
-                                            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                                    "
-                                >
-                                    {{ child.name }}
-                                </Link>
-                            </div>
-                        </div>
+                        <SidebarLink
+                            v-for="link in section.links"
+                            :key="link.route"
+                            :href="route(link.route)"
+                            :icon="link.icon"
+                            :label="link.name"
+                            :active="route().current(link.pattern)"
+                            :collapsed="collapsed"
+                        />
                     </div>
                 </div>
             </nav>
