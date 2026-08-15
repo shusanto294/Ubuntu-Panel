@@ -330,3 +330,67 @@ func mustParse(t *testing.T, raw string) *url.URL {
 
 	return parsed
 }
+
+// A mailbox has a page of its own, and the pages that list mailboxes link to
+// it.
+//
+// Clicking a mailbox used to open the domain it belongs to — a list of every
+// address on that domain, none of which could be changed. The three names below
+// are what the Email pages call route() with for the new page and its form; an
+// unknown name makes the helper throw, which takes the whole page down rather
+// than one link.
+func TestTheMailboxPageIsRouted(t *testing.T) {
+	p := start(t)
+
+	response := p.do(http.MethodGet, "/setup", "", p.inertia())
+	defer response.Body.Close()
+
+	var page struct {
+		Props struct {
+			Ziggy struct {
+				Routes map[string]struct {
+					URI     string   `json:"uri"`
+					Methods []string `json:"methods"`
+				} `json:"routes"`
+			} `json:"ziggy"`
+		} `json:"props"`
+	}
+
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatalf("decoding the page: %v", err)
+	}
+
+	show, ok := page.Props.Ziggy.Routes["email.accounts.show"]
+	if !ok {
+		t.Fatal("the route manifest has no page for a single mailbox")
+	}
+
+	if show.URI != "email/mailboxes/{account}" {
+		t.Errorf("the mailbox page is at %q", show.URI)
+	}
+
+	if _, ok := page.Props.Ziggy.Routes["email.accounts.update"]; !ok {
+		t.Error("the route manifest has no way to save a mailbox")
+	}
+
+	// The form for a new mailbox lives at the same prefix, and the static path
+	// has to keep winning over the one with the id in it.
+	if create, ok := page.Props.Ziggy.Routes["email.accounts.new"]; !ok ||
+		create.URI != "email/mailboxes/create" {
+		t.Errorf("the create form moved: %v", create)
+	}
+}
+
+// And a mailbox that does not exist is a 404 rather than a panic or a blank
+// page — the id in that URL comes from whatever somebody typed.
+func TestAMissingMailboxIsNotFound(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	response := p.do(http.MethodGet, "/email/mailboxes/4321", "", nil)
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET a missing mailbox = %d, want 404", response.StatusCode)
+	}
+}

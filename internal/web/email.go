@@ -345,6 +345,115 @@ func (a *App) emailStoreAccount(w http.ResponseWriter, r *http.Request) {
 	inertia.Redirect(w, r, "/email/domains/"+itoa(domain.ID))
 }
 
+// emailShowAccount is one mailbox's own page.
+//
+// It exists because "Manage" beside a mailbox used to open the domain it
+// belongs to — a page listing every address on it, none of which could be
+// changed. What somebody clicking a mailbox wants is that mailbox: who it
+// belongs to, how much it may hold, and a new password for the person who has
+// forgotten theirs.
+func (a *App) emailShowAccount(w http.ResponseWriter, r *http.Request) {
+	account, err := a.Store.FindEmailAccount(r.Context(), routeID(r, "account"))
+	if err != nil || account.Status == "deleting" {
+		a.notFoundError(w, r, "No such mailbox.")
+		return
+	}
+
+	domain, err := a.Store.FindEmailDomain(r.Context(), account.EmailDomainID)
+	if err != nil {
+		a.notFoundError(w, r, "That mailbox's domain no longer exists.")
+		return
+	}
+
+	mailbox := store.EmailAccountSummary(account, domain)
+
+	// The password the panel holds, shown on demand rather than in the payload
+	// of every page: this is the one place it can be read, and it is why the
+	// page exists — somebody has forgotten theirs and the panel can either
+	// remind them or set a new one.
+	mailbox["password"] = account.Password
+
+	a.Render.Render(w, r, "Email/Mailbox", inertia.Props{
+		"mailbox":            mailbox,
+		"domain":             a.Store.EmailDomainSummary(r.Context(), domain, false),
+		"roundcubeInstalled": a.Store.ServiceInstalled("roundcube"),
+		"activeTask":         a.activeTask(r, "mail"),
+	})
+}
+
+// emailUpdateAccount saves what that page can change.
+//
+// One endpoint for the three fields, because they are one form: a change to any
+// of them is written to the row and then applied by the same provisioning job
+// that created the mailbox — the quota into the mail server's table, the
+// password hashed into Dovecot, the name into the webmail's identity.
+func (a *App) emailUpdateAccount(w http.ResponseWriter, r *http.Request) {
+	sess := session.FromContext(r.Context())
+
+	account, err := a.Store.FindEmailAccount(r.Context(), routeID(r, "account"))
+	if err != nil || account.Status == "deleting" {
+		a.notFoundError(w, r, "No such mailbox.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	name := strings.TrimSpace(input["name"])
+	password := input["password"]
+	quota := intInput(input, "quota_mb", int64(account.QuotaMB))
+
+	if len(name) > 120 {
+		sess.Error("name", "Keep the name under 120 characters.")
+	}
+
+	// Blank means "leave it alone", so the form can be saved without retyping a
+	// password nobody wanted to change.
+	if password != "" && len(password) < 10 {
+		sess.Error("password", "Use at least 10 characters.")
+	}
+
+	if quota < 0 || quota > 1024000 {
+		sess.Error("quota_mb", "Enter a quota between 0 (unlimited) and 1024000 MB.")
+	}
+
+	if sess.HasErrors() {
+		inertia.Back(w, r, "/email/mailboxes/"+itoa(account.ID))
+		return
+	}
+
+	if err := a.Store.SetEmailAccountDetails(account.ID, name, int(quota)); err != nil {
+		a.Log.Error("could not update the mailbox", "mailbox", account.ID, "error", err)
+		a.failBack(w, r, "Could not save this mailbox.")
+
+		return
+	}
+
+	changed := "Saved."
+
+	if password != "" {
+		if err := a.Store.SetEmailAccountPassword(account.ID, password); err != nil {
+			a.Log.Error("could not change the mailbox password", "mailbox", account.ID, "error", err)
+			a.failBack(w, r, "Could not store the new password.")
+
+			return
+		}
+
+		changed = "Saved. The new password works as soon as the mailbox finishes setting itself " +
+			"up again — give it to whoever uses the address."
+	}
+
+	a.Store.SetEmailAccountStatus(account.ID, "pending", "")
+	a.Queue.PushID(queue.MailAccountCreate, "account", account.ID)
+
+	sess.Flash("success", changed)
+
+	inertia.Back(w, r, "/email/mailboxes/"+itoa(account.ID))
+}
+
 // emailRepairAccount sets the mailbox up again — re-hashes the password into
 // Dovecot's table, remakes its directory, and asks Dovecot whether it can log
 // in.

@@ -415,6 +415,8 @@ func (a *App) mcpCreateMailbox() *mcp.Tool {
 			"so pass it on to the person.",
 		Properties: map[string]mcp.Property{
 			"address": {Description: "The whole address, like sales@example.com."},
+			"name": {Description: "Who the mailbox belongs to — \"Sales\", a person's name. The " +
+				"webmail signs sent mail with it."},
 			"password": {Description: "At least ten characters. Generated when left out, and " +
 				"returned in the answer."},
 			"quota_mb": {Type: "integer", Default: 2048,
@@ -499,6 +501,7 @@ func (a *App) mcpCreateMailbox() *mcp.Tool {
 				EmailDomainID: domain.ID,
 				UserID:        user.ID,
 				LocalPart:     local,
+				Name:          truncate(args.String("name"), 120),
 				Password:      password,
 				QuotaMB:       quota,
 			})
@@ -515,6 +518,7 @@ func (a *App) mcpCreateMailbox() *mcp.Tool {
 			return map[string]any{
 				"mailbox_id":         id,
 				"address":            local + "@" + domain.Domain,
+				"name":               nullable(args.String("name")),
 				"password":           password,
 				"password_generated": generated,
 				"quota_mb":           quota,
@@ -714,6 +718,120 @@ func (a *App) mcpTestMailDelivery() *mcp.Tool {
 				"queued": true,
 				"next":   "The test is running on the queue; get_task has the whole SMTP conversation.",
 			}, nil
+		},
+	}
+}
+
+func (a *App) mcpGetMailbox() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "get_mailbox",
+		Capability: capEmail,
+		Title:      "Get a mailbox",
+		ReadOnly:   true,
+		Description: "One mailbox in full: who it belongs to, its storage limit, its status, its " +
+			"webmail address, the IMAP and SMTP settings for a mail client — and the password " +
+			"the panel holds for it.\n\n" +
+			"That last one is why this tool exists. Somebody who has forgotten their email " +
+			"password does not need a new one invented: the panel kept theirs, and reading it " +
+			"back is the whole errand.",
+		Properties: map[string]mcp.Property{
+			"mailbox": {Description: "The mailbox's id, or its whole address."},
+		},
+		Required: []string{"mailbox"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			account, domain, err := a.mcpMailbox(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			summary := store.EmailAccountSummary(account, domain)
+			summary["password"] = account.Password
+			summary["client_settings"] = map[string]any{
+				"username": account.Address(domain.Domain),
+				"imap":     map[string]any{"host": domain.WebmailHost(), "port": 993, "security": "SSL/TLS"},
+				"smtp":     map[string]any{"host": domain.WebmailHost(), "port": 587, "security": "STARTTLS"},
+				"smtp_ssl": map[string]any{"host": domain.WebmailHost(), "port": 465, "security": "SSL/TLS"},
+			}
+
+			return summary, nil
+		},
+	}
+}
+
+func (a *App) mcpUpdateMailbox() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "update_mailbox",
+		Capability: capEmail,
+		Title:      "Change a mailbox",
+		Description: "Change who a mailbox belongs to, how much it may hold, or its password — " +
+			"the same three fields the mailbox's own page has. Anything left out is left alone.\n\n" +
+			"The mailbox is set up again with what it is given, which takes a few seconds and " +
+			"does not interrupt delivery. A new password is returned in the answer and is not " +
+			"shown again; get_mailbox reads back the one already stored, which is usually the " +
+			"better answer for somebody who has forgotten theirs.",
+		Properties: map[string]mcp.Property{
+			"mailbox": {Description: "The mailbox's id, or its whole address."},
+			"name":    {Description: "Who the mailbox belongs to. An empty string clears it."},
+			"quota_mb": {Type: "integer",
+				Description: "The storage limit in MB. 0 is unlimited."},
+			"password": {Description: "A new password, at least ten characters. Left out, the " +
+				"current one stays."},
+		},
+		Required: []string{"mailbox"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			account, domain, err := a.mcpMailbox(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			name := account.Name
+			if args.Has("name") {
+				name = truncate(args.String("name"), 120)
+			}
+
+			quota := account.QuotaMB
+
+			if args.Has("quota_mb") {
+				quota = int(args.Int("quota_mb"))
+
+				if quota < 0 || quota > 1024000 {
+					return nil, errors.New("a quota is between 0 (unlimited) and 1024000 MB")
+				}
+			}
+
+			if err := a.Store.SetEmailAccountDetails(account.ID, name, quota); err != nil {
+				return nil, errors.New("the panel could not store the change")
+			}
+
+			answer := map[string]any{
+				"mailbox_id": account.ID,
+				"address":    account.Address(domain.Domain),
+				"name":       nullable(name),
+				"quota_mb":   quota,
+				"queued":     true,
+			}
+
+			if args.Has("password") {
+				password := args.String("password")
+
+				if len(password) < 10 {
+					return nil, errors.New("a mailbox password is at least ten characters")
+				}
+
+				if err := a.Store.SetEmailAccountPassword(account.ID, password); err != nil {
+					return nil, errors.New("the panel could not store the new password")
+				}
+
+				answer["password"] = password
+				answer["next"] = "The new password works once the mailbox has finished setting " +
+					"itself up. Give it to whoever uses the address — every client signed in " +
+					"with the old one stops fetching mail."
+			}
+
+			a.Store.SetEmailAccountStatus(account.ID, "pending", "")
+			a.Queue.PushID(queue.MailAccountCreate, "account", account.ID)
+
+			return answer, nil
 		},
 	}
 }

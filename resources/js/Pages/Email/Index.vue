@@ -239,7 +239,16 @@ const mailboxes = computed(() =>
                             >
                                 <tr>
                                     <td class="break-all px-5 py-3 font-medium text-slate-800">
-                                        {{ mailbox.address }}
+                                        <Link
+                                            :href="route('email.accounts.show', mailbox.id)"
+                                            class="hover:text-brand-600 hover:underline"
+                                            >{{ mailbox.address }}</Link
+                                        >
+                                        <span
+                                            v-if="mailbox.name"
+                                            class="block text-xs font-normal text-slate-500"
+                                            >{{ mailbox.name }}</span
+                                        >
                                     </td>
                                     <td class="px-5 py-3">
                                         <Link
@@ -264,7 +273,7 @@ const mailboxes = computed(() =>
                                             >Webmail</a
                                         >
                                         <Link
-                                            :href="route('email.domains.show', mailbox.domain_id)"
+                                            :href="route('email.accounts.show', mailbox.id)"
                                             class="text-brand-600 hover:underline"
                                             >Manage</Link
                                         >

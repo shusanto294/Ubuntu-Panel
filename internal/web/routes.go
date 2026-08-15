@@ -137,6 +137,9 @@ func (a *App) routes() *router {
 		a.emailCreateAccount)
 	rt.post("/email/domains/{domain}/accounts", "email.accounts.store", authenticated,
 		a.emailStoreAccount)
+	rt.get("/email/mailboxes/{account}", "email.accounts.show", authenticated, a.emailShowAccount)
+	rt.post("/email/accounts/{account}", "email.accounts.update", authenticated,
+		a.emailUpdateAccount)
 	rt.post("/email/accounts/{account}/repair", "email.accounts.repair", authenticated,
 		a.emailRepairAccount)
 	rt.delete("/email/accounts/{account}", "email.accounts.destroy", authenticated,

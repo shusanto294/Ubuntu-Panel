@@ -142,9 +142,14 @@ const deleteDomain = async () => {
                 >
                     <div class="min-w-0">
                         <p class="text-sm font-medium text-slate-800">
-                            {{ account.address }}
+                            <Link
+                                :href="route('email.accounts.show', account.id)"
+                                class="hover:text-brand-600 hover:underline"
+                                >{{ account.address }}</Link
+                            >
                         </p>
                         <p class="text-xs text-slate-500">
+                            <span v-if="account.name">{{ account.name }} · </span>
                             {{ account.quota_label }}
                             <span v-if="account.last_error" class="text-rose-600"
                                 >· {{ account.last_error }}</span
@@ -172,6 +177,11 @@ const deleteDomain = async () => {
                         >
                             Retry
                         </button>
+                        <Link
+                            :href="route('email.accounts.show', account.id)"
+                            class="text-sm text-brand-600 hover:underline"
+                            >Manage</Link
+                        >
                         <button
                             @click="deleteAccount(account)"
                             class="text-sm text-rose-600 hover:underline"

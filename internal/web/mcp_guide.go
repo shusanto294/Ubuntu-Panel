@@ -111,8 +111,8 @@ var panelGuide = []guideArea{
 			"Postfix, Dovecot, OpenDKIM and Roundcube webmail.",
 		Tools: []string{"list_email_domains", "get_email_domain", "create_email_domain",
 			"delete_email_domain", "retry_email_domain", "sync_email_dns", "create_mailbox",
-			"set_mailbox_password", "repair_mailbox", "delete_mailbox", "configure_mail_server",
-			"test_mail_delivery"},
+			"get_mailbox", "update_mailbox", "set_mailbox_password", "repair_mailbox",
+			"delete_mailbox", "configure_mail_server", "test_mail_delivery"},
 		Recipes: []guideRecipe{
 			{
 				Task: "Set up an email address, like name@example.com",
@@ -122,6 +122,21 @@ var panelGuide = []guideArea{
 					"If the domain is not there: create_email_domain with example.com, then get_email_domain until its status is active.",
 					"create_mailbox with the whole address. The password comes back in the answer, once.",
 					"Give the person the address, the password, the webmail URL and the IMAP/SMTP settings from that answer.",
+				},
+			},
+			{
+				Task: "Somebody has forgotten their email password",
+				Steps: []string{
+					"get_mailbox with the address — the panel kept the password, so read it back rather than inventing a new one.",
+					"Only if they want it changed: update_mailbox with a new `password`, which is returned once and takes a few seconds to apply.",
+					"repair_mailbox if the password is right and Dovecot still refuses the login.",
+				},
+			},
+			{
+				Task: "Change who a mailbox belongs to, or how much it may hold",
+				Steps: []string{
+					"update_mailbox with `name`, `quota_mb`, or both. 0 is unlimited.",
+					"The mailbox is set up again with them; delivery is not interrupted.",
 				},
 			},
 			{

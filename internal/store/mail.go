@@ -28,11 +28,18 @@ type EmailAccount struct {
 	EmailDomainID int64
 	UserID        int64
 	LocalPart     string
-	Password      string // decrypted
-	QuotaMB       int
-	Status        string
-	LastError     string
-	CreatedAt     string
+
+	// Name is who the mailbox belongs to — "Sales", "Shusanto Modak" — and
+	// what a mail client shows as the sender beside the address. The panel
+	// writes it into the webmail's identity; it is not part of delivery, so a
+	// mailbox with none works exactly as well.
+	Name string
+
+	Password  string // decrypted
+	QuotaMB   int
+	Status    string
+	LastError string
+	CreatedAt string
 }
 
 const emailDomainColumns = `id, user_id, dns_account_id, domain, status, dkim_selector,
@@ -170,22 +177,23 @@ func (s *Store) DeleteEmailDomain(id int64) {
 
 // --------------------------------------------------------------- mailboxes
 
-const emailAccountColumns = `id, email_domain_id, user_id, local_part, password,
+const emailAccountColumns = `id, email_domain_id, user_id, local_part, name, password,
 	quota_mb, status, last_error, created_at`
 
 func (s *Store) scanEmailAccount(row siteScanner) (*EmailAccount, error) {
 	account := &EmailAccount{}
 
 	var userID nullInt
-	var password, lastError text
+	var name, password, lastError text
 
 	err := row.Scan(&account.ID, &account.EmailDomainID, &userID, &account.LocalPart,
-		&password, &account.QuotaMB, &account.Status, &lastError, &account.CreatedAt)
+		&name, &password, &account.QuotaMB, &account.Status, &lastError, &account.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
 
 	account.UserID = userID.Int64
+	account.Name = name.String()
 	account.Password = s.decrypt(password.String())
 	account.LastError = lastError.String()
 
@@ -232,15 +240,31 @@ func (s *Store) CreateEmailAccount(ctx context.Context, account *EmailAccount) (
 	}
 
 	result, err := s.db.ExecContext(ctxOrBackground(ctx),
-		`INSERT INTO email_accounts (email_domain_id, user_id, local_part, password, quota_mb, status)
-		 VALUES (?, ?, ?, ?, ?, 'pending')`,
+		`INSERT INTO email_accounts (email_domain_id, user_id, local_part, name, password,
+		                             quota_mb, status)
+		 VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
 		account.EmailDomainID, nullID(account.UserID), strings.ToLower(account.LocalPart),
-		password, account.QuotaMB)
+		nullText(account.Name), password, account.QuotaMB)
 	if err != nil {
 		return 0, err
 	}
 
 	return result.LastInsertId()
+}
+
+// SetEmailAccountDetails writes what the mailbox's own page can change, short
+// of its password: who it belongs to, and how much it may hold.
+//
+// Stored rather than applied. The quota lives in the mail server's table and
+// the name in the webmail's identity, and both are written by the same
+// provisioning job that created the mailbox — so a change here is this write
+// followed by that job, which is also what makes it idempotent.
+func (s *Store) SetEmailAccountDetails(id int64, name string, quotaMB int) error {
+	_, err := s.db.Exec(`UPDATE email_accounts SET name = ?, quota_mb = ?,
+	                     updated_at = datetime('now') WHERE id = ?`,
+		nullText(name), quotaMB, id)
+
+	return err
 }
 
 // SetEmailAccountPassword replaces the stored password.
@@ -304,6 +328,37 @@ func (domain *EmailDomain) RecordIDs() map[string]string {
 // not required to be.
 func (domain *EmailDomain) WebmailHost() string { return "mail." + domain.Domain }
 
+// EmailAccountSummary is one mailbox, in the shape every page that shows one
+// reads: the list on the Email page, the domain's own page, and the mailbox's.
+//
+// One function because those three used to be three copies, and the mailbox's
+// page is the one that shows fields the others do not — a copy per page is how
+// a quota reads as "2048 MB" in one place and "Unlimited" in another.
+func EmailAccountSummary(account *EmailAccount, domain *EmailDomain) map[string]any {
+	address := account.Address(domain.Domain)
+	webmailHost := domain.WebmailHost()
+
+	quotaLabel := "Unlimited"
+	if account.QuotaMB > 0 {
+		quotaLabel = fmt.Sprintf("%d MB", account.QuotaMB)
+	}
+
+	return map[string]any{
+		"id":          account.ID,
+		"domain_id":   domain.ID,
+		"domain":      domain.Domain,
+		"address":     address,
+		"local_part":  account.LocalPart,
+		"name":        account.Name,
+		"quota_mb":    account.QuotaMB,
+		"quota_label": quotaLabel,
+		"status":      account.Status,
+		"last_error":  account.LastError,
+		"created_at":  account.CreatedAt,
+		"webmail_url": "https://" + webmailHost + "/?_user=" + address,
+	}
+}
+
 // Summary is the shape the Email pages read.
 func (s *Store) EmailDomainSummary(ctx context.Context, domain *EmailDomain, withAccounts bool) map[string]any {
 	webmailHost := domain.WebmailHost()
@@ -315,23 +370,7 @@ func (s *Store) EmailDomainSummary(ctx context.Context, domain *EmailDomain, wit
 		mailboxes, err := s.EmailAccounts(ctx, domain.ID)
 		if err == nil {
 			for _, account := range mailboxes {
-				address := account.Address(domain.Domain)
-
-				quotaLabel := "Unlimited"
-				if account.QuotaMB > 0 {
-					quotaLabel = fmt.Sprintf("%d MB", account.QuotaMB)
-				}
-
-				accounts = append(accounts, map[string]any{
-					"id":          account.ID,
-					"address":     address,
-					"local_part":  account.LocalPart,
-					"quota_mb":    account.QuotaMB,
-					"quota_label": quotaLabel,
-					"status":      account.Status,
-					"last_error":  account.LastError,
-					"webmail_url": "https://" + webmailHost + "/?_user=" + address,
-				})
+				accounts = append(accounts, EmailAccountSummary(account, domain))
 			}
 		}
 	}

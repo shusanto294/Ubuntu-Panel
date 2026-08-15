@@ -175,6 +175,7 @@ var schema = []string{
 		email_domain_id INTEGER NOT NULL,
 		user_id         INTEGER,
 		local_part      TEXT NOT NULL,
+		name            TEXT,
 		password        TEXT NOT NULL,
 		quota_mb        INTEGER NOT NULL DEFAULT 2048,
 		status          TEXT NOT NULL DEFAULT 'pending',
@@ -258,6 +259,7 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN cache_mode TEXT`,
 	`ALTER TABLE api_tokens ADD COLUMN server_name TEXT`,
 	`ALTER TABLE sites ADD COLUMN tls_mode TEXT`,
+	`ALTER TABLE email_accounts ADD COLUMN name TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

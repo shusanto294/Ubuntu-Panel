@@ -182,6 +182,21 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 
 	list.Add("Check the mail store", mailStoreCommand)
 
+	// Who the mailbox belongs to, as the webmail will show it. Optional in
+	// every sense: the identity row only exists once somebody has signed in, a
+	// machine with no Roundcube has no table at all, and neither is a reason to
+	// fail a mailbox that receives mail perfectly well.
+	if account.Name != "" && s.Store.ServiceInstalled("roundcube") {
+		list.AddFn("Name the mailbox in webmail", func(runner *tasks.Runner) (string, error) {
+			if err := s.nameWebmailIdentity(address, account.Name); err != nil {
+				return "", err
+			}
+
+			return fmt.Sprintf("Mail from %s is signed %q where the webmail has an identity "+
+				"for it; a desktop client carries its own.", address, account.Name), nil
+		}).Optional()
+	}
+
 	list.Add("Create the mail directory",
 		fmt.Sprintf("sudo mkdir -p '%[1]s/%[2]s/%[3]s' && sudo chown -R vmail:vmail '%[1]s/%[2]s'",
 			vmailRoot, domain.Domain, account.LocalPart))
@@ -259,4 +274,30 @@ func (s *Service) DeleteAccount(ctx context.Context, accountID int64, deleteMail
 	s.Store.DeleteEmailAccount(accountID)
 
 	return nil
+}
+
+// nameWebmailIdentity writes the display name into Roundcube's own identity for
+// this address.
+//
+// An UPDATE and never an INSERT. Roundcube creates the user and its first
+// identity when somebody signs in, and a row invented here — with a user_id
+// nothing owns — is one Roundcube would either ignore or trip over. So a
+// mailbox named before its first sign-in gets its name on the next
+// provisioning run, which is what repairing it does.
+//
+// Wrapped in a check that the tables are there: a machine whose webmail was
+// never installed has no such database, and a statement against it is an error
+// rather than nothing happening.
+func (s *Service) nameWebmailIdentity(address, name string) error {
+	if !proc.Ok(fmt.Sprintf("sudo mysql -N -B -e %s | grep -q .",
+		proc.Quote(fmt.Sprintf(
+			"SELECT 1 FROM information_schema.tables WHERE table_schema = %s "+
+				"AND table_name = 'identities';", sqlQuote(roundcubeDB))))) {
+		return nil
+	}
+
+	return runSQL(fmt.Sprintf(
+		"UPDATE %[1]s.identities i JOIN %[1]s.users u ON u.user_id = i.user_id "+
+			"SET i.name = %[2]s WHERE u.username = %[3]s AND i.email = %[3]s;\n",
+		roundcubeDB, sqlQuote(name), sqlQuote(address)))
 }
