@@ -1782,8 +1782,14 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 //
 // The hostname somebody set on the Settings page when there is one, with no
 // port on it: the hostname's own vhost serves the panel on 80 and 443, so the
-// address is the name and nothing else. That is the one to hand a client, and
-// the one with a certificate on it.
+// address is the name and nothing else.
+//
+// Always https for a hostname, because 443 always answers — with Let's Encrypt
+// once certbot has run, and with the self-signed pair until then. Whether that
+// certificate is trusted is a different question from what the address is, and
+// it is the one the Settings page answers: printing http until the real
+// certificate landed gave people an address to bookmark and get used to that was
+// not the one the panel would settle on.
 //
 // Without a hostname it is the public IP and the panel's own port, because that
 // is the only place the panel answers on a bare address — 80 and 443 there
@@ -1797,14 +1803,7 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 // sat there until it timed out.
 func (a *App) panelURL() string {
 	if domain := a.Store.Setting("panel_domain", ""); domain != "" {
-		if a.Store.SettingBool("panel_domain_tls", false) {
-			return "https://" + domain
-		}
-
-		// Plain, because the certificate on 443 is the self-signed one until
-		// certbot has run, and a client told to speak HTTPS to it refuses
-		// rather than warns.
-		return "http://" + domain
+		return "https://" + domain
 	}
 
 	// Asked for only when there is no hostname: it is a lookup, and a panel

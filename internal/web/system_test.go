@@ -200,7 +200,10 @@ func TestThePanelAddressNamesItsPort(t *testing.T) {
 
 	db.SetSetting("panel_domain", "panel.example.com")
 
-	if url := app.panelURL(); url != "http://panel.example.com" {
+	// https before the certificate is a real one as well: 443 answers either
+	// way, and the address should not change under somebody when certbot
+	// finally runs.
+	if url := app.panelURL(); url != "https://panel.example.com" {
 		t.Errorf("a hostname with no certificate gave %q", url)
 	}
 

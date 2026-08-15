@@ -314,9 +314,10 @@ func (a *App) mcpSetPanelDomain() *mcp.Tool {
 		Title:      "Serve the panel on a hostname",
 		Description: "Point the panel itself at a hostname: write its own nginx vhost, ask " +
 			"Let's Encrypt for a certificate, and reload. The panel is then served on that name " +
-			"on ports 80 and 443, so its address has no port on it. The hostname has to resolve " +
-			"to this server first, or the certificate cannot be issued and the name is served " +
-			"over plain HTTP with a self-signed certificate beside it.\n\n" +
+			"on ports 80 and 443, so its address is https://<hostname> with no port on it. The " +
+			"hostname has to resolve to this server first, or the certificate cannot be issued " +
+			"and the self-signed one is served in its place — which a client refuses rather " +
+			"than warns about, unless a CDN in front of the server terminates TLS.\n\n" +
 			"The address a client connects an assistant to changes with it, so a key already " +
 			"configured somewhere needs its endpoint updating too. Asynchronous — get_task has the run.",
 		Properties: map[string]mcp.Property{

@@ -37,7 +37,12 @@ const defaultsForm = useForm({
 });
 
 const onCustomDomain = computed(() => Boolean(props.panel.domain));
-const onHttps = computed(() => String(props.panel.url ?? '').startsWith('https://'));
+
+// Not read off the URL any more: a hostname's address is https whether or not
+// the certificate behind it is a real one, because 443 answers with the
+// self-signed pair until certbot has run. This is the flag for which of the two
+// it is.
+const onRealCertificate = computed(() => Boolean(props.panel.tls));
 
 // The hostname goes live before the certificate does, so this page has to keep
 // itself in step with a task that finishes in two visible stages. `awaiting`
@@ -128,13 +133,14 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                 </div>
 
                 <div
-                    v-else-if="!onHttps"
+                    v-else-if="!onRealCertificate"
                     class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
                 >
                     <span class="font-mono">{{ panel.domain }}</span> is live, but no
-                    Let's Encrypt certificate has been issued for it — so
-                    <span class="font-mono">https://{{ panel.domain }}</span> is
-                    served with a self-signed one your browser will warn about.
+                    Let's Encrypt certificate has been issued for it yet — it is
+                    served with a self-signed one, which your browser warns about
+                    and an assistant connecting over MCP refuses outright. Behind a
+                    CDN that terminates TLS, neither notices.
                     <template v-if="!panel.certbot">
                         Certbot is not installed, so none was requested. Install it
                         from Apps, then set the hostname again.

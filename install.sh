@@ -1325,19 +1325,13 @@ IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if (
 PANEL_URL="http://${IP:-this-server}:${PANEL_PUBLIC_PORT}/"
 
 # A hostname is served on 80 and 443 under that name, so its address has no port
-# on it at all. https only when the certificate is a real one — the self-signed
-# pair is what the hostname presents until certbot has run, and a browser told
-# to expect HTTPS there would only be warned at.
+# on it at all — and it is https either way, because 443 answers with the
+# self-signed pair until certbot has issued a real certificate. Which of the two
+# it is belongs on the Settings page, not in an address somebody bookmarks.
 if [ -f "$NGINX_SITE" ]; then
     DOMAIN="$(awk '/^[[:space:]]*server_name[[:space:]]+[^_]/{gsub(/;/,""); print $2; exit}' \
         "$NGINX_SITE" 2>/dev/null || true)"
-    if [ -n "$DOMAIN" ]; then
-        if grep -q "letsencrypt/live/${DOMAIN}/fullchain.pem" "$NGINX_SITE"; then
-            PANEL_URL="https://${DOMAIN}/"
-        else
-            PANEL_URL="http://${DOMAIN}/"
-        fi
-    fi
+    [ -n "$DOMAIN" ] && PANEL_URL="https://${DOMAIN}/"
 fi
 
 if [ "$MODE" = update ]; then

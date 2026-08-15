@@ -169,9 +169,13 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		"system": a.systemSummary(r.Context()),
 		"update": a.updateStatus(r.Context(), false),
 		"panel": map[string]any{
-			"domain":    nullable(domain),
-			"url":       a.panelURL(),
-			"port":      a.panelPort(),
+			"domain": nullable(domain),
+			"url":    a.panelURL(),
+			"port":   a.panelPort(),
+			// Whether the certificate on the hostname's 443 is a real one. The
+			// address is https either way — the self-signed pair answers until
+			// certbot has run — so the URL is no longer the thing that says it.
+			"tls":       domain != "" && a.Store.SettingBool("panel_domain_tls", false),
 			"public_ip": system.PublicIP(),
 			"certbot":   a.Store.ServiceInstalled("certbot"),
 		},
@@ -627,10 +631,10 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		a.Store.ForgetSetting("panel_domain_tls")
 		system.ForgetPublicIP()
 
-		return fmt.Sprintf("The panel answers on http://%s — no port. Saved as the panel "+
-			"address. https://%s answers too, on a self-signed certificate until a real one "+
-			"is issued, and http://%s:%d stays open as the address that always works.",
-			domain, domain, domain, panelPort), nil
+		return fmt.Sprintf("The panel answers on https://%s — no port. Saved as the panel "+
+			"address. The certificate there is self-signed until Let's Encrypt has issued a "+
+			"real one, and http://%s:%d stays open as the address that always works.",
+			domain, domain, panelPort), nil
 	})
 
 	// Certbot is an optional app in the catalogue, so on most machines it is
@@ -663,10 +667,9 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 			// Never fatal: the hostname is already live, and a missing
 			// certificate is a thing to retry, not a reason to unwind what
 			// worked.
-			return fmt.Sprintf("There is no certificate for %s, so the panel answers on "+
-				"http://%s and on https://%s with a self-signed one — both work, and a "+
-				"browser will warn about the second. %s, then set the hostname again to retry.",
-				domain, domain, domain, advice), nil
+			return fmt.Sprintf("There is no Let's Encrypt certificate for %s, so https://%s is "+
+				"served with the self-signed one — it works, and a browser warns about it. "+
+				"%s, then set the hostname again to retry.", domain, domain, advice), nil
 		}
 
 		if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
