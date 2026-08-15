@@ -381,6 +381,72 @@ func TestTheMailboxPageIsRouted(t *testing.T) {
 	}
 }
 
+// The two mail lists are two addresses, not two tabs.
+//
+// They shared one URL and a `ref`, which is why deleting a mailbox left the
+// browser on the page for the mailbox that had just stopped existing: there was
+// nowhere else to send it. /email/mailboxes is that somewhere, and /email is
+// the menu's entry pointing at the other one.
+func TestTheMailListsAreTheirOwnPages(t *testing.T) {
+	p := start(t)
+	signIn(t, p)
+
+	response := p.do(http.MethodGet, "/email", "", nil)
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusFound && response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("GET /email = %d, want a redirect", response.StatusCode)
+	}
+
+	if to := response.Header.Get("Location"); to != "/email/domains" {
+		t.Errorf("GET /email went to %q, want /email/domains", to)
+	}
+
+	for _, path := range []string{"/email/domains", "/email/mailboxes"} {
+		page := p.do(http.MethodGet, path, "", nil)
+		page.Body.Close()
+
+		if page.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, page.StatusCode)
+		}
+	}
+}
+
+// And the names those pages are linked by are in the manifest, with the list
+// URLs not having eaten the ones with an id or a word after them.
+func TestTheMailListsAreRouted(t *testing.T) {
+	p := start(t)
+
+	response := p.do(http.MethodGet, "/setup", "", p.inertia())
+	defer response.Body.Close()
+
+	var page struct {
+		Props struct {
+			Ziggy struct {
+				Routes map[string]struct {
+					URI string `json:"uri"`
+				} `json:"routes"`
+			} `json:"ziggy"`
+		} `json:"props"`
+	}
+
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatalf("decoding the page: %v", err)
+	}
+
+	for name, want := range map[string]string{
+		"email.domains.index":   "email/domains",
+		"email.mailboxes.index": "email/mailboxes",
+		"email.domains.show":    "email/domains/{domain}",
+		"email.accounts.show":   "email/mailboxes/{account}",
+		"email.accounts.new":    "email/mailboxes/create",
+	} {
+		if got, ok := page.Props.Ziggy.Routes[name]; !ok || got.URI != want {
+			t.Errorf("%s is at %q, want %q", name, got.URI, want)
+		}
+	}
+}
+
 // And a mailbox that does not exist is a 404 rather than a panic or a blank
 // page — the id in that URL comes from whatever somebody typed.
 func TestAMissingMailboxIsNotFound(t *testing.T) {

@@ -667,8 +667,8 @@ func TestEveryPanelCapabilityHasATool(t *testing.T) {
 		// Email
 		"list_email_domains", "get_email_domain", "create_email_domain",
 		"delete_email_domain", "retry_email_domain", "sync_email_dns", "create_mailbox",
-		"get_mailbox", "update_mailbox", "set_mailbox_password", "repair_mailbox", "delete_mailbox",
-		"configure_mail_server", "test_mail_delivery",
+		"list_mailboxes", "get_mailbox", "update_mailbox", "set_mailbox_password",
+		"repair_mailbox", "delete_mailbox", "configure_mail_server", "test_mail_delivery",
 
 		// DNS
 		"list_dns_accounts", "list_dns_providers", "connect_dns_account",

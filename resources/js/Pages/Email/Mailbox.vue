@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
@@ -12,8 +12,10 @@ import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
 // One mailbox, and the three things about it that anybody comes here to change:
-// whose it is, how much it may hold, and its password — which is what somebody
-// who has forgotten theirs needs, either read back or replaced.
+// whose it is, how much it may hold, and its password — which is set here, and
+// deliberately never shown. The panel keeps a copy so a mailbox can be built
+// again without anybody retyping it; printing that copy on a page is a password
+// left on a shared screen, so a forgotten one is answered with a new one.
 const props = defineProps({
     mailbox: Object,
     domain: Object,
@@ -34,11 +36,6 @@ const busy = computed(
 );
 
 useLiveRefresh(busy, ['mailbox', 'activeTask']);
-
-// The stored password is not on screen until it is asked for. It is the one
-// place it can be read at all, and a page left open on a shared screen should
-// not be showing it.
-const showPassword = ref(false);
 
 const submit = () =>
     form.post(route('email.accounts.update', props.mailbox.id), {
@@ -189,27 +186,6 @@ const destroy = async () => {
             </div>
 
             <div class="space-y-6">
-                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                    <h3 class="font-semibold text-slate-900">Current password</h3>
-                    <p class="mt-1 text-sm text-slate-500">
-                        The panel keeps this so a forgotten password is a thing to
-                        read back rather than reset.
-                    </p>
-
-                    <div class="mt-4 flex flex-wrap items-center gap-3">
-                        <code
-                            class="break-all rounded-lg bg-slate-50 px-3 py-2 font-mono text-sm text-slate-800 ring-1 ring-slate-200"
-                            >{{ showPassword ? mailbox.password : '••••••••••••' }}</code
-                        >
-                        <button
-                            @click="showPassword = !showPassword"
-                            class="text-sm text-brand-600 hover:underline"
-                        >
-                            {{ showPassword ? 'Hide' : 'Show' }}
-                        </button>
-                    </div>
-                </div>
-
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                     <h3 class="font-semibold text-slate-900">Mail client settings</h3>
                     <dl class="mt-3 space-y-1 text-sm text-slate-600">

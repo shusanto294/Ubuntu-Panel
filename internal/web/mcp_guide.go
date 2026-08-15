@@ -115,8 +115,8 @@ var panelGuide = []guideArea{
 			"Postfix, Dovecot, OpenDKIM and Roundcube webmail.",
 		Tools: []string{"list_email_domains", "get_email_domain", "create_email_domain",
 			"delete_email_domain", "retry_email_domain", "sync_email_dns", "create_mailbox",
-			"get_mailbox", "update_mailbox", "set_mailbox_password", "repair_mailbox",
-			"delete_mailbox", "configure_mail_server", "test_mail_delivery"},
+			"list_mailboxes", "get_mailbox", "update_mailbox", "set_mailbox_password",
+			"repair_mailbox", "delete_mailbox", "configure_mail_server", "test_mail_delivery"},
 		Recipes: []guideRecipe{
 			{
 				Task: "Set up an email address, like name@example.com",
@@ -126,6 +126,13 @@ var panelGuide = []guideArea{
 					"If the domain is not there: create_email_domain with example.com, then get_email_domain until its status is active.",
 					"create_mailbox with the whole address. The password comes back in the answer, once.",
 					"Give the person the address, the password, the webmail URL and the IMAP/SMTP settings from that answer.",
+				},
+			},
+			{
+				Task: "Who has a mailbox on this server?",
+				Steps: []string{
+					"list_mailboxes — every address across every domain, flat. Pass `domain` for one domain's.",
+					"list_email_domains instead if the question is about the domains rather than the addresses.",
 				},
 			},
 			{

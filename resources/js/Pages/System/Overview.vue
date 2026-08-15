@@ -180,7 +180,7 @@ useLiveRefresh(busy, [
             </Link>
 
             <Link
-                :href="route('email.index')"
+                :href="route('email.domains.index')"
                 class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5 transition hover:shadow-md"
             >
                 <div class="flex items-center gap-3">

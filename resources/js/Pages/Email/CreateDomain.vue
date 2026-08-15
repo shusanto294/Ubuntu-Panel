@@ -120,7 +120,7 @@ const submit = () => form.post(route('email.domains.store'));
                     Add domain
                 </PrimaryButton>
                 <Link
-                    :href="route('email.index')"
+                    :href="route('email.domains.index')"
                     class="text-sm text-slate-500 hover:text-slate-900"
                 >
                     Cancel

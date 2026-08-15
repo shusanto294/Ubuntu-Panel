@@ -122,10 +122,16 @@ func (a *App) routes() *router {
 	// and a redirect is a 302, which auth_request reads as "allowed".
 	rt.get(phpMyAdminGatePath, "", public, a.phpMyAdminGate)
 
-	// Email
+	// Email.
+	//
+	// The two lists are two addresses: /email/domains and /email/mailboxes, each
+	// its own page with its own URL to bookmark and to be sent back to. /email
+	// is the menu's entry and points at the first of them.
 	rt.get("/email", "email.index", authenticated, a.emailIndex)
 	rt.post("/email/repair", "email.repair", authenticated, a.emailRepair)
 	rt.post("/email/test", "email.test", authenticated, a.emailTest)
+	rt.get("/email/domains", "email.domains.index", authenticated, a.emailDomains)
+	rt.get("/email/mailboxes", "email.mailboxes.index", authenticated, a.emailMailboxes)
 	rt.get("/email/domains/create", "email.domains.create", authenticated, a.emailCreateDomain)
 	rt.post("/email/domains", "email.domains.store", authenticated, a.emailStoreDomain)
 	rt.get("/email/domains/{domain}", "email.domains.show", authenticated, a.emailShowDomain)

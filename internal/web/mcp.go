@@ -413,6 +413,7 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpRetryEmailDomain(),
 		a.mcpSyncEmailDNS(),
 		a.mcpCreateMailbox(),
+		a.mcpListMailboxes(),
 		a.mcpGetMailbox(),
 		a.mcpUpdateMailbox(),
 		a.mcpSetMailboxPassword(),

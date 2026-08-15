@@ -196,7 +196,7 @@ const submit = () => {
                     Create mailbox
                 </PrimaryButton>
                 <Link
-                    :href="route('email.index')"
+                    :href="route('email.mailboxes.index')"
                     class="text-sm text-slate-500 hover:text-slate-900"
                 >
                     Cancel

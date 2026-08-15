@@ -13,13 +13,47 @@ import (
 // mailApps is what the Email pages need on the machine.
 var mailApps = []string{"mysql", "mail", "roundcube"}
 
+// emailIndex is the Email menu's own URL, and all it does is point.
+//
+// What used to be here was two lists behind a pair of tabs held in a `ref`,
+// which meant the domains and the mailboxes were the same address: nothing to
+// bookmark, nothing to send anybody, and nowhere for the panel to put somebody
+// back after it deleted the mailbox they were looking at. They are two pages
+// now, and this is the way in to the first of them.
 func (a *App) emailIndex(w http.ResponseWriter, r *http.Request) {
-	user := userFrom(r.Context())
+	inertia.Redirect(w, r, "/email/domains")
+}
 
+// mailShell is what both lists need whichever one is open: the counts beside
+// the tabs, whether the mail server is installed at all, and the task bar. One
+// function because the two pages are one page with two bodies, and a count that
+// disagrees across a tab is worse than no count.
+func (a *App) mailShell(r *http.Request, domains []map[string]any) inertia.Props {
+	mailboxes := 0
+
+	for _, domain := range domains {
+		if accounts, ok := domain["accounts"].([]map[string]any); ok {
+			mailboxes += len(accounts)
+		}
+	}
+
+	return inertia.Props{
+		"counts":             map[string]any{"domains": len(domains), "mailboxes": mailboxes},
+		"requirements":       a.Catalog.Requirements(r.Context(), mailApps),
+		"mailConfigured":     a.Mail.IsConfigured(),
+		"mailHostname":       nullable(a.Store.Setting("mail_hostname", "")),
+		"roundcubeInstalled": a.Store.ServiceInstalled("roundcube"),
+		"activeTask":         a.activeTask(r, "mail"),
+	}
+}
+
+// emailDomainSummaries is every domain in the shape the pages read, with its
+// mailboxes on it — the domains list needs them to count, and the mailboxes
+// list is that same data read the other way round.
+func (a *App) emailDomainSummaries(r *http.Request) ([]map[string]any, error) {
 	domains, err := a.Store.EmailDomains(r.Context())
 	if err != nil {
-		a.serverError(w, r, "could not list the mail domains", err)
-		return
+		return nil, err
 	}
 
 	summaries := make([]map[string]any, 0, len(domains))
@@ -27,22 +61,49 @@ func (a *App) emailIndex(w http.ResponseWriter, r *http.Request) {
 		summaries = append(summaries, a.Store.EmailDomainSummary(r.Context(), domain, true))
 	}
 
-	accounts, _ := a.Store.DNSAccounts(r.Context(), user.ID)
+	return summaries, nil
+}
 
-	dnsAccounts := make([]map[string]any, 0, len(accounts))
-	for _, account := range accounts {
-		dnsAccounts = append(dnsAccounts, dnsAccountSummary(account))
+func (a *App) emailDomains(w http.ResponseWriter, r *http.Request) {
+	summaries, err := a.emailDomainSummaries(r)
+	if err != nil {
+		a.serverError(w, r, "could not list the mail domains", err)
+		return
 	}
 
-	a.Render.Render(w, r, "Email/Index", inertia.Props{
-		"domains":            summaries,
-		"requirements":       a.Catalog.Requirements(r.Context(), mailApps),
-		"mailConfigured":     a.Mail.IsConfigured(),
-		"mailHostname":       nullable(a.Store.Setting("mail_hostname", "")),
-		"dnsAccounts":        dnsAccounts,
-		"roundcubeInstalled": a.Store.ServiceInstalled("roundcube"),
-		"activeTask":         a.activeTask(r, "mail"),
-	})
+	props := a.mailShell(r, summaries)
+	props["domains"] = summaries
+
+	a.Render.Render(w, r, "Email/Domains", props)
+}
+
+// emailMailboxes is every address on the server in one list, which is the
+// question the Email pages are usually open for: who has a mailbox here.
+//
+// Flattened on this side rather than in the page, because the page that reads
+// it should not have to hold every domain to show one column of them.
+func (a *App) emailMailboxes(w http.ResponseWriter, r *http.Request) {
+	summaries, err := a.emailDomainSummaries(r)
+	if err != nil {
+		a.serverError(w, r, "could not list the mail domains", err)
+		return
+	}
+
+	mailboxes := []map[string]any{}
+
+	for _, domain := range summaries {
+		accounts, ok := domain["accounts"].([]map[string]any)
+		if !ok {
+			continue
+		}
+
+		mailboxes = append(mailboxes, accounts...)
+	}
+
+	props := a.mailShell(r, summaries)
+	props["mailboxes"] = mailboxes
+
+	a.Render.Render(w, r, "Email/Mailboxes", props)
 }
 
 func (a *App) emailCreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +225,7 @@ func (a *App) emailDestroyDomain(w http.ResponseWriter, r *http.Request) {
 		sess.Flash("danger", "Mail domain deleted.")
 	}
 
-	inertia.Redirect(w, r, "/email")
+	inertia.Redirect(w, r, "/email/domains")
 }
 
 // emailRepair configures — or repairs — the mail server itself.
@@ -351,7 +412,7 @@ func (a *App) emailStoreAccount(w http.ResponseWriter, r *http.Request) {
 // belongs to — a page listing every address on it, none of which could be
 // changed. What somebody clicking a mailbox wants is that mailbox: who it
 // belongs to, how much it may hold, and a new password for the person who has
-// forgotten theirs.
+// forgotten theirs — set, never shown.
 func (a *App) emailShowAccount(w http.ResponseWriter, r *http.Request) {
 	account, err := a.Store.FindEmailAccount(r.Context(), routeID(r, "account"))
 	if err != nil || account.Status == "deleting" {
@@ -365,16 +426,12 @@ func (a *App) emailShowAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mailbox := store.EmailAccountSummary(account, domain)
-
-	// The password the panel holds, shown on demand rather than in the payload
-	// of every page: this is the one place it can be read, and it is why the
-	// page exists — somebody has forgotten theirs and the panel can either
-	// remind them or set a new one.
-	mailbox["password"] = account.Password
-
+	// The stored password is deliberately not in these props. The panel keeps
+	// one so a mailbox can be set up again without anybody retyping it, but a
+	// page that prints it is a password on a shared screen and in the payload of
+	// every refresh. Forgetting one is answered by setting a new one.
 	a.Render.Render(w, r, "Email/Mailbox", inertia.Props{
-		"mailbox":            mailbox,
+		"mailbox":            store.EmailAccountSummary(account, domain),
 		"domain":             a.Store.EmailDomainSummary(r.Context(), domain, false),
 		"roundcubeInstalled": a.Store.ServiceInstalled("roundcube"),
 		"activeTask":         a.activeTask(r, "mail"),
@@ -471,7 +528,7 @@ func (a *App) emailRepairAccount(w http.ResponseWriter, r *http.Request) {
 	a.Store.SetEmailAccountStatus(account.ID, "pending", "")
 	a.Queue.PushID(queue.MailAccountCreate, "account", account.ID)
 
-	inertia.Back(w, r, "/email")
+	inertia.Back(w, r, "/email/mailboxes")
 }
 
 func (a *App) emailDestroyAccount(w http.ResponseWriter, r *http.Request) {
@@ -495,5 +552,8 @@ func (a *App) emailDestroyAccount(w http.ResponseWriter, r *http.Request) {
 		sess.Flash("danger", "Mailbox deleted.")
 	}
 
-	inertia.Back(w, r, "/email")
+	// Redirect rather than Back: this is nearly always the mailbox's own page
+	// asking, and back is the address that has just stopped existing. The list
+	// it was on is where somebody who has deleted one wants to be.
+	inertia.Redirect(w, r, "/email/mailboxes")
 }

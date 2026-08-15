@@ -72,7 +72,7 @@ const deleteDomain = async () => {
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="min-w-0">
                     <Link
-                        :href="route('email.index')"
+                        :href="route('email.domains.index')"
                         class="text-xs text-slate-500 hover:text-slate-900"
                         >&larr; Email</Link
                     >

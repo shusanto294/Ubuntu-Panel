@@ -722,6 +722,62 @@ func (a *App) mcpTestMailDelivery() *mcp.Tool {
 	}
 }
 
+// mcpListMailboxes is the Mailboxes page, as a tool.
+//
+// list_email_domains has the same addresses nested inside the domains they are
+// on, which is the wrong shape for "who has a mailbox on this server" — an
+// answer that needs flattening before it can be read is one an assistant gets
+// wrong. This is that list flat, the way the page shows it.
+func (a *App) mcpListMailboxes() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "list_mailboxes",
+		Capability: capEmail,
+		Title:      "List mailboxes",
+		ReadOnly:   true,
+		Description: "Every email address on this server, across every domain, with the domain it " +
+			"is on, its owner, its storage limit and its status. Takes an optional `domain` to " +
+			"narrow it to one. Passwords are not in this answer — get_mailbox has one mailbox's.",
+		Properties: map[string]mcp.Property{
+			"domain": {Description: "Optional. Only the mailboxes on this domain, by id or by name."},
+		},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			domains, err := a.Store.EmailDomains(ctx)
+			if err != nil {
+				return nil, errors.New("the panel could not read its mail domains")
+			}
+
+			if args.StringOr("domain", args.String("email_domain")) != "" || args.Int("domain_id") > 0 {
+				only, err := a.mcpEmailDomain(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+
+				domains = []*store.EmailDomain{only}
+			}
+
+			list := []map[string]any{}
+
+			for _, domain := range domains {
+				accounts, err := a.Store.EmailAccounts(ctx, domain.ID)
+				if err != nil {
+					continue
+				}
+
+				for _, account := range accounts {
+					list = append(list, store.EmailAccountSummary(account, domain))
+				}
+			}
+
+			return map[string]any{
+				"mailboxes":           list,
+				"count":               len(list),
+				"mail_configured":     a.Mail.IsConfigured(),
+				"roundcube_installed": a.Store.ServiceInstalled("roundcube"),
+			}, nil
+		},
+	}
+}
+
 func (a *App) mcpGetMailbox() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "get_mailbox",
