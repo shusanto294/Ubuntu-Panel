@@ -98,6 +98,12 @@ func (a *App) Start(ctx context.Context) {
 	// answering while they run.
 	go func() {
 		a.BootstrapApps(ctx)
+
+		// Before the helpers, because this is what takes the panel off port 80
+		// — and the catch-all the helpers write can only claim that port once
+		// the panel's own vhost has let go of it.
+		a.EnsurePanelAddress()
+
 		a.EnsureNginxHelpers()
 		a.EnsureMailConfigured()
 		a.EnsurePhpMyAdminReady(nil)

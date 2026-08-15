@@ -25,10 +25,15 @@ const domainForm = useForm({
     domain: props.panel.domain ?? '',
 });
 
+// The port lives on this form rather than on one of its own, even though it is
+// rendered in the card above: /system/settings is one endpoint that saves the
+// panel's own values together, and a second form posting to it would send the
+// other three back as blanks.
 const defaultsForm = useForm({
     php_version: props.defaults.php_version,
     node_version: props.defaults.node_version,
     mail_hostname: props.defaults.mail_hostname ?? '',
+    panel_port: props.panel.port,
 });
 
 const onCustomDomain = computed(() => Boolean(props.panel.domain));
@@ -92,17 +97,24 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     >.
                 </p>
 
+                <p class="mt-1 text-sm text-slate-500">
+                    Nothing answers on this server's bare address: ports 80 and 443
+                    belong to the sites it hosts, so somebody who types the IP in a
+                    browser is not shown this login page.
+                </p>
+
                 <div
                     v-if="!onCustomDomain"
                     class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
                 >
-                    You are on the IP address with a self-signed certificate, so
-                    browsers warn every time. Point a hostname at
+                    You are on the IP address over plain HTTP, so anything typed
+                    here — passwords included — crosses the network in the clear.
+                    Point a hostname at
                     <span class="font-mono">{{ panel.public_ip }}</span> with an A
                     record, then set it below.
                     <template v-if="panel.certbot">
-                        The panel gets a real Let's Encrypt certificate and the
-                        warning goes away.
+                        The panel gets a Let's Encrypt certificate and serves itself
+                        over HTTPS on the same port.
                     </template>
                 </div>
 
@@ -158,6 +170,38 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                         You will be logged out of this address when it switches —
                         log back in at the new one.
                     </p>
+                </form>
+
+                <form
+                    @submit.prevent="submitDefaults"
+                    class="mt-6 space-y-4 border-t border-slate-200 pt-6"
+                >
+                    <div>
+                        <InputLabel for="panel_port" value="Panel port" />
+                        <TextInput
+                            id="panel_port"
+                            v-model="defaultsForm.panel_port"
+                            type="number"
+                            min="1"
+                            max="65535"
+                            class="mt-1 block w-full"
+                        />
+                        <InputError
+                            class="mt-2"
+                            :message="defaultsForm.errors.panel_port"
+                        />
+                        <p class="mt-1 text-xs text-slate-500">
+                            Where the panel answers. Not 80 or 443 — those serve
+                            your sites. Change it and the panel moves immediately:
+                            open the new address before closing this tab, and if
+                            your host has a firewall of its own, a security group or
+                            a network rule, let the port through there as well.
+                        </p>
+                    </div>
+
+                    <PrimaryButton :disabled="defaultsForm.processing">
+                        Save port
+                    </PrimaryButton>
                 </form>
             </div>
 

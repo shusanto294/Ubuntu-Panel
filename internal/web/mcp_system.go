@@ -202,14 +202,24 @@ func (a *App) mcpPanelSettings() *mcp.Tool {
 		Capability: capSystem,
 		Title:      "Read or change the server's defaults",
 		Description: "The defaults a new site is given — the PHP version, the Node.js version — " +
-			"and the hostname the mail server calls itself in SMTP conversation. Called with " +
-			"nothing, it reads them back with the versions this panel installs.\n\n" +
-			"Changing these does not touch a site that already exists: they are what the next one " +
-			"gets.",
+			"the hostname the mail server calls itself in SMTP conversation, and the port the " +
+			"panel itself answers on. Called with nothing, it reads them back with the versions " +
+			"this panel installs.\n\n" +
+			"Changing the versions does not touch a site that already exists: they are what the " +
+			"next one gets. Changing `panel_port` moves the panel now — say the new address out " +
+			"loud, because whoever is using it has to type it, and a firewall at their host " +
+			"rather than on the machine has to be told about the port as well.",
 		Properties: map[string]mcp.Property{
 			"php_version":   {Description: "The default PHP version for new sites."},
 			"node_version":  {Description: "The default Node.js version for new sites."},
 			"mail_hostname": {Description: "What the mail server calls itself. Empty clears it."},
+			"panel_port": {Type: "integer",
+				Description: "The port nginx serves the panel on. Not 80 or 443 — those are for " +
+					"this machine's sites, and the panel being off them is what keeps its login " +
+					"page off this server's bare address."},
+			"confirm": {Type: "boolean", Default: false,
+				Description: "For `panel_port`: the person has been told the panel's address " +
+					"changes and has said yes."},
 		},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			if php := args.String("php_version"); php != "" {
@@ -238,15 +248,51 @@ func (a *App) mcpPanelSettings() *mcp.Tool {
 				}
 			}
 
-			return map[string]any{
+			moved := ""
+
+			if port := int(args.Int("panel_port")); args.Has("panel_port") && port != a.panelPort() {
+				switch {
+				case port < 1 || port > 65535:
+					return nil, errors.New("a port is between 1 and 65535")
+
+				case port == 80 || port == 443:
+					return nil, errors.New("80 and 443 are for this machine's sites — the panel " +
+						"needs a port of its own, which is what keeps its login page off this " +
+						"server's bare address")
+				}
+
+				if err := a.requireConfirmation(args, fmt.Sprintf("Moving the panel to port %d, "+
+					"which changes the address it answers on — this connection included", port)); err != nil {
+					return nil, err
+				}
+
+				if err := a.movePanelPort(port); err != nil {
+					return nil, err
+				}
+
+				moved = "The panel now answers on " + a.panelURL() + ". Tell the person the new " +
+					"address, and that a firewall at their host rather than on the machine needs " +
+					"the port opened there too. Any assistant configured with the old endpoint " +
+					"has to be pointed at " + a.panelURL() + MCPPath + "."
+			}
+
+			answer := map[string]any{
 				"php_version":   a.Store.PHPVersion(),
 				"node_version":  a.Store.NodeVersion(),
 				"mail_hostname": a.Mail.Hostname(),
 				"php_versions":  config.PHPVersions,
 				"node_versions": config.NodeVersions,
 				"panel_domain":  nullable(a.Store.Setting("panel_domain", "")),
+				"panel_port":    a.panelPort(),
 				"panel_url":     a.panelURL(),
-			}, nil
+				"mcp_endpoint":  a.panelURL() + MCPPath,
+			}
+
+			if moved != "" {
+				answer["moved"] = moved
+			}
+
+			return answer, nil
 		},
 	}
 }

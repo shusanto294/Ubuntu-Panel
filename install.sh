@@ -27,6 +27,10 @@
 #   PANEL_USER=ubuntupanel   unix user the panel runs as
 #   PANEL_ROOT=/opt/ubuntu-panel
 #   PANEL_PORT=8088          loopback port nginx proxies to
+#   PANEL_PUBLIC_PORT=8443   port the panel answers on from outside. Not 80:
+#                            80 and 443 are for this machine's sites, and a
+#                            panel on 80 means typing this server's bare
+#                            address opens a control panel's login form
 #   PANEL_SWAP=1             create a swapfile if the box has none and < 1.5 GB
 #   PANEL_SKIP_APT=0         skip the apt dependency step
 #   PANEL_INSTALL_APPS=all   what the installer puts on the machine before it
@@ -44,6 +48,13 @@ PANEL_PORT_EXPLICIT=0
 PANEL_USER="${PANEL_USER:-ubuntupanel}"
 PANEL_ROOT="${PANEL_ROOT:-/opt/ubuntu-panel}"
 PANEL_PORT="${PANEL_PORT:-8088}"
+
+# The port the panel is reached on from outside. An existing panel.conf wins
+# over this default further down, the same way the loopback port does — an
+# operator who moved the panel keeps it where they put it.
+PANEL_PUBLIC_PORT_EXPLICIT=0
+[ -n "${PANEL_PUBLIC_PORT:-}" ] && PANEL_PUBLIC_PORT_EXPLICIT=1 || true
+PANEL_PUBLIC_PORT="${PANEL_PUBLIC_PORT:-8443}"
 
 # Which PHP-FPM socket the phpMyAdmin location in the vhost below talks to.
 # The panel's own default, because PHP is not on the machine yet when this
@@ -351,6 +362,23 @@ if [ "$PANEL_PORT_EXPLICIT" = 0 ] && [ -f "$CONFIG_FILE" ]; then
     fi
 fi
 
+if [ "$PANEL_PUBLIC_PORT_EXPLICIT" = 0 ] && [ -f "$CONFIG_FILE" ]; then
+    EXISTING_PUBLIC_PORT="$(sed -n '/^[[:space:]]*PANEL_PUBLIC_PORT[[:space:]]*=/{ s/^[[:space:]]*PANEL_PUBLIC_PORT[[:space:]]*=[[:space:]]*//; s/[^0-9].*$//; p; q; }' "$CONFIG_FILE")"
+    if [ -n "$EXISTING_PUBLIC_PORT" ] && [ "$EXISTING_PUBLIC_PORT" -gt 0 ] && [ "$EXISTING_PUBLIC_PORT" -le 65535 ]; then
+        PANEL_PUBLIC_PORT="$EXISTING_PUBLIC_PORT"
+    fi
+fi
+
+# 80 and 443 are the sites' ports. A panel on either is the thing this port
+# exists to stop, and a second default server on one of them is a configuration
+# nginx refuses outright — every site on the machine down, not just the panel.
+case "$PANEL_PUBLIC_PORT" in
+    80|443)
+        warn "PANEL_PUBLIC_PORT=$PANEL_PUBLIC_PORT is one of the sites' ports; using 8443 instead."
+        PANEL_PUBLIC_PORT=8443
+        ;;
+esac
+
 if [ "$MODE" = update ]; then
     note "Update — an installation already exists at $PANEL_ROOT"
     kv "Installed version" "$OLD_VERSION"
@@ -388,12 +416,20 @@ else
 fi
 
 kv "Panel port" "127.0.0.1:$PANEL_PORT"
+kv "Answers on" "port $PANEL_PUBLIC_PORT"
 
 # The port has to be free, or already ours.
 if command -v ss >/dev/null 2>&1; then
     PORT_OWNER="$(ss -lntp 2>/dev/null | awk -v p=":$PANEL_PORT\$" '$4 ~ p {print $NF; exit}' || true)"
     if [ -n "$PORT_OWNER" ] && ! printf '%s' "$PORT_OWNER" | grep -q 'ubuntu-panel'; then
         die "Port $PANEL_PORT is already taken by $PORT_OWNER. Re-run with PANEL_PORT=<other>."
+    fi
+
+    # And the one the world reaches, where nginx is the expected owner — on an
+    # update it is already listening there, which is not a clash.
+    PUBLIC_OWNER="$(ss -lntp 2>/dev/null | awk -v p=":$PANEL_PUBLIC_PORT\$" '$4 ~ p {print $NF; exit}' || true)"
+    if [ -n "$PUBLIC_OWNER" ] && ! printf '%s' "$PUBLIC_OWNER" | grep -qE 'nginx|ubuntu-panel'; then
+        die "Port $PANEL_PUBLIC_PORT is already taken by $PUBLIC_OWNER. Re-run with PANEL_PUBLIC_PORT=<other>."
     fi
 fi
 
@@ -862,6 +898,7 @@ conf_ensure PANEL_DATABASE      "$DB_FILE"
 conf_ensure PANEL_LOG           "$LOG_DIR/panel.log"
 conf_ensure PANEL_BIND_HOST     "127.0.0.1"
 conf_ensure PANEL_BIND_PORT     "$PANEL_PORT"
+conf_ensure PANEL_PUBLIC_PORT   "$PANEL_PUBLIC_PORT"
 conf_ensure PANEL_SITES_ROOT    "/var/www"
 conf_ensure PANEL_SYSTEM_USER   "$PANEL_USER"
 
@@ -982,6 +1019,15 @@ if [ -f "$NGINX_SITE" ]; then
         WRITE_DEFAULT_VHOST=0
         note "Keeping the vhost for ${VHOST_NAME} (set from Settings -> Panel domain)."
     fi
+
+    # A vhost from before the panel moved off port 80 is kept here and rewritten
+    # by the panel itself on its next start, which is the only thing that knows
+    # the hostname and whether its certificate is real. Said out loud because
+    # the address in the summary below changes with it.
+    if grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?(80|443)[^;]*(default_server)?;' "$NGINX_SITE" \
+       && grep -q 'proxy_pass http://127.0.0.1:' "$NGINX_SITE"; then
+        MOVING_OFF_EIGHTY=1
+    fi
 fi
 
 if [ "$WRITE_DEFAULT_VHOST" = 1 ]; then
@@ -989,16 +1035,20 @@ if [ "$WRITE_DEFAULT_VHOST" = 1 ]; then
     # hostname, Settings -> Panel domain writes the TLS vhost and requests a
     # certificate — and re-running this script will then leave it alone.
     cat >"$NGINX_SITE" <<EOF
-# Managed by the Ubuntu Panel installer.
+# Managed by the Ubuntu Panel installer — the panel itself, on port ${PANEL_PUBLIC_PORT}.
+#
+# Not port 80. That one belongs to the sites this machine is for, and a panel
+# sitting on it means typing this server's bare address into a browser opens a
+# control panel's login form — which tells anybody scanning the address that
+# there is one here, and puts its sign-in page in front of them. What answers
+# on 80 is the catch-all's "No site is configured for this hostname".
+#
+# Settings -> Panel hostname adds a redirect from a name you own, and a
+# certificate, and the panel rewrites this file when it does.
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen ${PANEL_PUBLIC_PORT} default_server;
+    listen [::]:${PANEL_PUBLIC_PORT} default_server;
     server_name _;
-
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/letsencrypt;
-        default_type "text/plain";
-    }
 
     # phpMyAdmin, when it is installed — a 404 until then. Kept in step with
     # PhpMyAdminLocation in internal/sites/nginx.go, which is what rewrites
@@ -1056,7 +1106,7 @@ server {
     }
 }
 EOF
-    ok "Wrote $NGINX_SITE — port 80, proxying to 127.0.0.1:$PANEL_PORT"
+    ok "Wrote $NGINX_SITE — port $PANEL_PUBLIC_PORT, proxying to 127.0.0.1:$PANEL_PORT"
 
     # nginx allows exactly one default_server per address, and Debian ships one.
     # A second is not a warning: nginx refuses the whole configuration.
@@ -1249,7 +1299,8 @@ fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
     logged ufw allow 'Nginx Full' || true
-    ok "ufw: allowed Nginx Full (ports 80 and 443)"
+    logged ufw allow "${PANEL_PUBLIC_PORT}/tcp" || true
+    ok "ufw: allowed Nginx Full (80 and 443) and port $PANEL_PUBLIC_PORT for the panel"
 else
     same "ufw is not active; no firewall rules were changed."
 fi
@@ -1257,12 +1308,15 @@ fi
 chmod 640 "$INSTALL_LOG" 2>/dev/null || true
 
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") print $(i + 1)}' | head -1 || true)"
-PANEL_URL="http://${IP:-this-server}/"
+# The panel is on its own port, so the address always names one. Ports 80 and
+# 443 are the sites', and typing this machine's bare address gets the catch-all
+# rather than a login form — which is the point of the port.
+PANEL_URL="http://${IP:-this-server}:${PANEL_PUBLIC_PORT}/"
 
 if [ -f "$NGINX_SITE" ] && grep -q 'ssl_certificate' "$NGINX_SITE"; then
     DOMAIN="$(awk '/^[[:space:]]*server_name/{gsub(/;/,""); print $2; exit}' "$NGINX_SITE" 2>/dev/null || true)"
     if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "_" ]; then
-        PANEL_URL="https://${DOMAIN}/"
+        PANEL_URL="https://${DOMAIN}:${PANEL_PUBLIC_PORT}/"
     fi
 fi
 
@@ -1281,6 +1335,15 @@ else
 fi
 
 printf '    %-13s %s\n' "URL" "$PANEL_URL"
+
+if [ "${MOVING_OFF_EIGHTY:-0}" = 1 ]; then
+    printf '    %-13s the panel is moving off port 80 as it starts — this server'"'"'s bare\n' "Moved"
+    printf '    %-13s address stops opening the login page, and the URL above is where\n' ""
+    printf '    %-13s it answers from now on\n' ""
+fi
+
+printf '    %-13s ufw was opened for port %s. A firewall at your host — a security\n' "Firewall" "$PANEL_PUBLIC_PORT"
+printf '    %-13s group, a network rule — has to allow it there as well\n' ""
 
 if [ "$MODE" = install ]; then
     printf '    %-13s open the URL — it will ask you to create the first one\n' "Account"

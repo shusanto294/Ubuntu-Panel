@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -164,21 +165,13 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 
 	domain := a.Store.Setting("panel_domain", "")
 
-	url := "http://" + orDefault(system.PublicIP(), "127.0.0.1")
-	if domain != "" {
-		if a.Store.SettingBool("panel_domain_tls", false) {
-			url = "https://" + domain
-		} else {
-			url = "http://" + domain
-		}
-	}
-
 	a.Render.Render(w, r, "System/Settings", inertia.Props{
 		"system": a.systemSummary(r.Context()),
 		"update": a.updateStatus(r.Context(), false),
 		"panel": map[string]any{
 			"domain":    nullable(domain),
-			"url":       url,
+			"url":       a.panelURL(),
+			"port":      a.panelPort(),
 			"public_ip": system.PublicIP(),
 			"certbot":   a.Store.ServiceInstalled("certbot"),
 		},
@@ -218,6 +211,24 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 		sess.Error("node_version", "That is not a Node.js version the panel installs.")
 	}
 
+	port := a.panelPort()
+
+	if asked := strings.TrimSpace(input["panel_port"]); asked != "" {
+		wanted, err := strconv.Atoi(asked)
+
+		switch {
+		case err != nil || wanted < 1 || wanted > 65535:
+			sess.Error("panel_port", "Enter a port between 1 and 65535.")
+
+		case wanted == 80 || wanted == 443:
+			sess.Error("panel_port", "80 and 443 are for this machine's sites. The panel needs a "+
+				"port of its own — that is what keeps its login page off this server's bare address.")
+
+		default:
+			port = wanted
+		}
+	}
+
 	if sess.HasErrors() {
 		inertia.Back(w, r, "/settings")
 		return
@@ -232,7 +243,50 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 		a.Store.ForgetSetting("mail_hostname")
 	}
 
+	if port != a.panelPort() {
+		if err := a.movePanelPort(port); err != nil {
+			a.failBack(w, r, err.Error())
+
+			return
+		}
+
+		sess.Flash("success", fmt.Sprintf("Saved. The panel now answers on %s — open that address "+
+			"before closing this tab, and if your server has a firewall of its own, at your host "+
+			"rather than on the machine, let port %d through it there too.", a.panelURL(), port))
+
+		inertia.Back(w, r, "/settings")
+
+		return
+	}
+
 	a.okBack(w, r, "Settings saved.")
+}
+
+// movePanelPort puts the panel on a different port, and puts it back if nginx
+// will not have it.
+//
+// The order is the careful part: the firewall first, so the new port is
+// reachable before anything starts answering on it, and the old port's rule is
+// left alone — a rule for a port nothing listens on costs nothing, and removing
+// it before the operator has confirmed the new address works is how somebody
+// ends up locked out of their own panel.
+func (a *App) movePanelPort(port int) error {
+	previous := a.panelPort()
+
+	openPanelPort(port)
+
+	if err := a.Store.SetSetting(panelPortSetting, strconv.Itoa(port)); err != nil {
+		return errors.New("the panel could not store the new port")
+	}
+
+	if err := a.refreshPanelVhost(nil); err != nil {
+		a.Store.SetSetting(panelPortSetting, strconv.Itoa(previous))
+		a.refreshPanelVhost(nil)
+
+		return fmt.Errorf("the panel stayed on port %d: %w", previous, err)
+	}
+
+	return nil
 }
 
 // metricsEndpoint is what the dashboard polls for live figures.
@@ -386,6 +440,95 @@ func (a *App) servicesUninstall(w http.ResponseWriter, r *http.Request) {
 	inertia.Back(w, r, "/apps")
 }
 
+// ------------------------------------------------------------- panel port
+
+// panelPortSetting is where an operator's choice of port is kept.
+//
+// A setting rather than only the configuration file, because changing it is a
+// thing to do from the Settings page — and because the file belongs to root,
+// which the panel is not. The file's value is the default this falls back to,
+// so a machine that has never been asked answers on whatever the installer
+// wrote.
+const panelPortSetting = "panel_port"
+
+// panelPort is the port nginx serves the panel on.
+func (a *App) panelPort() int {
+	if stored := a.Store.Setting(panelPortSetting, ""); stored != "" {
+		return config.PanelPort(stored)
+	}
+
+	if a.Config.PanelPort > 0 {
+		return a.Config.PanelPort
+	}
+
+	return config.DefaultPanelPort
+}
+
+// openPanelPort lets the panel's port through ufw, where ufw is running.
+//
+// Called before the vhost that needs it is written, on every start and on every
+// change: the port moving is the one change that can put the panel out of reach
+// of the person who asked for it, and a firewall rule is the half of it the
+// panel can see to itself.
+//
+// Nothing here can open a cloud provider's own firewall — a security group, a
+// network ACL — and that is worth saying out loud wherever this port is shown.
+func openPanelPort(port int) {
+	if !proc.Ok("command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active'") {
+		return
+	}
+
+	proc.Ok(fmt.Sprintf("sudo ufw allow %d/tcp", port))
+}
+
+// EnsurePanelAddress puts the panel on its own port, and keeps it there.
+//
+// This is the migration as much as the check. A panel installed before the move
+// has a vhost holding `listen 80 default_server`, which is what made this
+// machine's bare address open a login form; rewriting it is what takes the
+// panel off port 80 and hands the address back to the catch-all, whose answer
+// is "No site is configured for this hostname."
+//
+// The order matters. The panel's vhost gives up port 80 first, and the shared
+// configuration is rewritten after — the catch-all only claims the port-80
+// default server when nothing else holds it, so doing it the other way round
+// leaves the slot empty for a moment, and an empty slot means the bare IP is
+// served by whichever site nginx happens to read first.
+func (a *App) EnsurePanelAddress() {
+	if !a.Store.ServiceInstalled("nginx") {
+		return
+	}
+
+	port := a.panelPort()
+
+	openPanelPort(port)
+
+	if err := a.refreshPanelVhost(nil); err != nil {
+		a.Log.Warn("could not put the panel's own vhost in shape", "error", err)
+
+		return
+	}
+
+	// Now that port 80 is free, the catch-all can have it back.
+	if err := a.Sites.WriteSharedConfig(nil); err != nil {
+		a.Log.Warn("could not write the shared nginx configuration", "error", err)
+
+		return
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		a.Log.Error("nginx refused the configuration after the panel's address was checked",
+			"output", check.Output)
+
+		return
+	}
+
+	proc.Ok("sudo systemctl reload nginx")
+
+	a.Log.Info("the panel answers on its own port", "url", a.panelURL(),
+		"note", "ports 80 and 443 are for this machine's sites")
+}
+
 // ------------------------------------------------------------ panel domain
 
 // updateDomain serves the panel on a hostname the operator owns.
@@ -433,34 +576,18 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 	}
 
 	port := a.Config.BindPort
-
-	// A self-signed pair, so the vhost below can listen on 443 from the first
-	// second. nginx refuses to start with an ssl_certificate that is not there,
-	// which is why the real certificate cannot be named yet — but leaving 443
-	// closed until certbot succeeds is what puts a CDN in front of this
-	// hostname into "web server is down".
-	proc.Ok(fmt.Sprintf(
-		"sudo test -f %[1]s.crt || sudo openssl req -x509 -nodes -newkey rsa:2048 -days 3650 "+
-			"-keyout %[1]s.key -out %[1]s.crt -subj \"/CN=%[2]s\" 2>/dev/null",
-		sites.DefaultCert, domain))
-
-	// The hostname, and the address the machine answers on. Once this vhost is
-	// name-based, a request to the bare IP matches nothing and lands on the
-	// catch-all — which exists to refuse unknown hostnames, so the panel would
-	// disappear from the one address that always works the moment a site is
-	// created. Naming the IP here keeps it reachable.
-	names := domain
-
-	if ip := system.PublicIP(); ip != "" {
-		names = domain + " " + ip
-	}
+	panelPort := a.panelPort()
 
 	// Which PHP-FPM socket the phpMyAdmin location talks to. The panel's
 	// default version, which is the one the app was installed against.
 	php := a.Store.PHPVersion()
 
+	// Plain first, on the panel's own port, with the hostname redirected there
+	// from 80. The certificate does not exist yet, and a vhost naming one that
+	// is not there is a vhost nginx refuses — taking every site on the machine
+	// down with it.
 	if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-		panelVhost(names, port, php), true); err != nil {
+		panelVhost(domain, panelPort, port, php, false), true); err != nil {
 		a.Store.FinishTask(taskID, "failed", err.Error(), 0)
 
 		return err
@@ -471,10 +598,11 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 	list.Add("Enable the panel vhost",
 		"sudo ln -sfn /etc/nginx/sites-available/ubuntu-panel /etc/nginx/sites-enabled/ubuntu-panel",
 		"sudo mkdir -p "+sites.ACMEWebroot+"/.well-known/acme-challenge",
-		// 443 is new to this vhost, and a firewall that only ever had 80 open
-		// would answer the certificate check and nothing else.
+		// 443 carries the redirect, and the panel's own port is where the panel
+		// is: a firewall that only ever had 80 open answers the certificate
+		// check and nothing else.
 		"if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active'; then "+
-			"sudo ufw allow 'Nginx Full'; fi",
+			"sudo ufw allow 'Nginx Full'; sudo ufw allow "+strconv.Itoa(panelPort)+"/tcp; fi",
 		"sudo nginx -t",
 		"sudo systemctl reload nginx")
 
@@ -483,7 +611,8 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		a.Store.ForgetSetting("panel_domain_tls")
 		system.ForgetPublicIP()
 
-		return "The panel answers on http://" + domain + ". Saved as the panel address.", nil
+		return fmt.Sprintf("The panel answers on http://%s:%d. Saved as the panel address, and "+
+			"http://%s redirects to it.", domain, panelPort, domain), nil
 	})
 
 	// Certbot is an optional app in the catalogue, so on most machines it is
@@ -515,19 +644,21 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 			// Never fatal: the hostname is already live, and a missing
 			// certificate is a thing to retry, not a reason to unwind what
 			// worked.
-			return fmt.Sprintf("There is no certificate for %s, so the panel stays on http://%s — "+
-				"which works. %s, then set the hostname again to retry.", domain, domain, advice), nil
+			return fmt.Sprintf("There is no certificate for %s, so the panel stays on "+
+				"http://%s:%d — which works. %s, then set the hostname again to retry.",
+				domain, domain, panelPort, advice), nil
 		}
 
 		if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-			panelTLSVhost(domain, system.PublicIP(), port, php), true); err != nil {
+			panelVhost(domain, panelPort, port, php, true), true); err != nil {
 			return "", err
 		}
 
 		// Tested before the reload: a vhost nginx refuses freezes the running
 		// configuration for every site on the box.
 		if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
-			proc.PutFile("/etc/nginx/sites-available/ubuntu-panel", panelVhost(names, port, php), true)
+			proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
+				panelVhost(domain, panelPort, port, php, false), true)
 			proc.Ok("sudo systemctl reload nginx")
 
 			return "", fmt.Errorf("nginx rejected the HTTPS vhost, so the panel was put back on HTTP:\n%s",
@@ -540,7 +671,8 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 
 		a.Store.SetSetting("panel_domain_tls", "1")
 
-		return "The panel is now served over HTTPS at https://" + domain + ".", nil
+		return fmt.Sprintf("The panel is now served over HTTPS at https://%s:%d, and both "+
+			"http://%s and https://%s redirect to it.", domain, panelPort, domain, domain), nil
 	})
 
 	if !tasks.New(a.Store, taskID).Run(list) {
@@ -550,72 +682,81 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 	return nil
 }
 
-// panelVhost is plain HTTP and self-signed HTTPS, with no redirect between
-// them: a browser on http:// gets the panel rather than a certificate warning,
-// and a proxy on https:// gets an answer. The redirect arrives with the real
-// certificate.
-func panelVhost(names string, port int, php string) string {
-	return fmt.Sprintf(
-		"# Managed by %s — the panel itself\n"+
-			"server {\n"+
-			"    listen 80;\n"+
-			"    listen [::]:80;\n"+
-			"    server_name %s;\n"+
-			"\n"+
-			"    location ^~ /.well-known/acme-challenge/ {\n"+
-			"        root %s;\n"+
-			"        default_type \"text/plain\";\n"+
-			"    }\n"+
-			"\n"+
-			"%s"+
-			"}\n"+
-			"\n"+
-			"server {\n"+
-			"    listen 443 ssl;\n"+
-			"    listen [::]:443 ssl;\n"+
-			"    server_name %s;\n"+
-			"\n"+
-			"    ssl_certificate     %s.crt;\n"+
-			"    ssl_certificate_key %s.key;\n"+
-			"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
-			"\n"+
-			"%s"+
-			"}\n",
-		config.Name, names, sites.ACMEWebroot,
-		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port),
-		names, sites.DefaultCert, sites.DefaultCert,
-		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port))
-}
-
-// panelTLSVhost redirects the hostname to HTTPS and keeps a plain block for the
-// IP address.
+// The panel's own vhost, in the three shapes it comes in.
 //
-// The IP keeps its own plain-HTTP block rather than joining the redirect:
-// sending it to https:// would present the hostname's certificate to a request
-// that did not use the hostname, so the address that always works would always
-// warn.
-func panelTLSVhost(domain, ip string, port int, php string) string {
-	// phpMyAdmin is deliberately absent from the IP block below. That block is
-	// plain HTTP on purpose — see the note above — and phpMyAdmin's login form
-	// carries a database password. The hostname redirects to HTTPS and serves
-	// it there; the address that always works serves the panel and nothing
-	// that would put a MySQL password on the wire in clear.
-	ipBlock := ""
+// All three put the panel on its own port and nothing else. Ports 80 and 443
+// belong to the sites this machine is for: what answers there for an address
+// nobody configured is the catch-all's "No site is configured for this
+// hostname", which is the whole point — a stranger typing this server's IP into
+// a browser should not be shown a control panel's login form.
+//
+// The hostname is the exception, and only ever as a signpost: somebody who
+// knows it and types it without the port is redirected to the panel's real
+// address rather than left at a 404. An address nobody has been told still
+// answers nothing.
 
-	if ip != "" {
-		ipBlock = fmt.Sprintf(
-			"\nserver {\n"+
-				"    listen 80;\n"+
-				"    listen [::]:80;\n"+
-				"    server_name %s;\n"+
-				"\n"+
-				"%s"+
-				"}\n", ip, panelProxyBlock(port))
+// panelPortVhost is the panel itself, on its port.
+//
+// server_name _ rather than the hostname: this port serves nothing but the
+// panel, so every name that reaches it — the hostname, the bare IP, a local
+// name somebody set in /etc/hosts — is meant for the panel. Making it the
+// default server on that port is also what keeps the IP working when a
+// hostname is set, which is the address that always works.
+func panelPortVhost(panelPort, port int, php string, certificate string) string {
+	tls := ""
+	listen := fmt.Sprintf(
+		"    listen %[1]d default_server;\n"+
+			"    listen [::]:%[1]d default_server;\n", panelPort)
+
+	if certificate != "" {
+		listen = fmt.Sprintf(
+			"    listen %[1]d ssl default_server;\n"+
+				"    listen [::]:%[1]d ssl default_server;\n", panelPort)
+
+		// error_page 497 is the one for "you spoke HTTP to an HTTPS port",
+		// which is what an old bookmark and a mistyped scheme both look like.
+		// Without it nginx answers with a wall of text about the plain HTTP
+		// request being sent to an SSL port.
+		tls = fmt.Sprintf(
+			"    ssl_certificate     /etc/letsencrypt/live/%[1]s/fullchain.pem;\n"+
+				"    ssl_certificate_key /etc/letsencrypt/live/%[1]s/privkey.pem;\n"+
+				"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
+				"    error_page 497 https://$host:%[2]d$request_uri;\n"+
+				"\n", certificate, panelPort)
 	}
 
 	return fmt.Sprintf(
-		"# Managed by %s — the panel itself\n"+
-			"server {\n"+
+		"server {\n"+
+			"%s"+
+			"    server_name _;\n"+
+			"\n"+
+			"%s"+
+			"%s\n"+
+			"%s"+
+			"}\n",
+		listen, tls, sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port),
+		panelProxyBlock(port))
+}
+
+// panelSignpost is the hostname on 80 and 443: the ACME challenge, and a
+// redirect to where the panel actually is.
+//
+// Not the panel itself. A redirect gives whoever set the hostname their
+// bookmark back, and gives a scanner that guessed the hostname a 301 to a port
+// it then has to be allowed through a firewall to reach — where the panel used
+// to be the thing it was handed.
+//
+// The 443 half exists only when there is a certificate to present. Named
+// explicitly and never `default_server`: the catch-all owns both ports, and a
+// second default server is a configuration nginx refuses outright.
+func panelSignpost(domain string, panelPort int, secure bool) string {
+	scheme := "http"
+	if secure {
+		scheme = "https"
+	}
+
+	block := fmt.Sprintf(
+		"\nserver {\n"+
 			"    listen 80;\n"+
 			"    listen [::]:80;\n"+
 			"    server_name %s;\n"+
@@ -625,51 +766,47 @@ func panelTLSVhost(domain, ip string, port int, php string) string {
 			"        default_type \"text/plain\";\n"+
 			"    }\n"+
 			"\n"+
-			"    location / { return 301 https://$host$request_uri; }\n"+
-			"}\n"+
-			"\n"+
-			"server {\n"+
+			"    location / { return 301 %s://%s:%d$request_uri; }\n"+
+			"}\n",
+		domain, sites.ACMEWebroot, scheme, domain, panelPort)
+
+	if !secure {
+		return block
+	}
+
+	return block + fmt.Sprintf(
+		"\nserver {\n"+
 			"    listen 443 ssl;\n"+
 			"    listen [::]:443 ssl;\n"+
-			"    server_name %s;\n"+
+			"    server_name %[1]s;\n"+
 			"\n"+
-			"    ssl_certificate     /etc/letsencrypt/live/%s/fullchain.pem;\n"+
-			"    ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;\n"+
+			"    ssl_certificate     /etc/letsencrypt/live/%[1]s/fullchain.pem;\n"+
+			"    ssl_certificate_key /etc/letsencrypt/live/%[1]s/privkey.pem;\n"+
 			"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
-			"    add_header Strict-Transport-Security \"max-age=31536000\" always;\n"+
 			"\n"+
-			"%s"+
-			"}\n%s",
-		config.Name, domain, sites.ACMEWebroot, domain, domain, domain,
-		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port)+"\n"+panelProxyBlock(port), ipBlock)
+			"    return 301 https://%[1]s:%[2]d$request_uri;\n"+
+			"}\n", domain, panelPort)
 }
 
-// panelDefaultVhost is the shape the installer writes: the catch-all on port
-// 80, for a panel that has not been given a hostname yet.
-//
-// Kept in step with the copy in install.sh. The two exist because the
-// installer has to write one before the panel is running, and the panel has to
-// be able to rewrite it afterwards without turning it into a named vhost —
-// which would take the panel off the bare IP address the operator reaches it
-// by.
-func panelDefaultVhost(port int, php string) string {
-	return fmt.Sprintf(
-		"# Managed by the Ubuntu Panel installer.\n"+
-			"server {\n"+
-			"    listen 80 default_server;\n"+
-			"    listen [::]:80 default_server;\n"+
-			"    server_name _;\n"+
-			"\n"+
-			"    location ^~ /.well-known/acme-challenge/ {\n"+
-			"        root %s;\n"+
-			"        default_type \"text/plain\";\n"+
-			"    }\n"+
-			"\n"+
-			"%s\n"+
-			"%s"+
-			"}\n",
-		sites.ACMEWebroot, sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port),
-		panelProxyBlock(port))
+// panelVhost is the whole file: the panel on its port, plus the signpost when a
+// hostname has been set.
+func panelVhost(domain string, panelPort, port int, php string, secure bool) string {
+	certificate := ""
+	if secure {
+		certificate = domain
+	}
+
+	file := "# Managed by " + config.Name + " — the panel itself, on port " +
+		strconv.Itoa(panelPort) + ".\n" +
+		"# Ports 80 and 443 are for this machine's sites. Nothing here serves the\n" +
+		"# panel on them: an address nobody configured gets the catch-all's 404.\n" +
+		panelPortVhost(panelPort, port, php, certificate)
+
+	if domain != "" {
+		file += panelSignpost(domain, panelPort, secure)
+	}
+
+	return file
 }
 
 // refreshPanelVhost rewrites the panel's vhost in the shape it is already in,
@@ -685,7 +822,11 @@ func (a *App) refreshPanelVhost(runner *tasks.Runner) error {
 
 	current := proc.Run("sudo cat "+path+" 2>/dev/null", time.Minute).Output
 
-	if !strings.HasPrefix(strings.TrimSpace(current), "# Managed by") {
+	// A file that is not there is one to write, not one to refuse: a machine
+	// whose vhost was deleted has no panel on its port, and rewriting it is the
+	// repair. Only a file with something else in it is left alone.
+	if trimmed := strings.TrimSpace(current); trimmed != "" &&
+		!strings.HasPrefix(trimmed, "# Managed by") {
 		return errors.New("the panel's nginx vhost was edited by hand, so it was left alone. " +
 			"Add the phpMyAdmin location to it yourself, or set the panel hostname again " +
 			"from Settings to have the panel rewrite it")
@@ -694,24 +835,17 @@ func (a *App) refreshPanelVhost(runner *tasks.Runner) error {
 	php := a.Store.PHPVersion()
 	port := a.Config.BindPort
 	domain := a.Store.Setting("panel_domain", "")
+	secure := domain != "" && a.Store.SettingBool("panel_domain_tls", false)
 
-	var rewritten string
-
-	switch {
-	case domain == "":
-		rewritten = panelDefaultVhost(port, php)
-
-	case a.Store.SettingBool("panel_domain_tls", false):
-		rewritten = panelTLSVhost(domain, system.PublicIP(), port, php)
-
-	default:
-		names := domain
-		if ip := system.PublicIP(); ip != "" {
-			names = domain + " " + ip
-		}
-
-		rewritten = panelVhost(names, port, php)
+	// The certificate the stored flag promises has to be on disk. A machine
+	// whose certificate was removed — or never renewed — would otherwise be
+	// rewritten into a vhost naming a file that is not there, which nginx
+	// refuses for every site on the box, not just this one.
+	if secure && !proc.Ok("sudo test -f /etc/letsencrypt/live/"+domain+"/fullchain.pem") {
+		secure = false
 	}
+
+	rewritten := panelVhost(domain, a.panelPort(), port, php, secure)
 
 	if strings.TrimSpace(rewritten) == strings.TrimSpace(current) {
 		return nil

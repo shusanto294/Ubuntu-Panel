@@ -25,7 +25,7 @@
 #   NO_COLOR=1               plain output
 #
 # Anything else on the command line is passed through to install.sh's own
-# environment — PANEL_PORT=9000, PANEL_ROOT=/srv/panel and so on all work:
+# environment — PANEL_PUBLIC_PORT=9443, PANEL_ROOT=/srv/panel and so on all work:
 #
 #   curl -fsSL <url> | sudo PANEL_PORT=9000 bash
 #
@@ -52,7 +52,7 @@ Options (flags need `bash -s --` when piped):
   --keep           leave the unpacked release behind after installing
 
 Environment: PANEL_VERSION, PANEL_FROM_SOURCE, PANEL_KEEP_DOWNLOAD, NO_COLOR,
-plus anything install.sh reads (PANEL_PORT, PANEL_ROOT, PANEL_USER, …):
+plus anything install.sh reads (PANEL_PUBLIC_PORT, PANEL_ROOT, PANEL_USER, …):
 
   curl -fsSL <url> | sudo PANEL_PORT=9000 bash
 EOF

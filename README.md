@@ -23,8 +23,17 @@ compiled on the server: no Go, no Node, no compiler, and no build memory on a
 machine whose job is to serve sites. The install is a download, a file copy and
 a systemd unit.
 
-Then open the server's address in a browser. With no account yet it asks you to
-create the first one.
+Then open the server's address **with the panel's port on the end** —
+`http://your-server:8443` — and with no account yet it asks you to create the
+first one.
+
+The port is the point. Ports 80 and 443 belong to the sites this machine is
+for, so the bare address answers "No site is configured for this hostname"
+rather than a control panel's login form: nobody scanning the address is told
+there is a panel here, let alone shown the way in. `PANEL_PUBLIC_PORT=9443`
+picks a different one, Settings → Panel port moves it later, and either way the
+installer opens it in ufw — a firewall at your host, a security group or a
+network rule, has to allow it there as well.
 
 The installer puts the software a server needs on the machine before it starts
 the panel — nginx, PHP-FPM, MariaDB, Certbot, WP-CLI, Node and the rest of the
@@ -53,7 +62,12 @@ What it leaves behind: the binary at `/opt/ubuntu-panel/bin/ubuntu-panel`, the
 configuration at `/etc/ubuntu-panel/panel.conf` (including `PANEL_APP_KEY` —
 back it up with the database), the database at
 `/var/lib/ubuntu-panel/panel.db`, a systemd unit, and an nginx vhost proxying
-port 80 to the panel.
+port 8443 to the panel on 127.0.0.1:8088.
+
+Set a hostname from Settings and it gets a Let's Encrypt certificate and serves
+the panel over HTTPS on the same port. The hostname's ports 80 and 443 keep the
+ACME challenge and a redirect to it, so an old bookmark still lands somewhere
+useful — an address nobody has been told still answers nothing.
 
 ## Update
 

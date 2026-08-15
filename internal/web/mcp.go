@@ -1779,26 +1779,39 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 // a client is pointed at.
 //
 // The hostname somebody set on the Settings page when there is one, because
-// that is the name with a certificate on it. Otherwise the public IP, on port
-// 80.
+// that is the name with a certificate on it. Otherwise the public IP. Either
+// way with the panel's own port on the end: the panel is not on 80 or 443, and
+// an address printed without the port goes to whichever site answers there, or
+// to the catch-all's 404.
 //
 // Not the port the panel binds. That is 127.0.0.1:8088, and it is loopback on
 // purpose: nginx is the front door and proxies every path — /mcp included — from
-// port 80. Printing the bind port here sent people to an address that is
-// firewalled from the outside by design, and the symptom was a client that sat
-// there until it timed out.
+// the panel's port. Printing the bind port here sent people to an address that
+// is firewalled from the outside by design, and the symptom was a client that
+// sat there until it timed out.
 func (a *App) panelURL() string {
 	domain := a.Store.Setting("panel_domain", "")
+	scheme := "http"
+	host := domain
 
-	if domain != "" {
-		if a.Store.SettingBool("panel_domain_tls", false) {
-			return "https://" + domain
-		}
-
-		return "http://" + domain
+	if domain == "" {
+		// Asked for only when there is no hostname: it is a lookup, and a panel
+		// that knows its own name has no use for it.
+		host = orDefault(system.PublicIP(), a.Config.BindHost)
+	} else if a.Store.SettingBool("panel_domain_tls", false) {
+		scheme = "https"
 	}
 
-	return "http://" + orDefault(system.PublicIP(), a.Config.BindHost)
+	port := a.panelPort()
+
+	// The two ports a URL does not name. Neither is the panel's own — the
+	// config refuses both — but an operator reading this should not have to
+	// wonder what would happen if one were.
+	if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
+		return scheme + "://" + host
+	}
+
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }
 
 // aiIndex is the page that issues keys and says how to connect a client to

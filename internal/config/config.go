@@ -20,7 +20,7 @@ const (
 
 	// Version is stamped into the page payload and reported by --version.
 	// Bumped in the same commit as the tag that builds a release from it.
-	Version = "2.5.78"
+	Version = "2.5.79"
 )
 
 // Config is the whole of the panel's settings. Every field has a working
@@ -32,6 +32,20 @@ type Config struct {
 	LogPath      string // Where the log is written, in addition to stderr.
 	BindHost     string
 	BindPort     int
+
+	// PanelPort is the port nginx answers the panel on, from outside the
+	// machine. Not 80: the panel used to be the default server there, so
+	// typing this machine's bare address into a browser opened a login form —
+	// which announces to anybody who scans the address that there is a control
+	// panel here, and puts its sign-in page in front of them. On its own port
+	// the address answers nothing, and the panel is where whoever installed it
+	// knows to look.
+	//
+	// BindPort is the other one, and they are not interchangeable: the panel
+	// listens on 127.0.0.1:BindPort, and nginx is what listens on PanelPort and
+	// proxies to it.
+	PanelPort int
+
 	SitesRoot    string
 	SystemUser   string
 	Repository   string
@@ -118,7 +132,33 @@ func Load(path string) (*Config, error) {
 	}
 	config.BindPort = port
 
+	config.PanelPort = PanelPort(get("PANEL_PUBLIC_PORT", ""))
+
 	return config, nil
+}
+
+// DefaultPanelPort is where the panel answers when nobody has said otherwise.
+//
+// 8443 because it is the number a person who has run a control panel before
+// already tries, and because it is out of the way of the sites this machine is
+// for: 80 and 443 belong to them.
+const DefaultPanelPort = 8443
+
+// PanelPort reads a port the operator chose, falling back to the default.
+//
+// 80 and 443 are refused rather than honoured. They are the two ports every
+// site on this machine is served from, and the panel taking either of them back
+// is both the thing this port exists to stop and a way to break every site at
+// once — nginx allows one default server per address, and the panel's block
+// would be a second.
+func PanelPort(value string) int {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+
+	if err != nil || port <= 0 || port > 65535 || port == 80 || port == 443 {
+		return DefaultPanelPort
+	}
+
+	return port
 }
 
 // Address is what the HTTP server listens on.
