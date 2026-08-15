@@ -513,6 +513,30 @@ func (site *Site) PHPOverrides() map[string]string {
 	return settings
 }
 
+// RecordType and RecordContent are the record this site needs at its name: the
+// one the panel publishes when it holds the zone, and the one it asks the
+// operator for when it does not.
+//
+// Both are here rather than at either caller because the sentence the site page
+// prints, the sentence the deployment writes into its console and the record
+// create_site hands back to an assistant all have to be the same record. They
+// were three separate guesses at it, and a panel that suggests a record other
+// than the one it would have written is a panel arguing with itself.
+func (site *Site) RecordType() string {
+	if kind := strings.ToUpper(strings.TrimSpace(site.DNSType)); kind != "" {
+		return kind
+	}
+
+	return "A"
+}
+
+// RecordContent is what that record points at. Empty means the panel never
+// recorded one, and the caller — which knows this machine's public address —
+// fills it in.
+func (site *Site) RecordContent() string {
+	return strings.TrimSpace(site.DNSContent)
+}
+
 // RecordIDs is the map of published DNS records, by fully qualified name.
 func (site *Site) RecordIDs() map[string]string {
 	ids := map[string]string{}

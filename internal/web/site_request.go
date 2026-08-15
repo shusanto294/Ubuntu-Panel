@@ -195,8 +195,22 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 // place: DNS management is on wherever the account has a credential connected,
 // and the credential is the one holding the domain — the form pre-selects the
 // first, and a person picking from a list of two picks the right one. The panel
-// asks the providers instead, and falls back to the first exactly as the form
-// does when nothing answers.
+// asks the providers instead.
+//
+// A domain no connected credential holds is the case that matters, because it
+// is the ordinary one: the panel is asked for test.example.com and example.com
+// lives at a registrar nobody connected. The site is created either way — the
+// machine's half of it is perfectly buildable — but with management off, so the
+// deployment does not stop on a record it was never going to be able to write,
+// and the site page and create_site both say which record to add and where.
+// The panel used to hand that case the first credential in the list instead,
+// which turned it into a deployment that failed on its second step with
+// "No zone on this Cloudflare account covers …", before nginx, before
+// WordPress, leaving a site that was only ever going to say NXDOMAIN.
+//
+// A provider that could not be answered at all is the other case, and the
+// opposite call: management stays on, because in a minute the answer may be
+// yes and the deployment's own DNS step will ask again.
 func (a *App) resolveDNS(ctx context.Context, user *store.User, domain string,
 	in siteRequest) (bool, int64, error) {
 	accounts, err := a.Store.DNSAccounts(ctx, user.ID)
@@ -211,26 +225,49 @@ func (a *App) resolveDNS(ctx context.Context, user *store.User, domain string,
 	}
 
 	if in.DNSAccountID > 0 {
-		if _, err := a.Store.FindDNSAccount(ctx, in.DNSAccountID, user.ID); err != nil {
+		account, err := a.Store.FindDNSAccount(ctx, in.DNSAccountID, user.ID)
+		if err != nil {
 			return false, 0, problem("dns_account_id",
 				"Pick a DNS credential the panel can write with.")
+		}
+
+		// A chosen credential that plainly does not hold the domain is the same
+		// answer as no credential at all: the panel publishes nothing and says
+		// which record to add. Not a refusal — the create form pre-selects this
+		// credential rather than the person choosing it, so refusing would be a
+		// dead end in front of somebody whose domain is simply hosted somewhere
+		// else, and whose site is otherwise perfectly buildable.
+		if _, _, err := dns.New(account).FindZone(domain); errors.Is(err, dns.ErrNoZone) {
+			return false, 0, nil
 		}
 
 		return true, in.DNSAccountID, nil
 	}
 
+	var unreachable int64
+
 	for _, account := range accounts {
-		if _, _, err := dns.New(account).FindZone(domain); err == nil {
+		_, _, err := dns.New(account).FindZone(domain)
+
+		switch {
+		case err == nil:
 			return true, account.ID, nil
+
+		case !errors.Is(err, dns.ErrNoZone) && unreachable == 0:
+			unreachable = account.ID
 		}
 	}
 
-	// Nothing claimed the domain. The site is still created with the credential
-	// the form would have pre-selected, and the deployment's own DNS step says
-	// so in the console — which is a great deal easier to act on than a site
-	// created quietly with no records at all, resolving nowhere, whose
-	// certificate then fails for a reason nobody explained.
-	return true, accounts[0].ID, nil
+	// Every provider answered, and none of them holds this domain. Nothing to
+	// publish with, so nothing is promised.
+	if unreachable == 0 {
+		return false, 0, nil
+	}
+
+	// One of them did not answer at all, and it is the one that might have said
+	// yes. The site keeps management on and the deployment's DNS step asks it
+	// again when it gets there.
+	return true, unreachable, nil
 }
 
 // boolOr reads an optional flag.

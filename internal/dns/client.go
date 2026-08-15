@@ -3,6 +3,7 @@ package dns
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -462,6 +463,19 @@ func (c *Client) Zones() ([]Zone, error) {
 	return zones, nil
 }
 
+// ErrNoZone is the provider answering plainly: it has no zone covering this
+// name. It is wrapped into FindZone's error so a caller can tell it from a
+// provider that could not be reached at all.
+//
+// The two want opposite handling. "This account does not hold the domain" is a
+// fact about the domain and will still be true in a minute, so the panel says
+// so and leaves the records to whoever does hold it. "The API did not answer"
+// is a moment, so the panel keeps management on and tries again at deploy time.
+// Treating the first as the second is what created a site whose deployment
+// stopped on its second step, before nginx or WordPress, leaving nothing but
+// NXDOMAIN.
+var ErrNoZone = errors.New("no zone covers this name")
+
 // FindZone is the zone that owns a hostname — longest matching suffix, so
 // a.b.example.com prefers b.example.com over example.com, and a delegated
 // subdomain beats the parent it was carved out of.
@@ -488,7 +502,8 @@ func (c *Client) FindZone(hostname string) (string, string, error) {
 	}
 
 	if bestName == "" {
-		return "", "", fmt.Errorf("No zone on this %s account covers %s.", c.label(), hostname)
+		return "", "", fmt.Errorf("No zone on this %s account covers %s: %w",
+			c.label(), hostname, ErrNoZone)
 	}
 
 	return bestID, bestName, nil

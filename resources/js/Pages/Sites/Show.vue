@@ -948,16 +948,27 @@ const destroy = async () => {
                     >.
                 </template>
                 <template v-else>
-                    Add this record at whoever runs
+                    No connected DNS credential holds this domain's zone, so the
+                    panel published nothing for it. Add this record at whoever
+                    runs
                     <span class="font-mono">{{ site.domain }}</span
                     >'s DNS:
                     <span class="mt-2 block font-mono text-rose-900"
-                        >A&nbsp;&nbsp;{{ site.domain }}&nbsp;&nbsp;→&nbsp;&nbsp;{{
-                            resolution.expected || 'this server’s IP'
+                        >{{ resolution.record?.type || 'A' }}&nbsp;&nbsp;{{
+                            resolution.record?.name || site.domain
+                        }}&nbsp;&nbsp;→&nbsp;&nbsp;{{
+                            resolution.record?.content ||
+                            resolution.expected ||
+                            'this server’s IP'
                         }}</span
                     >
                     Nothing needs redeploying afterwards; the site is already
-                    waiting for it.
+                    waiting for it. Connecting the provider on the
+                    <Link :href="route('dns.index')" class="font-medium underline"
+                        >DNS page</Link
+                    >
+                    lets the panel write it — and take it away again when the
+                    site is deleted.
                 </template>
             </div>
 

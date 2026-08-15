@@ -385,7 +385,16 @@ func (s *Service) checkDomainResolves(ctx context.Context, siteID int64) func(*t
 
 		switch {
 		case !resolution.Resolves():
-			hint := fmt.Sprintf("Point an A record for %s at %s", site.Domain, expected)
+			content := site.RecordContent()
+			if content == "" {
+				content = expected
+			}
+
+			hint := fmt.Sprintf(
+				"No connected DNS credential holds this domain's zone, so the panel published "+
+					"nothing for it. Add this record wherever %s's DNS is run: %s  %s  ->  %s. "+
+					"Nothing needs redeploying afterwards",
+				site.Domain, site.RecordType(), site.Domain, content)
 
 			if site.ManageDNS {
 				hint = fmt.Sprintf(

@@ -56,9 +56,13 @@ var panelGuide = []guideArea{
 				Steps: []string{
 					"list_site_types — check the type's `ready`; if false, install_apps what it names and wait.",
 					"create_site with the type and the domain, and nothing else unless the person asked for it.",
+					"Read the answer's `dns`. `managed: false` means no connected credential holds that " +
+						"zone, so the panel published no record — the site will build and still show " +
+						"DNS_PROBE_FINISHED_NXDOMAIN. Say `tell_the_person` to them; it is the record to add.",
 					"get_site every few seconds until `status` is active or failed.",
 					"If it failed: get_task with the id in `latest_task` for the console, fix, then deploy_site.",
-					"Report the URL, and — where the type has one — the admin login in `application`.",
+					"Report the URL, and — where the type has one — the admin login in `application`. " +
+						"get_site's `dns_problem` is there whenever the name still resolves nowhere.",
 				},
 			},
 			{
@@ -71,8 +75,8 @@ var panelGuide = []guideArea{
 			{
 				Task: "A site is up but does not answer, or has no certificate",
 				Steps: []string{
-					"get_site — `resolution` says whether the domain points at this server, and `certificate` what is on disk.",
-					"Not resolving and the panel manages DNS: sync_dns. Not resolving and it does not: tell the person the record to add, from `dns_type` and `dns_content`.",
+					"get_site — `resolution` says whether the domain points at this server, `resolution.record` is the record it needs, and `certificate` says what is on disk.",
+					"Not resolving and `resolution.managed` is true: sync_dns. False: give the person `resolution.record` to add wherever the domain's DNS is run — or connect_dns_account for that provider and then sync_dns, which has the panel write it.",
 					"Resolving with no certificate: request_certificate, then get_task for certbot's own words.",
 					"Answering with an error: site_logs, which is the tail of nginx's and the application's own logs.",
 				},

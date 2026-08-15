@@ -522,27 +522,18 @@ func (a *App) siteReport(ctx context.Context, site *store.Site, detailed bool) m
 		report["certificate"] = a.certificateSummary(site)
 		report["cache"] = a.cacheSummary(site)
 
-		// Not while it is being built: the answer is not settled until the
-		// deployment has published the record, and the lookup costs a round trip
-		// on every poll of a site that is still deploying.
-		if site.Status != "pending" && site.Status != "deploying" {
-			expected := system.PublicIP()
-			answer := system.Lookup(ctx, site.Domain, expected)
+		// The site page's own answer, built in one place so an assistant and a
+		// person are never told different things about the same name — down to
+		// the record to add when the panel is not the one publishing it.
+		report["resolution"] = a.siteResolution(ctx, site)
 
-			addresses := answer.Addresses
-			if addresses == nil {
-				addresses = []string{}
+		if resolution, ok := report["resolution"].(map[string]any); ok {
+			if resolves, _ := resolution["resolves"].(bool); resolution["checked"] == true && !resolves {
+				report["dns_problem"] = fmt.Sprintf(
+					"%s does not resolve, so a browser cannot reach this site whatever the panel "+
+						"reports about the machine. %s",
+					site.Domain, resolutionAdvice(site))
 			}
-
-			report["resolution"] = map[string]any{
-				"checked":   true,
-				"resolves":  answer.Resolves(),
-				"matches":   answer.Matches,
-				"addresses": addresses,
-				"expected":  expected,
-			}
-		} else {
-			report["resolution"] = map[string]any{"checked": false}
 		}
 	}
 
@@ -831,18 +822,41 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 		return answer, nil
 	}
 
-	// No credential to publish with. The site is still created — the same as
-	// the form with the DNS box unticked — and the answer carries the sentence
-	// to read out, because this is the one case where somebody has to go and do
-	// something before the site can answer at all.
+	// Nothing to publish with: no credential is connected, or none of the
+	// connected ones holds this domain's zone. The site is still created — the
+	// same site the form makes with the DNS box unticked, and it works the
+	// moment the name points here — but this is the one case where somebody has
+	// to go and do something first, so it is said in the answer and again in
+	// `next`, where an assistant reporting back is looking.
+	reason := "no DNS provider is connected to this panel"
+
+	if accounts, err := a.Store.DNSAccounts(ctx, user.ID); err == nil && len(accounts) > 0 {
+		reason = "no DNS credential connected to this panel holds a zone for " + site.Domain
+	}
+
+	content := site.RecordContent()
+	if content == "" {
+		content = system.PublicIP()
+	}
+
 	answer["dns"] = map[string]any{
 		"managed": false,
-		"reason": "no DNS provider is connected to this panel, so its records have to be added " +
-			"wherever the domain's DNS lives",
+		"reason":  reason + ", so its records have to be added wherever the domain's DNS lives",
+		"record": map[string]any{
+			"type": site.RecordType(), "name": site.Domain, "content": content,
+		},
 		"tell_the_person": fmt.Sprintf("Add a %s record for %s pointing at %s wherever this "+
-			"domain's DNS is managed. Until that resolves here, the site will not answer and its "+
-			"certificate cannot be issued.", site.DNSType, site.Domain, site.DNSContent),
+			"domain's DNS is managed. Until that resolves here the site will not answer — the "+
+			"browser says DNS_PROBE_FINISHED_NXDOMAIN — and its certificate cannot be issued. "+
+			"Nothing needs redeploying afterwards. connect_dns_account, then sync_site_dns, is "+
+			"the other way round it: let the panel write the record itself.",
+			site.RecordType(), site.Domain, content),
 	}
+
+	answer["next"] = fmt.Sprintf("The deployment is running on the server's queue. Poll get_site "+
+		"with site %d until its status is active or failed. Then say this to the person, because "+
+		"the site cannot answer without it: add a %s record for %s pointing at %s wherever this "+
+		"domain's DNS is run.", id, site.RecordType(), site.Domain, content)
 
 	return answer, nil
 }

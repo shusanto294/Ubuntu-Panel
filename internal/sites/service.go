@@ -305,8 +305,40 @@ func (s *Service) publishDNS(ctx context.Context, siteID int64) func(*tasks.Runn
 		// operator syncing records by hand is the person about to look at it.
 		system.ForgetResolution(site.Domain)
 
-		return dns.SyncForSite(ctx, s.Store, site)
+		output, err := dns.SyncForSite(ctx, s.Store, site)
+
+		return dnsOutcome(site, output, err, system.PublicIP())
 	}
+}
+
+// dnsOutcome decides what a DNS step that did not publish means for the rest of
+// the deployment.
+//
+// A credential that holds no zone for this name is not a broken deployment: the
+// domain lives somewhere the panel was never connected to, everything after
+// this step builds a site that answers the moment the name points here, and
+// stopping now would leave a machine with no vhost, no application and no
+// certificate as well as no record — which is a worse NXDOMAIN than the one it
+// was trying to avoid. So it is said plainly, in the record the operator has to
+// add, and the recipe carries on.
+//
+// Anything else — an API that refused the write, a token that expired — is a
+// real failure and stops the step, because those are the ones a retry fixes.
+func dnsOutcome(site *store.Site, output string, err error, publicIP string) (string, error) {
+	if !errors.Is(err, dns.ErrNoZone) {
+		return output, err
+	}
+
+	content := site.RecordContent()
+	if content == "" {
+		content = publicIP
+	}
+
+	return fmt.Sprintf(
+		"No connected DNS credential holds a zone for %s, so the panel published nothing. "+
+			"Add this record wherever %s's DNS is run: %s  %s  ->  %s. Nothing needs "+
+			"redeploying afterwards.",
+		site.Domain, site.Domain, site.RecordType(), site.Domain, content), nil
 }
 
 // edgeTLS asks the site's DNS provider whether it is already serving the

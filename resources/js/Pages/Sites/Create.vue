@@ -479,6 +479,25 @@ const submit = () => form.post(route('sites.store'));
                     the name reaches no one.
                 </p>
 
+                <!--
+                    The credential above is pre-selected, not chosen, and it may
+                    hold no zone for the domain being typed — a subdomain of a
+                    domain parked at some other registrar is the ordinary case.
+                    The panel checks when the site is created and publishes
+                    nothing when the answer is no, rather than failing the
+                    deployment on its second step. Said here so the answer is
+                    not a surprise.
+                -->
+                <p
+                    v-if="form.manage_dns"
+                    class="mt-3 text-xs text-slate-500"
+                >
+                    Records are published at whichever connected credential holds
+                    this domain's zone. If none of them does, the site is still
+                    built and its page says which record to add by hand — the
+                    deployment is not held up by it.
+                </p>
+
                 <div
                     v-if="form.manage_dns"
                     class="mt-4 grid gap-6 sm:grid-cols-2"
