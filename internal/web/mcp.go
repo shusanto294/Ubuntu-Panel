@@ -1780,11 +1780,15 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 // panelURL is where this panel answers from outside the machine, which is what
 // a client is pointed at.
 //
-// The hostname somebody set on the Settings page when there is one, because
-// that is the name with a certificate on it. Otherwise the public IP. Either
-// way with the panel's own port on the end: the panel is not on 80 or 443, and
-// an address printed without the port goes to whichever site answers there, or
-// to the catch-all's 404.
+// The hostname somebody set on the Settings page when there is one, with no
+// port on it: the hostname's own vhost serves the panel on 80 and 443, so the
+// address is the name and nothing else. That is the one to hand a client, and
+// the one with a certificate on it.
+//
+// Without a hostname it is the public IP and the panel's own port, because that
+// is the only place the panel answers on a bare address — 80 and 443 there
+// belong to the catch-all, and an address printed without the port would go to
+// its 404.
 //
 // Not the port the panel binds. That is 127.0.0.1:8088, and it is loopback on
 // purpose: nginx is the front door and proxies every path — /mcp included — from
@@ -1792,28 +1796,30 @@ func (a *App) mcpRunCommand() *mcp.Tool {
 // is firewalled from the outside by design, and the symptom was a client that
 // sat there until it timed out.
 func (a *App) panelURL() string {
-	domain := a.Store.Setting("panel_domain", "")
-	scheme := "http"
-	host := domain
+	if domain := a.Store.Setting("panel_domain", ""); domain != "" {
+		if a.Store.SettingBool("panel_domain_tls", false) {
+			return "https://" + domain
+		}
 
-	if domain == "" {
-		// Asked for only when there is no hostname: it is a lookup, and a panel
-		// that knows its own name has no use for it.
-		host = orDefault(system.PublicIP(), a.Config.BindHost)
-	} else if a.Store.SettingBool("panel_domain_tls", false) {
-		scheme = "https"
+		// Plain, because the certificate on 443 is the self-signed one until
+		// certbot has run, and a client told to speak HTTPS to it refuses
+		// rather than warns.
+		return "http://" + domain
 	}
 
+	// Asked for only when there is no hostname: it is a lookup, and a panel
+	// that knows its own name has no use for it.
+	host := orDefault(system.PublicIP(), a.Config.BindHost)
 	port := a.panelPort()
 
-	// The two ports a URL does not name. Neither is the panel's own — the
-	// config refuses both — but an operator reading this should not have to
-	// wonder what would happen if one were.
-	if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
-		return scheme + "://" + host
+	// The port a URL does not name. It is not the panel's own — the config
+	// refuses 80 and 443 both — but an operator reading this should not have to
+	// wonder what would happen if it were.
+	if port == 80 {
+		return "http://" + host
 	}
 
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 // aiIndex is the page that issues keys and says how to connect a client to

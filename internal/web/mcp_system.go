@@ -270,10 +270,20 @@ func (a *App) mcpPanelSettings() *mcp.Tool {
 					return nil, err
 				}
 
-				moved = "The panel now answers on " + a.panelURL() + ". Tell the person the new " +
-					"address, and that a firewall at their host rather than on the machine needs " +
-					"the port opened there too. Any assistant configured with the old endpoint " +
-					"has to be pointed at " + a.panelURL() + MCPPath + "."
+				// With a hostname set the panel's address does not move with the
+				// port — the hostname is served on 80 and 443 — so saying it
+				// changed would send the person looking for a new one.
+				if a.Store.Setting("panel_domain", "") != "" {
+					moved = fmt.Sprintf("The panel's own port is now %d. Its address is unchanged "+
+						"— %s, which is served on the hostname — but anything using the old port "+
+						"has to be pointed at the new one, and a firewall at the person's host "+
+						"rather than on the machine needs it opened there too.", port, a.panelURL())
+				} else {
+					moved = "The panel now answers on " + a.panelURL() + ". Tell the person the new " +
+						"address, and that a firewall at their host rather than on the machine needs " +
+						"the port opened there too. Any assistant configured with the old endpoint " +
+						"has to be pointed at " + a.panelURL() + MCPPath + "."
+				}
 			}
 
 			answer := map[string]any{
@@ -303,8 +313,10 @@ func (a *App) mcpSetPanelDomain() *mcp.Tool {
 		Capability: capSystem,
 		Title:      "Serve the panel on a hostname",
 		Description: "Point the panel itself at a hostname: write its own nginx vhost, ask " +
-			"Let's Encrypt for a certificate, and reload. The hostname has to resolve to this " +
-			"server first, or the certificate cannot be issued and the panel stays on HTTP.\n\n" +
+			"Let's Encrypt for a certificate, and reload. The panel is then served on that name " +
+			"on ports 80 and 443, so its address has no port on it. The hostname has to resolve " +
+			"to this server first, or the certificate cannot be issued and the name is served " +
+			"over plain HTTP with a self-signed certificate beside it.\n\n" +
 			"The address a client connects an assistant to changes with it, so a key already " +
 			"configured somewhere needs its endpoint updating too. Asynchronous — get_task has the run.",
 		Properties: map[string]mcp.Property{

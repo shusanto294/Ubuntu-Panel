@@ -46,13 +46,10 @@ func (s *Service) WriteSharedConfig(runner *tasks.Runner) error {
 		return errors.New("could not create the ACME webroot")
 	}
 
-	// A self-signed pair for the catch-all 443 block, plus removing Debian's
-	// own default-server, which would otherwise be a second one.
-	command = fmt.Sprintf(
-		"test -f %s.crt || sudo openssl req -x509 -nodes -newkey rsa:2048 -days 3650 "+
-			"-keyout %s.key -out %s.crt -subj \"/CN=unconfigured.invalid\" 2>/dev/null; "+
-			"sudo rm -f /etc/nginx/sites-enabled/default",
-		DefaultCert, DefaultCert, DefaultCert)
+	// A self-signed pair for the 443 blocks that have no certificate of their
+	// own yet, plus removing Debian's own default-server, which would otherwise
+	// be a second one.
+	command = defaultCertCommand + "; sudo rm -f /etc/nginx/sites-enabled/default"
 
 	if runner != nil {
 		runner.Exec(command, 2*time.Minute)
@@ -62,6 +59,23 @@ func (s *Service) WriteSharedConfig(runner *tasks.Runner) error {
 
 	return proc.PutFile(catchAllPath, catchAll(portEightyClaimed()), true)
 }
+
+// defaultCertCommand writes the self-signed pair if it is not already there.
+// Idempotent, and quiet about it.
+var defaultCertCommand = fmt.Sprintf(
+	"test -f %s.crt || sudo openssl req -x509 -nodes -newkey rsa:2048 -days 3650 "+
+		"-keyout %s.key -out %s.crt -subj \"/CN=unconfigured.invalid\" 2>/dev/null",
+	DefaultCert, DefaultCert, DefaultCert)
+
+// EnsureDefaultCert makes sure the self-signed pair exists before something
+// that names it is written.
+//
+// Every vhost that names a certificate it cannot open is a configuration nginx
+// refuses outright — not for that site, for the whole machine. The catch-all
+// names this pair, and so does a panel hostname that has no Let's Encrypt
+// certificate yet, and the two are written from different places: whichever
+// gets there first has to be able to count on the file.
+func EnsureDefaultCert() { proc.Ok(defaultCertCommand) }
 
 // catchAllPath is the panel's own default-server file. It is named to sort
 // first in conf.d, so nginx reads it before anything else that might want the

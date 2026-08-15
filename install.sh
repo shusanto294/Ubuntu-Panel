@@ -1009,22 +1009,31 @@ chown -R www-data:www-data /var/www/letsencrypt 2>/dev/null || true
 WRITE_DEFAULT_VHOST=1
 
 if [ -f "$NGINX_SITE" ]; then
-    VHOST_NAME="$(awk '/^[[:space:]]*server_name/{gsub(/;/,""); print $2; exit}' "$NGINX_SITE" 2>/dev/null || true)"
+    # The hostname, not the panel-port block's `_`. The panel's own block comes
+    # first in the file and answers every name that reaches its port, so the
+    # first server_name is always `_` on a panel that has one.
+    VHOST_NAME="$(awk '/^[[:space:]]*server_name[[:space:]]+[^_]/{gsub(/;/,""); print $2; exit}' \
+        "$NGINX_SITE" 2>/dev/null || true)"
 
-    if grep -q 'ssl_certificate' "$NGINX_SITE"; then
+    if [ -n "$VHOST_NAME" ]; then
         WRITE_DEFAULT_VHOST=0
-        note "Keeping the HTTPS vhost the panel wrote for ${VHOST_NAME:-your domain}."
-        detail "Overwriting it would drop the panel back to plain HTTP and break the redirect."
-    elif [ -n "$VHOST_NAME" ] && [ "$VHOST_NAME" != "_" ]; then
+        note "Keeping the vhost for ${VHOST_NAME} (set from Settings -> Panel hostname)."
+        detail "Overwriting it would drop the panel back onto its port alone."
+    elif grep -q 'ssl_certificate' "$NGINX_SITE"; then
         WRITE_DEFAULT_VHOST=0
-        note "Keeping the vhost for ${VHOST_NAME} (set from Settings -> Panel domain)."
+        note "Keeping the HTTPS vhost the panel wrote."
+        detail "Overwriting it would drop the panel back to plain HTTP."
     fi
 
     # A vhost from before the panel moved off port 80 is kept here and rewritten
     # by the panel itself on its next start, which is the only thing that knows
     # the hostname and whether its certificate is real. Said out loud because
     # the address in the summary below changes with it.
-    if grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?(80|443)[^;]*(default_server)?;' "$NGINX_SITE" \
+    #
+    # `default_server` is what makes it the old shape rather than the current
+    # one: the panel serves a hostname on 80 and 443 now, and those blocks are
+    # named. Only the block that answers the bare address is the one being left.
+    if grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?(80|443)[^;]*default_server[^;]*;' "$NGINX_SITE" \
        && grep -q 'proxy_pass http://127.0.0.1:' "$NGINX_SITE"; then
         MOVING_OFF_EIGHTY=1
     fi
@@ -1043,8 +1052,10 @@ if [ "$WRITE_DEFAULT_VHOST" = 1 ]; then
 # there is one here, and puts its sign-in page in front of them. What answers
 # on 80 is the catch-all's "No site is configured for this hostname".
 #
-# Settings -> Panel hostname adds a redirect from a name you own, and a
-# certificate, and the panel rewrites this file when it does.
+# Settings -> Panel hostname serves the panel on a name you own — on 80 and 443
+# under that name alone, with a certificate — and the panel rewrites this file
+# when it does. This block stays either way: it is the address that works when
+# the hostname does not.
 server {
     listen ${PANEL_PUBLIC_PORT} default_server;
     listen [::]:${PANEL_PUBLIC_PORT} default_server;
@@ -1308,15 +1319,24 @@ fi
 chmod 640 "$INSTALL_LOG" 2>/dev/null || true
 
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") print $(i + 1)}' | head -1 || true)"
-# The panel is on its own port, so the address always names one. Ports 80 and
-# 443 are the sites', and typing this machine's bare address gets the catch-all
-# rather than a login form — which is the point of the port.
+# On the bare address the panel is on its own port, so the address names one:
+# ports 80 and 443 there are the sites', and typing this machine's IP gets the
+# catch-all rather than a login form, which is the point of the port.
 PANEL_URL="http://${IP:-this-server}:${PANEL_PUBLIC_PORT}/"
 
-if [ -f "$NGINX_SITE" ] && grep -q 'ssl_certificate' "$NGINX_SITE"; then
-    DOMAIN="$(awk '/^[[:space:]]*server_name/{gsub(/;/,""); print $2; exit}' "$NGINX_SITE" 2>/dev/null || true)"
-    if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "_" ]; then
-        PANEL_URL="https://${DOMAIN}:${PANEL_PUBLIC_PORT}/"
+# A hostname is served on 80 and 443 under that name, so its address has no port
+# on it at all. https only when the certificate is a real one — the self-signed
+# pair is what the hostname presents until certbot has run, and a browser told
+# to expect HTTPS there would only be warned at.
+if [ -f "$NGINX_SITE" ]; then
+    DOMAIN="$(awk '/^[[:space:]]*server_name[[:space:]]+[^_]/{gsub(/;/,""); print $2; exit}' \
+        "$NGINX_SITE" 2>/dev/null || true)"
+    if [ -n "$DOMAIN" ]; then
+        if grep -q "letsencrypt/live/${DOMAIN}/fullchain.pem" "$NGINX_SITE"; then
+            PANEL_URL="https://${DOMAIN}/"
+        else
+            PANEL_URL="http://${DOMAIN}/"
+        fi
     fi
 fi
 
