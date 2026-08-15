@@ -39,9 +39,11 @@ const mcpInstructions = `This server is Ubuntu Panel, a control panel running on
 	`settings — and any command at all on the machine, as root.
 
 There is no part of this panel you have to send somebody to the browser for. If a task looks ` +
-	`like it has no tool, list the tools again and look for it under the page it belongs to; ` +
-	`failing that, run_command reaches the machine directly. "The panel can do this but I cannot" ` +
-	`is never the right answer.
+	`like it has no tool, call panel_guide: it is the panel's own menu, page by page, with the ` +
+	`tools behind each and the step-by-step for the jobs that take several — setting up an email ` +
+	`address, putting a site up, working out why one does not answer. Read it before you conclude ` +
+	`anything is missing. Failing that, run_command is a root shell on the machine. "The panel can ` +
+	`do this but I cannot" is never the right answer.
 
 Use the panel's defaults. Every tool here does what the same action does in the panel's own pages, ` +
 	`with the same defaults, and an argument you leave out is filled in the way a person pressing ` +
@@ -349,6 +351,10 @@ func (a *App) buildMCP() *mcp.Server {
 	// go and use the web interface instead, which is the one answer this server
 	// exists to avoid.
 	server.Add(
+		// The map of the panel, first because it is what turns a list of names
+		// into a way of working.
+		a.mcpPanelGuide(),
+
 		// This machine
 		a.mcpServerStatus(),
 		a.mcpServerMetrics(),
@@ -356,6 +362,7 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpSetPanelDomain(),
 		a.mcpPanelUpdate(),
 		a.mcpPanelAccount(),
+		a.mcpAIAccess(),
 
 		// Sites
 		a.mcpListSiteTypes(),
@@ -380,6 +387,8 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpReadFile(),
 		a.mcpWriteFile(),
 		a.mcpManageFiles(),
+		a.mcpUploadFile(),
+		a.mcpDownloadFile(),
 
 		// Logs
 		a.mcpGetTask(),
@@ -427,6 +436,7 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpListApps(),
 		a.mcpInstallApps(),
 		a.mcpUninstallApp(),
+		a.mcpRetryApp(),
 		a.mcpDetectApps(),
 
 		// The machine itself
@@ -499,6 +509,38 @@ func (a *App) siteReport(ctx context.Context, site *store.Site, detailed bool) m
 	if detailed && site.DatabaseID > 0 {
 		if database, err := a.Store.FindDatabase(ctx, site.DatabaseID); err == nil {
 			report["database"] = database.Summary()
+		}
+	}
+
+	if detailed {
+		// The two questions the site's own page answers and no other tool does:
+		// what certificate is actually on disk, and whether the domain points
+		// here at all. Both are why a site that deployed cleanly still does not
+		// answer, and an assistant with neither ends up guessing at DNS.
+		report["certificate"] = a.certificateSummary(site)
+		report["cache"] = a.cacheSummary(site)
+
+		// Not while it is being built: the answer is not settled until the
+		// deployment has published the record, and the lookup costs a round trip
+		// on every poll of a site that is still deploying.
+		if site.Status != "pending" && site.Status != "deploying" {
+			expected := system.PublicIP()
+			answer := system.Lookup(ctx, site.Domain, expected)
+
+			addresses := answer.Addresses
+			if addresses == nil {
+				addresses = []string{}
+			}
+
+			report["resolution"] = map[string]any{
+				"checked":   true,
+				"resolves":  answer.Resolves(),
+				"matches":   answer.Matches,
+				"addresses": addresses,
+				"expected":  expected,
+			}
+		} else {
+			report["resolution"] = map[string]any{"checked": false}
 		}
 	}
 

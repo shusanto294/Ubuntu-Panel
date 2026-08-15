@@ -70,6 +70,43 @@ func (a *App) mcpUninstallApp() *mcp.Tool {
 	}
 }
 
+func (a *App) mcpRetryApp() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "retry_app",
+		Capability: capApps,
+		Title:      "Install an app again",
+		Description: "Run one app's install again from the start, whether or not the panel " +
+			"believes it is already there. This is what an app sitting at `failed` needs once the " +
+			"reason it failed has been dealt with — no disk, no network, a mirror that was down.",
+		Properties: map[string]mcp.Property{
+			"key": {Description: "The app key, from list_apps."},
+		},
+		Required: []string{"key"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			user := mcpUser(ctx)
+			if user == nil {
+				return nil, errors.New("this key is not attached to an account")
+			}
+
+			key := args.String("key")
+
+			if !catalog.Exists(key) {
+				return nil, fmt.Errorf("this panel has no app called %s — list_apps has the keys", key)
+			}
+
+			a.Catalog.Queue([]string{key}, true)
+			a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
+
+			return map[string]any{
+				"app":    key,
+				"label":  catalog.Label(key),
+				"queued": true,
+				"next":   "The install is running on the queue; list_apps says when it is done, and get_task has the console.",
+			}, nil
+		},
+	}
+}
+
 func (a *App) mcpDetectApps() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "detect_apps",
@@ -300,6 +337,192 @@ func (a *App) mcpPanelUpdate() *mcp.Tool {
 
 			return status, nil
 		},
+	}
+}
+
+// mcpAIAccess is the AI access page itself — the keys, and the switches that
+// decide what a key may do.
+//
+// Under capSystem, which is the tick box that already carries panel updates and
+// the account's own password: somebody who has granted that has granted this,
+// and somebody who has not gets no tool here at all. Loosening anything asks
+// first, because widening your own permissions is the one change nobody else is
+// watching.
+func (a *App) mcpAIAccess() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "ai_access",
+		Capability: capSystem,
+		Title:      "Manage this panel's AI access",
+		Description: "The panel's AI access page: the keys that reach this server, what they are " +
+			"allowed to do, and where a client connects. `action` is `list` to read it, `issue` " +
+			"to create a key, `revoke` to take one away, or `settings` to change the switches.\n\n" +
+			"An issued key is shown once, in the answer. Give it to the person and tell them the " +
+			"endpoint — the panel keeps only a hash of it.",
+		Properties: map[string]mcp.Property{
+			"action": {Description: "What to do.", Default: "list",
+				Enum: []string{"list", "issue", "revoke", "settings"}},
+			"name":        {Description: "For `issue`: what to call the key, so its row is recognisable."},
+			"server_name": {Description: "For `issue`: the name a client introduces this panel by."},
+			"token_id":    {Type: "integer", Description: "For `revoke`: the key's id, from `list`."},
+			"enabled":     {Type: "boolean", Description: "For `settings`: whether this server answers at all."},
+			"confirm_destructive": {Type: "boolean",
+				Description: "For `settings`: whether destructive work has to be confirmed first."},
+			"allow_all": {Type: "boolean", Description: "For `settings`: grant every capability."},
+			"permissions": {Type: "array",
+				Description: "For `settings` with allow_all off: the capability keys to grant."},
+			"confirm": {Type: "boolean", Default: false,
+				Description: "The person has been told what is changing and has said yes."},
+		},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			user := mcpUser(ctx)
+			if user == nil {
+				return nil, errors.New("this key is not attached to an account")
+			}
+
+			switch args.StringOr("action", "list") {
+			case "list":
+				return a.mcpAIAccessReport(ctx, user.ID), nil
+
+			case "issue":
+				if serverName := args.String("server_name"); serverName != "" {
+					a.Store.SetSetting(mcpNameSetting, truncate(serverName, 60))
+				}
+
+				secret, hash := store.NewAPIToken()
+
+				id, err := a.Store.CreateAPIToken(ctx, user.ID,
+					truncate(args.StringOr("name", "AI assistant"), 60), hash,
+					store.TokenLabel(secret), a.mcpServerName())
+				if err != nil {
+					a.Log.Error("could not store an access key for an MCP call", "error", err)
+
+					return nil, errors.New("the panel could not store the key")
+				}
+
+				return map[string]any{
+					"token_id":    id,
+					"key":         secret,
+					"server_name": a.mcpServerName(),
+					"endpoint":    a.panelURL() + MCPPath,
+					"next": "This is the only time the key is readable. Give it to the person with " +
+						"the endpoint, and tell them it goes in an Authorization: Bearer header.",
+				}, nil
+
+			case "revoke":
+				id := args.Int("token_id")
+				if id <= 0 {
+					return nil, errors.New("`token_id` is the key to revoke, from the list")
+				}
+
+				if err := a.requireConfirmation(args, fmt.Sprintf("Revoking access key %d, which "+
+					"signs out whatever is using it — possibly this connection", id)); err != nil {
+					return nil, err
+				}
+
+				a.Store.DeleteAPIToken(id, user.ID)
+
+				return map[string]any{"token_id": id, "revoked": true}, nil
+
+			case "settings":
+				// Loosening is the change that needs a person behind it. Tightening
+				// does not: an assistant taking its own permissions away cannot be
+				// how something goes wrong.
+				loosening := (args.Has("allow_all") && args.Bool("allow_all", false) &&
+					!a.Store.SettingBool(mcpAllowAllSetting, true)) ||
+					(args.Has("confirm_destructive") && !args.Bool("confirm_destructive", true) &&
+						a.mcpConfirms())
+
+				if loosening {
+					if err := a.requireConfirmation(args, "Widening what an assistant is allowed "+
+						"to do on this panel without being asked"); err != nil {
+						return nil, err
+					}
+				}
+
+				if args.Has("enabled") && !args.Bool("enabled", true) {
+					if err := a.requireConfirmation(args, "Switching this panel's MCP server off, "+
+						"which ends every assistant connection to it including this one"); err != nil {
+						return nil, err
+					}
+				}
+
+				if args.Has("enabled") {
+					a.Store.SetSetting(mcpEnabledSetting, boolSetting(args.Bool("enabled", true)))
+				}
+
+				if args.Has("confirm_destructive") {
+					a.Store.SetSetting(mcpConfirmSetting,
+						boolSetting(args.Bool("confirm_destructive", true)))
+				}
+
+				if args.Has("allow_all") {
+					a.Store.SetSetting(mcpAllowAllSetting, boolSetting(args.Bool("allow_all", true)))
+				}
+
+				if granted := args.List("permissions"); len(granted) > 0 {
+					keep := []string{}
+
+					for _, capability := range mcpCapabilities {
+						for _, asked := range granted {
+							if asked == capability.Key {
+								keep = append(keep, capability.Key)
+
+								break
+							}
+						}
+					}
+
+					a.Store.SetSetting(mcpPermissionsSetting, strings.Join(keep, ","))
+				}
+
+				return a.mcpAIAccessReport(ctx, user.ID), nil
+			}
+
+			return nil, errors.New("`action` is list, issue, revoke or settings")
+		},
+	}
+}
+
+// mcpAIAccessReport is the AI access page's own contents, minus the keys
+// themselves — the panel only ever holds their hashes.
+func (a *App) mcpAIAccessReport(ctx context.Context, userID int64) map[string]any {
+	tokens, _ := a.Store.APITokens(ctx, userID)
+
+	keys := make([]map[string]any, 0, len(tokens))
+
+	for _, token := range tokens {
+		keys = append(keys, map[string]any{
+			"id":           token.ID,
+			"name":         token.Name,
+			"prefix":       token.Prefix,
+			"server_name":  orDefault(token.ServerName, a.mcpServerName()),
+			"last_used_at": nullable(token.LastUsedAt),
+			"created_at":   token.CreatedAt,
+		})
+	}
+
+	capabilities := make([]map[string]any, 0, len(mcpCapabilities))
+
+	for _, capability := range mcpCapabilities {
+		capabilities = append(capabilities, map[string]any{
+			"key":         capability.Key,
+			"label":       capability.Label,
+			"help":        capability.Help,
+			"destructive": capability.Destructive,
+			"granted":     a.mcpAllows(capability.Key),
+		})
+	}
+
+	return map[string]any{
+		"keys":     keys,
+		"endpoint": a.panelURL() + MCPPath,
+		"settings": map[string]any{
+			"enabled":             a.mcpEnabled(),
+			"confirm_destructive": a.mcpConfirms(),
+			"allow_all":           a.Store.SettingBool(mcpAllowAllSetting, true),
+			"server_name":         a.mcpServerName(),
+		},
+		"capabilities": capabilities,
 	}
 }
 

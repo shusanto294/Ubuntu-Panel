@@ -89,6 +89,16 @@ func (a *App) mcpGetDatabase() *mcp.Tool {
 				summary["users"] = users
 			}
 
+			// Where a person browses the tables themselves. phpMyAdmin is behind
+			// the panel's own session, so this is a link to hand over rather than
+			// something an assistant can follow.
+			if a.Store.ServiceInstalled("phpmyadmin") {
+				link := a.panelURL() + a.phpMyAdminURL(phpMyAdminServerManual)
+
+				summary["phpmyadmin_url"] = link + separatorFor(link) +
+					"db=" + url.QueryEscape(database.Name)
+			}
+
 			return summary, nil
 		},
 	}

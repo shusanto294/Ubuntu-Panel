@@ -21,6 +21,13 @@ func (a *App) routes() *router {
 	rt.get("/build/", "", public, a.serveAssets)
 	rt.get("/favicon.ico", "", public, a.serveAssets)
 	rt.get("/robots.txt", "", public, a.serveAssets)
+
+	// The panel's mark. Served from the root rather than built by Vite: it is
+	// the same image in the browser tab, in the sidebar and on the login page,
+	// and a path that never changes is one a page, a bookmark and the tab icon
+	// can all be pointed at.
+	rt.get("/logo.png", "", public, a.serveAssets)
+	rt.get("/favicon.png", "", public, a.serveAssets)
 	rt.get("/up", "", public, a.health)
 
 	// Auth

@@ -644,7 +644,7 @@ func TestEveryPanelCapabilityHasATool(t *testing.T) {
 	for _, name := range []string{
 		// This machine
 		"server_status", "server_metrics", "panel_settings", "set_panel_domain",
-		"panel_update", "panel_account",
+		"panel_update", "panel_account", "ai_access",
 
 		// Sites, and the tabs on one
 		"list_site_types", "list_sites", "get_site", "create_site", "delete_site",
@@ -653,7 +653,8 @@ func TestEveryPanelCapabilityHasATool(t *testing.T) {
 		"site_access", "wordpress_login_link",
 
 		// Files
-		"list_files", "read_file", "write_file", "manage_files",
+		"list_files", "read_file", "write_file", "manage_files", "upload_file",
+		"download_file",
 
 		// Logs
 		"get_task", "list_tasks",
@@ -676,7 +677,8 @@ func TestEveryPanelCapabilityHasATool(t *testing.T) {
 		"sync_dns",
 
 		// Apps, and the machine itself
-		"list_apps", "install_apps", "uninstall_app", "detect_apps", "run_command",
+		"list_apps", "install_apps", "uninstall_app", "retry_app", "detect_apps",
+		"run_command", "panel_guide",
 	} {
 		if !found[name] {
 			t.Errorf("the tool list is missing %s", name)

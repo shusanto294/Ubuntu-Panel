@@ -132,7 +132,11 @@ func (rn *Renderer) renderShell(w http.ResponseWriter, page []byte) {
 	out.WriteString("<meta charset=\"utf-8\">\n")
 	out.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	out.WriteString("<title>" + html.EscapeString(rn.title) + "</title>\n")
-	out.WriteString("<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">\n")
+	// The panel's own mark, which is the same image the sidebar shows. The .ico
+	// stays behind it for the browsers and bookmark managers that ask for that
+	// name whatever the page says.
+	out.WriteString("<link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">\n")
+	out.WriteString("<link rel=\"apple-touch-icon\" href=\"/logo.png\">\n")
 	out.WriteString(rn.tags)
 	out.WriteString("</head>\n<body class=\"font-sans antialiased\">\n<div id=\"app\" data-page=\"")
 

@@ -6,6 +6,11 @@ import SidebarLink from '@/Components/SidebarLink.vue';
 import FlashMessages from '@/Components/FlashMessages.vue';
 import { Link } from '@inertiajs/vue3';
 
+// Served from the panel's own root rather than bundled: the same file is the
+// browser tab's icon and the login page's mark, and binding it keeps the build
+// from trying to resolve it as a module.
+const logo = '/logo.png';
+
 // A white menu column against a soft grey page: the brand mark at the top,
 // destinations grouped under quiet uppercase headings, and the current row
 // marked by a tinted rounded pill rather than a hard block. The menu collapses
@@ -95,11 +100,11 @@ const sections = [
                 class="flex h-20 items-center gap-3 px-6"
                 :class="collapsed ? 'justify-center px-0' : ''"
             >
-                <span
-                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-sm font-bold text-white"
-                >
-                    UP
-                </span>
+                <img
+                    :src="logo"
+                    alt="Ubuntu Panel"
+                    class="h-10 w-10 shrink-0 object-contain"
+                />
                 <span v-if="!collapsed" class="leading-tight">
                     <span class="block font-semibold text-slate-900">
                         Ubuntu Panel

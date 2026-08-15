@@ -1,13 +1,18 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
+	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
 	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
 	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
 	"github.com/shusanto294/ubuntu-panel-go/internal/system"
@@ -479,6 +484,156 @@ func (a *App) mcpManageFiles() *mcp.Tool {
 				"action":  args.String("action"),
 				"path":    path,
 				"done":    true,
+			}, nil
+		},
+	}
+}
+
+// maxBinaryFile is the ceiling on a file moved through a tool call in either
+// direction. Base64 costs a third on top, and a tool result is read into an
+// assistant's context — a 50 MB archive handed over this way is not a transfer,
+// it is an outage.
+const maxBinaryFile = 4 << 20 // 4 MiB
+
+func (a *App) mcpUploadFile() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "upload_file",
+		Capability: capFilesWrite,
+		Title:      "Upload a file into a site",
+		Description: "Put a file inside a site from base64 content — an image, an archive, a " +
+			"font, anything that is not text. write_file is the one to use for text, and it takes " +
+			"the contents as they are.\n\n" +
+			"Up to 4 MB. Something larger belongs on the machine another way: run_command with " +
+			"curl or wget fetches it straight to the server, which is faster and does not pass " +
+			"through this conversation.",
+		Properties: map[string]mcp.Property{
+			"site":    {Description: "The site's id, or its domain."},
+			"path":    {Description: "The directory to put it in, relative to the site root.", Default: "/"},
+			"name":    {Description: "The filename to write."},
+			"content": {Description: "The file's bytes, base64 encoded."},
+		},
+		Required: []string{"site", "name", "content"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			site, err := a.mcpSite(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			name := args.String("name")
+			if name == "" || strings.ContainsAny(name, "/\\") {
+				return nil, errors.New("`name` is a filename, without a path in it — `path` is the folder")
+			}
+
+			raw, err := base64.StdEncoding.DecodeString(
+				strings.TrimSpace(args.String("content")))
+			if err != nil {
+				return nil, errors.New("`content` is the file's bytes, base64 encoded")
+			}
+
+			if len(raw) > maxBinaryFile {
+				return nil, fmt.Errorf("that is %d bytes, and this tool carries up to %d — "+
+					"fetch it onto the server with run_command instead", len(raw), maxBinaryFile)
+			}
+
+			// Staged and moved, the same as the browser's own upload: the bytes
+			// never appear on a command line, and the file lands owned by the
+			// site's user.
+			staged, err := os.CreateTemp("", "ubuntu-panel-mcp-upload-*")
+			if err != nil {
+				return nil, errors.New("the upload could not be staged on the server")
+			}
+
+			defer os.Remove(staged.Name())
+
+			if _, err := staged.Write(raw); err != nil {
+				staged.Close()
+
+				return nil, errors.New("the upload could not be staged on the server")
+			}
+
+			staged.Close()
+
+			// Readable by root, which is what moves it into place.
+			os.Chmod(staged.Name(), 0o644)
+
+			folder := args.StringOr("path", "/")
+
+			if err := a.Sites.PlaceUpload(site, folder, name, staged.Name()); err != nil {
+				return nil, err
+			}
+
+			return map[string]any{
+				"site_id":  site.ID,
+				"domain":   site.Domain,
+				"path":     strings.TrimRight(folder, "/") + "/" + name,
+				"bytes":    len(raw),
+				"uploaded": true,
+			}, nil
+		},
+	}
+}
+
+func (a *App) mcpDownloadFile() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "download_file",
+		Capability: capFilesRead,
+		Title:      "Download a file from a site",
+		ReadOnly:   true,
+		Description: "Read a file out of a site as base64 — an image, a database dump, anything " +
+			"that is not text. read_file is the one for text, and it needs no decoding.\n\n" +
+			"Up to 4 MB. For a folder, or for something larger, make an archive with manage_files " +
+			"and copy it off the machine another way.",
+		Properties: map[string]mcp.Property{
+			"site": {Description: "The site's id, or its domain."},
+			"path": {Description: "The file, relative to the site root."},
+		},
+		Required: []string{"site", "path"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			site, err := a.mcpSite(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			download, err := a.Sites.DownloadFor(site, args.String("path"))
+			if err != nil {
+				return nil, err
+			}
+
+			if strings.HasSuffix(download.Name, ".tar.gz") &&
+				!strings.HasSuffix(args.String("path"), ".tar.gz") {
+				return nil, errors.New("that is a directory. Zip it with manage_files first, or " +
+					"read the files inside it one at a time")
+			}
+
+			var (
+				buffer bytes.Buffer
+				over   bool
+			)
+
+			proc.Stream(download.Command, 10*time.Minute, func(chunk []byte) {
+				if buffer.Len() > maxBinaryFile {
+					over = true
+
+					return
+				}
+
+				buffer.Write(chunk)
+			})
+
+			if over || buffer.Len() > maxBinaryFile {
+				return nil, fmt.Errorf("that file is larger than the %d bytes this tool carries — "+
+					"copy it off the machine another way", maxBinaryFile)
+			}
+
+			return map[string]any{
+				"site_id":      site.ID,
+				"domain":       site.Domain,
+				"path":         args.String("path"),
+				"name":         download.Name,
+				"content_type": download.Type,
+				"bytes":        buffer.Len(),
+				"content":      base64.StdEncoding.EncodeToString(buffer.Bytes()),
+				"encoding":     "base64",
 			}, nil
 		},
 	}

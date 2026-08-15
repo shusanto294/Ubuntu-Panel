@@ -308,6 +308,20 @@ func (s *Server) Add(tools ...*Tool) {
 	sort.Slice(s.tools, func(a, b int) bool { return s.tools[a].Name < s.tools[b].Name })
 }
 
+// ToolNames is every registered tool, in the order they are offered.
+//
+// Permissions are not applied: this is the registry's own contents, which is
+// what a caller checking its documentation against its tools wants to compare.
+func (s *Server) ToolNames() []string {
+	names := make([]string, 0, len(s.tools))
+
+	for _, tool := range s.tools {
+		names = append(names, tool.Name)
+	}
+
+	return names
+}
+
 // request is one JSON-RPC call. A request with no id is a notification, which
 // is answered with no body at all.
 type request struct {
