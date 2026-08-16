@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
 	"github.com/shusanto294/ubuntu-panel-go/internal/session"
 	"github.com/shusanto294/ubuntu-panel-go/internal/store"
 	"github.com/shusanto294/ubuntu-panel-go/internal/web"
@@ -25,6 +27,10 @@ type panel struct {
 	t      *testing.T
 	server *httptest.Server
 	client *http.Client
+
+	// The same database the server is reading, so a test can look at what a
+	// request left behind rather than only at what it answered with.
+	db *store.Store
 }
 
 func start(t *testing.T) *panel {
@@ -42,6 +48,20 @@ func start(t *testing.T) *panel {
 		t.Fatalf("opening the database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+
+	// A real panel is given an application key at install time, and everything
+	// it stores a secret for — a mailbox password, a DNS credential, a site's
+	// admin account — goes through it. Without one here the harness is a panel
+	// that cannot keep a secret, and every path that stores one fails in the
+	// tests for a reason no real machine has. Fixed rather than random so a
+	// failure is reproducible.
+	cipher, err := crypto.New(base64.StdEncoding.EncodeToString(
+		[]byte("ubuntu-panel-test-key-0123456789")))
+	if err != nil {
+		t.Fatalf("building the test application key: %v", err)
+	}
+
+	db.UseCipher(cipher)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -64,7 +84,7 @@ func start(t *testing.T) *panel {
 		},
 	}
 
-	return &panel{t: t, server: server, client: client}
+	return &panel{t: t, server: server, client: client, db: db}
 }
 
 func (p *panel) do(method, path string, body string, headers map[string]string) *http.Response {

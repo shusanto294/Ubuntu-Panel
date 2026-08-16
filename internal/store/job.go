@@ -39,6 +39,35 @@ func (s *Store) PushJob(kind string, payload any) (int64, error) {
 	return result.LastInsertId()
 }
 
+// QueuedJobs is the work still waiting, oldest first.
+//
+// A read of the queue rather than a claim on it: nothing here reserves a job,
+// so calling it does not take work away from a worker. It exists so that the
+// panel's own pages and an assistant over MCP can be checked to queue the same
+// thing — the two paths are meant to be one, and this is how a test says so.
+func (s *Store) QueuedJobs(ctx context.Context) ([]*Job, error) {
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT id, kind, payload, attempts FROM jobs WHERE status = 'queued' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []*Job
+
+	for rows.Next() {
+		job := &Job{}
+
+		if err := rows.Scan(&job.ID, &job.Kind, &job.Payload, &job.Attempts); err != nil {
+			return nil, err
+		}
+
+		jobs = append(jobs, job)
+	}
+
+	return jobs, rows.Err()
+}
+
 // ClaimJob takes the next job that is due.
 //
 // The claim is a conditional UPDATE, which is what stops two workers running
