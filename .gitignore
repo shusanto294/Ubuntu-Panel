@@ -9,3 +9,7 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+
+# A local run's database, logs and site root. Machine-specific, and the logs
+# carry the absolute paths of whoever ran it.
+/.local/

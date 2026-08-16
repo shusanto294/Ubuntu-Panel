@@ -1,7 +1,0 @@
-time=2026-08-12T23:21:12.926+06:00 level=INFO msg=starting panel="Ubuntu Panel" version=2.5.30
-time=2026-08-12T23:21:12.931+06:00 level=INFO msg="database ready" path="/Users/shusantokumarmodak/Desktop/Ubuntu Panel Go/.local/panel.db"
-time=2026-08-12T23:21:12.933+06:00 level=INFO msg="no account exists yet — open the panel and it will ask you to create one"
-time=2026-08-12T23:21:12.933+06:00 level=INFO msg="queue started" workers=2
-time=2026-08-12T23:21:12.934+06:00 level=INFO msg=listening address=127.0.0.1:8088
-time=2026-08-12T23:21:15.696+06:00 level=INFO msg=request method=GET path=/ status=302 duration=1ms
-time=2026-08-12T23:21:15.721+06:00 level=INFO msg="shutting down"

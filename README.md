@@ -280,3 +280,16 @@ literal in this codebase and user input reaches it only through `proc.Quote`,
 and files are written by staging and copying rather than by echoing contents
 through a command line — so nothing with a quote, a newline or a `$` in it can
 be mangled, and no password ever appears in `ps`.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, change it, run it for clients, sell
+hosting on it, fork it and rename it; keep the copyright notice with the copy.
+There is no licence key, no activation, and nothing in the panel phones home to
+ask whether it may run.
+
+A release is one binary with the frontend embedded, so it carries its
+dependencies with it. They are MIT, BSD and MPL-2.0, and they are listed with
+their notices in [THIRD-PARTY.md](THIRD-PARTY.md). The software the panel
+installs on your server — nginx, PHP, MariaDB, MongoDB, Postfix, WordPress and
+the rest — is not part of this project and stays under its own licence.
