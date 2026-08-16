@@ -104,6 +104,14 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/cache", "sites.cache", authenticated, a.sitesCache)
 	rt.post("/sites/{site}/access", "sites.access", authenticated, a.sitesAccess)
 
+	rt.post("/sites/{site}/backups", "sites.backups.store", authenticated, a.sitesBackupStore)
+	rt.post("/sites/{site}/backups/schedule", "sites.backups.schedule", authenticated,
+		a.sitesBackupSchedule)
+	rt.post("/sites/{site}/backups/{backup}/restore", "sites.backups.restore", authenticated,
+		a.sitesBackupRestore)
+	rt.delete("/sites/{site}/backups/{backup}", "sites.backups.destroy", authenticated,
+		a.sitesBackupDestroy)
+
 	rt.get("/sites/{site}/files", "sites.files", authenticated, a.sitesFiles)
 	rt.get("/sites/{site}/file", "sites.file", authenticated, a.sitesFileRead)
 	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)

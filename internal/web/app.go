@@ -109,6 +109,12 @@ func (a *App) Start(ctx context.Context) {
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLReachable(ctx)
 	}()
+
+	// The sites that back themselves up. Its own goroutine rather than part of
+	// the queue, because it is a clock rather than a piece of work: it does
+	// nothing but look at the time every minute and push jobs onto the queue
+	// that has just started.
+	go a.runBackupSchedules(ctx)
 }
 
 // Stop lets the workers finish.

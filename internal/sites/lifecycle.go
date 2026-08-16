@@ -292,6 +292,31 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 		list.Add("Delete site files", "sudo rm -rf "+proc.Quote(site.RootPath))
 	}
 
+	// The backups go whatever was decided about the files.
+	//
+	// They are copies of a site that is being removed, so keeping them is disk
+	// nobody accounts for holding a site nobody has — and the rows would offer a
+	// restore onto a site that no longer exists. Somebody who wants the site
+	// back should not delete it.
+	list.AddFn("Delete this site's backups", func(runner *tasks.Runner) (string, error) {
+		backups, err := s.Store.BackupsForSite(ctx, site.ID)
+		if err != nil {
+			return "", err
+		}
+
+		for _, backup := range backups {
+			s.RemoveBackup(backup)
+		}
+
+		proc.Ok("sudo rm -rf " + proc.Quote(BackupRoot+"/"+site.Domain))
+
+		if len(backups) == 0 {
+			return "There were none.", nil
+		}
+
+		return fmt.Sprintf("%d removed.", len(backups)), nil
+	}).Optional()
+
 	runner := tasks.New(s.Store, taskID)
 
 	if !runner.Run(list) {

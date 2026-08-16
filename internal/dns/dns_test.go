@@ -195,6 +195,43 @@ func TestOnlyThePanelsOwnMailRecordsAreMatched(t *testing.T) {
 	}
 }
 
+// The record a mail client looks up to configure itself is published with the
+// rest.
+//
+// Thunderbird asks `autoconfig.<domain>` for one XML file the moment somebody
+// types an address on the domain, and takes the hostnames and ports out of it.
+// Without the record that lookup fails, the client falls back to guessing, and
+// the person is left typing four settings they were never told — which is the
+// mailbox setup this record exists to remove.
+func TestTheAutoconfigRecordIsPublishedWithTheMailRecords(t *testing.T) {
+	domain := &store.EmailDomain{Domain: "example.com"}
+
+	records := MailRecords(domain, "203.0.113.10")
+
+	var found *Record
+
+	for i, record := range records {
+		if record.Name == "autoconfig.example.com" {
+			found = &records[i]
+		}
+	}
+
+	if found == nil {
+		t.Fatalf("no record for autoconfig.example.com was published:\n%+v", records)
+	}
+
+	if found.Type != "A" || found.Content != "203.0.113.10" {
+		t.Errorf("autoconfig.example.com is %s %q, wanted an A at this server",
+			found.Type, found.Content)
+	}
+
+	// And it is the panel's to remove again, or deleting the domain leaves a
+	// hostname pointing at a server that no longer serves the file.
+	if !ours(Record{Type: "A", Name: "autoconfig.example.com", Content: "203.0.113.10"}, domain) {
+		t.Error("the autoconfig record would be left behind when the domain is deleted")
+	}
+}
+
 // A selector other than the default still has its key removed.
 func TestADKIMRecordIsMatchedOnTheDomainsOwnSelector(t *testing.T) {
 	domain := &store.EmailDomain{Domain: "example.com", DKIMSelector: "panel2026"}

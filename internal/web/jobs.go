@@ -20,6 +20,10 @@ func (a *App) registerJobs() {
 		Database int64 `json:"database"`
 	}
 
+	type backupPayload struct {
+		Backup int64 `json:"backup"`
+	}
+
 	type userPayload struct {
 		User int64 `json:"user"`
 	}
@@ -78,6 +82,29 @@ func (a *App) registerJobs() {
 		}
 
 		return a.Sites.Certificate(ctx, payload.Site)
+	})
+
+	// Both keyed by the backup's own id rather than the site's: the row was
+	// written before the job was pushed, so a backup that is queued is already
+	// something the Backups tab can show as pending.
+	a.Queue.Handle(queue.SiteBackup, func(ctx context.Context, job *store.Job) error {
+		var payload backupPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Sites.Backup(ctx, payload.Backup)
+	})
+
+	a.Queue.Handle(queue.SiteRestore, func(ctx context.Context, job *store.Job) error {
+		var payload backupPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Sites.Restore(ctx, payload.Backup)
 	})
 
 	a.Queue.Handle(queue.SitePull, func(ctx context.Context, job *store.Job) error {

@@ -88,6 +88,53 @@ var panelGuide = []guideArea{
 		},
 	},
 	{
+		Key:  "backups",
+		Page: "Sites → Backups",
+		What: "A copy of one site's directory and the database the panel made for it, taken on " +
+			"demand or on a schedule, and put back over the top of what is there now. The same " +
+			"for every kind of site: what is copied is the directory and the database, not " +
+			"anything WordPress or Laravel specific.",
+		Tools: []string{"list_site_backups", "create_site_backup", "restore_site_backup",
+			"delete_site_backup", "site_backup_schedule"},
+		Recipes: []guideRecipe{
+			{
+				Task: "Before doing something to a site that cannot be undone",
+				Steps: []string{
+					"create_site_backup with a `note` saying what is about to happen — \"before the WooCommerce 9 upgrade\".",
+					"list_site_backups until that backup is `complete`. Do not start the risky work until it is: a backup that is still running is not a backup.",
+					"Then do the work. If it goes wrong, restore_site_backup with that backup's id.",
+				},
+			},
+			{
+				Task: "Put a site back the way it was",
+				Steps: []string{
+					"list_site_backups — pick by `created_at` and `note`, and check `status` is `complete`.",
+					"Tell the person the date of the backup and that everything since it is lost, including anything added today.",
+					"Offer create_site_backup first, so today's version is recoverable too.",
+					"restore_site_backup with `confirm: true` once they have said yes. get_site until its status is `active` again.",
+				},
+			},
+			{
+				Task: "Set a site up to back itself up",
+				Steps: []string{
+					"site_backup_schedule with `daily`, `weekly` or `monthly` and a `keep`.",
+					"Check the disk first with server_status: a large site kept thirty times over is a full disk, and the panel does not stop you.",
+				},
+			},
+		},
+		Warnings: []string{
+			"restore_site_backup replaces the whole site — every file under its root and " +
+				"everything in its database. There is no undo, the site is offline while it " +
+				"runs, and anything done since that backup was taken is gone. Say all of that " +
+				"to the person before calling it.",
+			"A database somebody attached by hand is never backed up and never overwritten. " +
+				"Only the one the panel created for the site is, which is what `database` in " +
+				"list_site_backups names.",
+			"Backups live on this same server. They are the answer to a bad upgrade, not to a " +
+				"dead disk — say so if somebody is relying on them as off-site copies.",
+		},
+	},
+	{
 		Key:  "files",
 		Page: "Sites → Files",
 		What: "The file manager inside one site, rooted at the site's own directory. Nothing " +
@@ -125,7 +172,16 @@ var panelGuide = []guideArea{
 					"If the mail server is missing: install_apps with mail (and roundcube for webmail), then configure_mail_server.",
 					"If the domain is not there: create_email_domain with example.com, then get_email_domain until its status is active.",
 					"create_mailbox with the whole address. The password comes back in the answer, once.",
-					"Give the person the address, the password, the webmail URL and the IMAP/SMTP settings from that answer.",
+					"Give the person the address and the password. In Thunderbird that is the whole setup — the domain's autoconfig record hands it the hostnames and ports. Pass on the webmail URL and the IMAP/SMTP settings for anything that cannot look them up.",
+				},
+			},
+			{
+				Task: "A mail client will not configure itself for an address on this server",
+				Steps: []string{
+					"get_email_domain — `autoconfig_host` is the hostname the client asks, `autoconfig_url` the file it fetches.",
+					"sync_email_dns if that hostname has no A record. Without it the client falls back to guessing hostnames and ports, which is the setup that ends in 'could not determine the settings'.",
+					"retry_email_domain if the record is there and the file is not served: the vhost for it is written during the domain's setup.",
+					"Anything that does not speak Mozilla autoconfiguration at all gets `client_settings` typed in by hand.",
 				},
 			},
 			{
@@ -251,6 +307,12 @@ var panelGuide = []guideArea{
 					"get_task with the id for the steps and the tail of the console.",
 				},
 			},
+		},
+		Warnings: []string{
+			"set_panel_domain closes this server's IP address as a way into the panel. The " +
+				"hostname becomes the only address there is — the panel's own port answers " +
+				"under that name and 404s everything else — so say so before calling it, and " +
+				"make sure the name resolves here first.",
 		},
 	},
 	{

@@ -271,9 +271,13 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	backups, backupSettings := a.backupProps(r.Context(), site)
+
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
 		"certbot":       a.Store.ServiceInstalled("certbot"),
 		"database":      database,
+		"backups":       backups,
+		"backup":        backupSettings,
 		"logFiles":      a.siteLogFiles(site, 200),
 		"resolution":    resolution,
 		"phpDirectives": directives,

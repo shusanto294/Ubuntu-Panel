@@ -103,12 +103,12 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                 </p>
 
                 <p v-if="onCustomDomain" class="mt-1 text-sm text-slate-500">
+                    <span class="font-mono">{{ panel.domain }}:{{ panel.port }}</span>
+                    reaches it too. This server's bare address does not, on any
+                    port: 80 and 443 belong to the sites it hosts, and
                     <span class="font-mono">{{ panel.public_ip }}:{{ panel.port }}</span>
-                    reaches it too, and is the address that still works if the
-                    hostname stops resolving. Nothing answers on this server's bare
-                    address: ports 80 and 443 belong to the sites it hosts, so
-                    somebody who types the IP in a browser is not shown this login
-                    page.
+                    now gets the same "no site is configured" 404, so somebody who
+                    scans the IP is never shown this login page.
                 </p>
 
                 <p v-else class="mt-1 text-sm text-slate-500">
@@ -178,6 +178,16 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                             certificate fails. Served on 80 and 443 under this name
                             alone — a CDN in front of it is fine. Expiry warnings go
                             to your account address.
+                        </p>
+                        <p class="mt-1 text-xs text-slate-500">
+                            Setting a hostname closes the IP address as a way in.
+                            If the name ever stops resolving, tunnel to the panel
+                            instead:
+                            <span class="font-mono"
+                                >ssh -L 8080:127.0.0.1:{{ panel.bind_port }}
+                                root@{{ panel.public_ip }}</span
+                            >, then open
+                            <span class="font-mono">http://127.0.0.1:8080</span>.
                         </p>
                     </div>
 

@@ -43,8 +43,12 @@ func TestThePanelClaimsNoBarePort(t *testing.T) {
 
 		for _, block := range strings.Split(vhost, "server {")[1:] {
 			if strings.Contains(block, "listen 8443") {
-				if !strings.Contains(block, "proxy_pass http://127.0.0.1:8088") {
-					t.Errorf("the %s vhost's panel-port block does not proxy to the panel:\n%s",
+				// The block on that port either serves the panel or refuses the
+				// name outright — the second is the one that stands where the
+				// bare IP used to reach the login form.
+				if !strings.Contains(block, "proxy_pass http://127.0.0.1:8088") &&
+					!strings.Contains(block, "return 404") {
+					t.Errorf("the %s vhost's panel-port block neither proxies nor refuses:\n%s",
 						name, block)
 				}
 
@@ -58,6 +62,69 @@ func TestThePanelClaimsNoBarePort(t *testing.T) {
 				t.Errorf("the %s vhost has a block on 80 or 443 that is not the hostname's:\n%s",
 					name, block)
 			}
+		}
+	}
+}
+
+// A hostname takes the panel off the bare address altogether, the port
+// included.
+//
+// Before a hostname there is nowhere else to go: the panel's port answers to
+// every name, because the IP with the port on it is the only address there is.
+// Once the operator has pointed a name at this machine and typed it into
+// Settings, that name is the address — and the IP goes quiet on the port the way
+// it already is on 80 and 443, with the catch-all's own 404 rather than a login
+// form.
+func TestAHostnameTakesThePanelOffTheBareAddress(t *testing.T) {
+	// With no hostname the port is the address, and answers to anything.
+	bare := panelVhost("", 8443, 8088, "8.3", false)
+
+	if !strings.Contains(bare, "listen 8443 default_server;") ||
+		!strings.Contains(bare, "server_name _;") {
+		t.Errorf("with no hostname the panel's port is not the address that works:\n%s", bare)
+	}
+
+	if strings.Contains(bare, "return 404") {
+		t.Errorf("with no hostname the panel's port refuses the address it is reached on:\n%s", bare)
+	}
+
+	for _, secure := range []bool{false, true} {
+		vhost := panelVhost("panel.example.com", 8443, 8088, "8.3", secure)
+
+		for _, block := range strings.Split(vhost, "server {")[1:] {
+			if !strings.Contains(block, "listen 8443") {
+				continue
+			}
+
+			// The block that serves the panel is named. A `_` there is the
+			// bare IP opening the login form again, which is the bug.
+			if strings.Contains(block, "proxy_pass") &&
+				!strings.Contains(block, "server_name panel.example.com;") {
+				t.Errorf("the panel's port serves the panel to any name (secure=%v):\n%s",
+					secure, block)
+			}
+
+			if strings.Contains(block, "server_name _;") {
+				if !strings.Contains(block, "return 404 \"No site is configured for this hostname.") {
+					t.Errorf("the panel's port answers an unknown name with something other "+
+						"than the catch-all's 404 (secure=%v):\n%s", secure, block)
+				}
+
+				// A default server on an `ssl` port with no certificate is a
+				// configuration nginx refuses for the whole machine.
+				if strings.Contains(block, " ssl ") &&
+					!strings.Contains(block, "ssl_certificate     "+sites.DefaultCert+".crt;") {
+					t.Errorf("the refusing block speaks TLS with no certificate (secure=%v):\n%s",
+						secure, block)
+				}
+			}
+		}
+
+		// Exactly one default server on the port, and it is the refusing one.
+		if got := strings.Count(vhost, "listen 8443 default_server;") +
+			strings.Count(vhost, "listen 8443 ssl default_server;"); got != 1 {
+			t.Errorf("the panel's port has %d default servers, wanted 1 (secure=%v):\n%s",
+				got, secure, vhost)
 		}
 	}
 }

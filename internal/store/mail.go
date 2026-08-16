@@ -328,6 +328,16 @@ func (domain *EmailDomain) RecordIDs() map[string]string {
 // not required to be.
 func (domain *EmailDomain) WebmailHost() string { return "mail." + domain.Domain }
 
+// AutoconfigHost is where a mail client asks what this domain's settings are.
+//
+// The name is not a choice. Thunderbird, and everything else that implements
+// Mozilla's autoconfiguration, fetches
+// `//autoconfig.<domain>/mail/config-v1.1.xml` after the person has typed their
+// address and password and nothing else — so `autoconfig.<domain>` is the one
+// hostname that makes a mail client set itself up, and any other spelling of it
+// is a hostname nobody asks for.
+func (domain *EmailDomain) AutoconfigHost() string { return "autoconfig." + domain.Domain }
+
 // EmailAccountSummary is one mailbox, in the shape every page that shows one
 // reads: the list on the Email page, the domain's own page, and the mailbox's.
 //
@@ -388,14 +398,23 @@ func (s *Store) EmailDomainSummary(ctx context.Context, domain *EmailDomain, wit
 		"webmail_url":     "https://" + webmailHost + "/",
 		"accounts":        accounts,
 
+		// Where a mail client asks what the settings below are, so that
+		// nobody has to be told them. Thunderbird reads this file after the
+		// address and password and configures itself; the A record that
+		// points at it is published with the MX and the SPF.
+		"autoconfig_host": domain.AutoconfigHost(),
+		"autoconfig_url":  "http://" + domain.AutoconfigHost() + "/mail/config-v1.1.xml",
+
 		// What to type into a mail client, or paste into an application's
 		// mailer configuration — the same information asked for in a
-		// different shape.
+		// different shape. Thunderbird does not need any of it: it reads the
+		// autoconfig file above and fills all four in itself.
 		"client_settings": map[string]any{
-			"imap":     map[string]any{"host": webmailHost, "port": 993, "security": "SSL/TLS"},
-			"smtp":     map[string]any{"host": webmailHost, "port": 587, "security": "STARTTLS"},
-			"smtp_ssl": map[string]any{"host": webmailHost, "port": 465, "security": "SSL/TLS"},
-			"username": "the full email address",
+			"imap":       map[string]any{"host": webmailHost, "port": 993, "security": "SSL/TLS"},
+			"smtp":       map[string]any{"host": webmailHost, "port": 587, "security": "STARTTLS"},
+			"smtp_ssl":   map[string]any{"host": webmailHost, "port": 465, "security": "SSL/TLS"},
+			"username":   "the full email address",
+			"autoconfig": "Thunderbird finds these itself from " + domain.AutoconfigHost(),
 		},
 
 		"created_at": domain.CreatedAt,

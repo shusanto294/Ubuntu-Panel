@@ -69,6 +69,15 @@ type Site struct {
 	// issued, renewed and never presented to anybody.
 	TLSMode string
 
+	// BackupSchedule is how often the panel takes a backup of this site on its
+	// own: "off", "daily", "weekly" or "monthly". BackupKeep is how many to
+	// keep before the oldest is deleted, and BackupNextAt is the Unix second
+	// the next one is due — recomputed whenever the schedule changes and after
+	// every scheduled run, so nothing has to parse a cron expression to decide.
+	BackupSchedule string
+	BackupKeep     int
+	BackupNextAt   int64
+
 	CreatedAt string
 }
 
@@ -81,7 +90,8 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	app_port, start_command, build_command, repository, branch,
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
 	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
-	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode, created_at`
+	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode,
+	backup_schedule, backup_keep, backup_next_at, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -94,7 +104,8 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var aliases, nodeVersion, lastError, startCommand, buildCommand text
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
 	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL, cacheMode, tlsMode text
-	var cacheEnabled nullInt
+	var backupSchedule text
+	var cacheEnabled, backupKeep, backupNextAt nullInt
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -103,7 +114,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
 		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
-		&site.CreatedAt)
+		&backupSchedule, &backupKeep, &backupNextAt, &site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -129,6 +140,9 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.CacheTTL = cacheTTL.String()
 	site.CacheMode = cacheMode.String()
 	site.TLSMode = tlsMode.String()
+	site.BackupSchedule = backupSchedule.String()
+	site.BackupKeep = int(backupKeep.Int64)
+	site.BackupNextAt = backupNextAt.Int64
 
 	// A site from before the choice existed has the page cache or nothing, and
 	// says so rather than reading as "off" with the cache running.

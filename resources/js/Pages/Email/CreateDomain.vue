@@ -36,7 +36,9 @@ const submit = () => form.post(route('email.domains.store'));
                 </h2>
                 <p class="text-sm text-slate-500">
                     Generates a DKIM key and, with a DNS provider connected,
-                    publishes MX, SPF, DKIM and DMARC records.
+                    publishes MX, SPF, DKIM, DMARC and the autoconfig record
+                    that lets a mail client set itself up from the address
+                    alone.
                 </p>
             </div>
         </template>

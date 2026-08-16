@@ -30,6 +30,14 @@ const (
 	// without rebuilding the application to get there.
 	SiteCertificate = "site.certificate"
 
+	// SiteBackup copies a site's files and database; SiteRestore puts one of
+	// those copies back over the top of what is there now. Both are on the
+	// queue rather than in the request because a site of any size takes minutes
+	// — and because a restore interrupted by a panel restart has to be able to
+	// pick itself back up.
+	SiteBackup  = "site.backup"
+	SiteRestore = "site.restore"
+
 	DatabaseCreate = "database.create"
 	DatabaseDelete = "database.delete"
 

@@ -1009,9 +1009,10 @@ chown -R www-data:www-data /var/www/letsencrypt 2>/dev/null || true
 WRITE_DEFAULT_VHOST=1
 
 if [ -f "$NGINX_SITE" ]; then
-    # The hostname, not the panel-port block's `_`. The panel's own block comes
-    # first in the file and answers every name that reaches its port, so the
-    # first server_name is always `_` on a panel that has one.
+    # The hostname, not a `_`. A panel with no hostname has `_` and nothing
+    # else — its port answers every name, because that address is all there is.
+    # A panel with one names it on every block, and 404s `_` on the port, so the
+    # first server_name that is not `_` is the hostname.
     VHOST_NAME="$(awk '/^[[:space:]]*server_name[[:space:]]+[^_]/{gsub(/;/,""); print $2; exit}' \
         "$NGINX_SITE" 2>/dev/null || true)"
 

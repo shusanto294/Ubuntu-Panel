@@ -145,8 +145,9 @@ func (a *App) mcpListEmailDomains() *mcp.Tool {
 		Title:      "List mail domains",
 		ReadOnly:   true,
 		Description: "Every domain this server accepts and sends mail for, with its mailboxes, " +
-			"its DKIM record, its webmail address and the IMAP and SMTP settings a mail client " +
-			"needs. Also says whether the mail server itself is installed and configured.",
+			"its DKIM record, its webmail address, the autoconfig host a mail client sets itself " +
+			"up from, and the IMAP and SMTP settings anything that cannot look them up needs. " +
+			"Also says whether the mail server itself is installed and configured.",
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			domains, err := a.Store.EmailDomains(ctx)
 			if err != nil {
@@ -202,8 +203,9 @@ func (a *App) mcpCreateEmailDomain() *mcp.Tool {
 		Title:      "Add a mail domain",
 		Description: "Set this server up to accept and send mail for a domain: its DKIM key, its " +
 			"Postfix and Dovecot entries, the webmail host at mail.<domain> with its certificate, " +
-			"and — where a DNS credential holds the domain — the MX, SPF, DKIM and DMARC records " +
-			"published for it.\n\n" +
+			"the autoconfig host at autoconfig.<domain> that hands Thunderbird its own settings, " +
+			"and — where a DNS credential holds the domain — the MX, SPF, DKIM, DMARC and " +
+			"autoconfig records published for it.\n\n" +
 			"Asynchronous: the tool returns as soon as the work is queued, so poll " +
 			"get_email_domain until its status is `active` or `failed`. Add the domain before " +
 			"creating an address on it; create_mailbox is the second half.",
@@ -290,7 +292,7 @@ func (a *App) mcpCreateEmailDomain() *mcp.Tool {
 				answer["dns"] = map[string]any{
 					"managed": false,
 					"tell_the_person": "No DNS provider connected to this panel holds " + domain +
-						", so its MX, SPF, DKIM and DMARC records have to be added wherever the " +
+						", so its MX, SPF, DKIM, DMARC and autoconfig records have to be added wherever the " +
 						"domain's DNS lives. get_email_domain lists exactly what they are once " +
 						"the setup has finished.",
 				}
@@ -375,9 +377,9 @@ func (a *App) mcpSyncEmailDNS() *mcp.Tool {
 		Name:       "sync_email_dns",
 		Capability: capEmail,
 		Title:      "Publish a mail domain's DNS records",
-		Description: "Write this domain's MX, SPF, DKIM and DMARC records at its DNS provider " +
-			"again — after the key changed, or when the setup's own attempt failed. The answer " +
-			"says what it wrote.",
+		Description: "Write this domain's MX, SPF, DKIM, DMARC and autoconfig records at its DNS " +
+			"provider again — after the key changed, or when the setup's own attempt failed. The " +
+			"answer says what it wrote.",
 		Properties: map[string]mcp.Property{
 			"domain": {Description: "The domain's id, or the domain itself."},
 		},
@@ -530,10 +532,14 @@ func (a *App) mcpCreateMailbox() *mcp.Tool {
 					"smtp":     map[string]any{"host": host, "port": 587, "security": "STARTTLS"},
 					"smtp_ssl": map[string]any{"host": host, "port": 465, "security": "SSL/TLS"},
 					"username": local + "@" + domain.Domain,
+					"autoconfig": "Thunderbird reads these from " + domain.AutoconfigHost() +
+						" — the address and the password are all it needs typed.",
 				},
 				"next": "The mailbox is being created on the queue; get_email_domain says when it " +
-					"is active. Give the person the address, the password and the client settings — " +
-					"the password is not shown again.",
+					"is active. Give the person the address and the password — in Thunderbird those " +
+					"two are the whole setup, because the domain's autoconfig record hands it the " +
+					"hostnames and ports. The client settings are there for anything that cannot " +
+					"look them up. The password is not shown again.",
 			}, nil
 		},
 	}
@@ -807,6 +813,8 @@ func (a *App) mcpGetMailbox() *mcp.Tool {
 				"imap":     map[string]any{"host": domain.WebmailHost(), "port": 993, "security": "SSL/TLS"},
 				"smtp":     map[string]any{"host": domain.WebmailHost(), "port": 587, "security": "STARTTLS"},
 				"smtp_ssl": map[string]any{"host": domain.WebmailHost(), "port": 465, "security": "SSL/TLS"},
+				"autoconfig": "Thunderbird reads these from " + domain.AutoconfigHost() +
+					" — the address and the password are all it needs typed.",
 			}
 
 			return summary, nil

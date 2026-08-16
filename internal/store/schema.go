@@ -241,6 +241,33 @@ var schema = []string{
 		created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
 	`CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, available_at)`,
+
+	// One backup of one site: where it is on disk, what went into it, and how
+	// big it turned out.
+	//
+	// The row is written before the work starts, so a backup that fails halfway
+	// is a `failed` row somebody can see and delete rather than a directory
+	// nothing knows about. `path` is the directory the archive members live in;
+	// removing the row and removing that directory are the same operation, and
+	// the panel does both.
+	`CREATE TABLE IF NOT EXISTS site_backups (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		site_id      INTEGER NOT NULL,
+		user_id      INTEGER,
+		kind         TEXT NOT NULL DEFAULT 'manual',
+		status       TEXT NOT NULL DEFAULT 'pending',
+		path         TEXT NOT NULL DEFAULT '',
+		note         TEXT,
+		size_bytes   INTEGER NOT NULL DEFAULT 0,
+		has_files    INTEGER NOT NULL DEFAULT 1,
+		has_database INTEGER NOT NULL DEFAULT 0,
+		database_engine TEXT,
+		database_name   TEXT,
+		last_error   TEXT,
+		created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		finished_at  TEXT
+	)`,
+	`CREATE INDEX IF NOT EXISTS site_backups_site ON site_backups(site_id, id DESC)`,
 }
 
 // migrations are ALTER TABLE statements for databases created by an older
@@ -260,6 +287,14 @@ var migrations = []string{
 	`ALTER TABLE api_tokens ADD COLUMN server_name TEXT`,
 	`ALTER TABLE sites ADD COLUMN tls_mode TEXT`,
 	`ALTER TABLE email_accounts ADD COLUMN name TEXT`,
+
+	// How often this site backs itself up, how many to keep, and when the next
+	// one is due. `backup_next_at` is a Unix second rather than a cron line:
+	// the panel decides when, so there is no expression to parse and nothing to
+	// disagree with about what "daily" means.
+	`ALTER TABLE sites ADD COLUMN backup_schedule TEXT`,
+	`ALTER TABLE sites ADD COLUMN backup_keep INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sites ADD COLUMN backup_next_at INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

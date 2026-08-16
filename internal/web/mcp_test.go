@@ -652,6 +652,10 @@ func TestEveryPanelCapabilityHasATool(t *testing.T) {
 		"site_php_settings", "request_certificate", "site_cache", "site_cron",
 		"site_access", "wordpress_login_link",
 
+		// A site's backups
+		"list_site_backups", "create_site_backup", "restore_site_backup",
+		"delete_site_backup", "site_backup_schedule",
+
 		// Files
 		"list_files", "read_file", "write_file", "manage_files", "upload_file",
 		"download_file",

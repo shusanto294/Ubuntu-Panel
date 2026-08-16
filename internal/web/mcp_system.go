@@ -318,6 +318,11 @@ func (a *App) mcpSetPanelDomain() *mcp.Tool {
 			"hostname has to resolve to this server first, or the certificate cannot be issued " +
 			"and the self-signed one is served in its place — which a client refuses rather " +
 			"than warns about, unless a CDN in front of the server terminates TLS.\n\n" +
+			"It also closes the server's IP address as a way in. The panel's own port keeps " +
+			"answering, but under the hostname alone — the bare address gets the same 404 there " +
+			"that it already gets on 80 and 443, so nobody who scans the machine is shown a login " +
+			"form. If the hostname later stops resolving, the way back is an SSH tunnel to the " +
+			"panel's loopback port rather than the IP.\n\n" +
 			"The address a client connects an assistant to changes with it, so a key already " +
 			"configured somewhere needs its endpoint updating too. Asynchronous — get_task has the run.",
 		Properties: map[string]mcp.Property{

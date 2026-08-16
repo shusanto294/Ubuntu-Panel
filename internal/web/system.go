@@ -175,7 +175,11 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 			// Whether the certificate on the hostname's 443 is a real one. The
 			// address is https either way — the self-signed pair answers until
 			// certbot has run — so the URL is no longer the thing that says it.
-			"tls":       domain != "" && a.Store.SettingBool("panel_domain_tls", false),
+			"tls": domain != "" && a.Store.SettingBool("panel_domain_tls", false),
+			// The loopback port the panel itself listens on, behind nginx. Shown
+			// because a hostname closes the IP address as a way in, and an SSH
+			// tunnel to this port is what is left when the name stops resolving.
+			"bind_port": a.Config.BindPort,
 			"public_ip": system.PublicIP(),
 			"certbot":   a.Store.ServiceInstalled("certbot"),
 		},
@@ -619,8 +623,8 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		"sudo ln -sfn /etc/nginx/sites-available/ubuntu-panel /etc/nginx/sites-enabled/ubuntu-panel",
 		"sudo mkdir -p "+sites.ACMEWebroot+"/.well-known/acme-challenge",
 		// 443 is where the hostname serves the panel, 80 is where the challenge
-		// arrives, and the panel's own port stays open as the address that works
-		// when the hostname does not.
+		// arrives, and the panel's own port stays open — under the hostname, not
+		// the bare address, which the port now 404s like any other name.
 		"if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active'; then "+
 			"sudo ufw allow 'Nginx Full'; sudo ufw allow "+strconv.Itoa(panelPort)+"/tcp; fi",
 		"sudo nginx -t",
@@ -633,8 +637,12 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 
 		return fmt.Sprintf("The panel answers on https://%s — no port. Saved as the panel "+
 			"address. The certificate there is self-signed until Let's Encrypt has issued a "+
-			"real one, and http://%s:%d stays open as the address that always works.",
-			domain, domain, panelPort), nil
+			"real one. %s:%d answers under the hostname as well, but this server's IP "+
+			"address no longer opens the panel on any port: it gets the same 404 a "+
+			"hostname nobody configured gets. If the hostname stops resolving, reach the "+
+			"panel through an SSH tunnel — ssh -L 8080:127.0.0.1:%d — and open "+
+			"http://127.0.0.1:8080.",
+			domain, domain, panelPort, port), nil
 	})
 
 	// Certbot is an optional app in the catalogue, so on most machines it is
@@ -695,8 +703,9 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		a.Store.SetSetting("panel_domain_tls", "1")
 
 		return fmt.Sprintf("The panel is now served over HTTPS at https://%s — no port — and "+
-			"http://%s redirects there. http://%s:%d is still the address that works when the "+
-			"hostname does not.", domain, domain, domain, panelPort), nil
+			"http://%s redirects there. https://%s:%d answers too, under the hostname alone: "+
+			"this server's IP address opens nothing on any port.",
+			domain, domain, domain, panelPort), nil
 	})
 
 	if !tasks.New(a.Store, taskID).Run(list) {
@@ -720,27 +729,84 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 // about. That is the address people actually use: https://panel.example.com,
 // with a certificate on it and no port to remember.
 //
-// The panel's own port stays regardless, as the address that always works: it
-// answers on the bare IP, before a hostname is set and after one is pointed
-// somewhere wrong.
+// Until a hostname is set the panel's own port is the only address there is, so
+// it answers to every name that reaches it — the bare IP included. Once a
+// hostname is set the IP stops being an address for the panel at all: the port
+// answers under the hostname and nothing else, and the port's default server
+// gives whoever scanned the address the same 404 the catch-all gives on 80 and
+// 443. The way back in when the hostname stops resolving is an SSH tunnel to the
+// panel's own loopback port, which no vhost is in front of.
+
+// panelDenyBlock is what the panel's port says to a name that is not the
+// hostname.
+//
+// The catch-all's own answer, word for word: a stranger who scans this machine
+// and finds the port open learns that something is listening and nothing more —
+// not that it is a control panel, and not that there is a login form behind a
+// name they have not guessed. The self-signed pair is presented where the port
+// speaks TLS, because a default server on an `ssl` port with no certificate is a
+// configuration nginx refuses outright.
+func panelDenyBlock(panelPort int, secure bool) string {
+	listen := fmt.Sprintf(
+		"    listen %[1]d default_server;\n"+
+			"    listen [::]:%[1]d default_server;\n", panelPort)
+	tls := ""
+
+	if secure {
+		listen = fmt.Sprintf(
+			"    listen %[1]d ssl default_server;\n"+
+				"    listen [::]:%[1]d ssl default_server;\n", panelPort)
+		tls = fmt.Sprintf(
+			"    ssl_certificate     %[1]s.crt;\n"+
+				"    ssl_certificate_key %[1]s.key;\n"+
+				"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
+				"\n", sites.DefaultCert)
+	}
+
+	return fmt.Sprintf(
+		"\nserver {\n"+
+			"%s"+
+			"    server_name _;\n"+
+			"\n"+
+			"%s"+
+			"    return 404 \"No site is configured for this hostname.\\n\";\n"+
+			"}\n",
+		listen, tls)
+}
 
 // panelPortVhost is the panel itself, on its port.
 //
-// server_name _ rather than the hostname: this port serves nothing but the
-// panel, so every name that reaches it — the hostname, the bare IP, a local
-// name somebody set in /etc/hosts — is meant for the panel. Making it the
-// default server on that port is also what keeps the IP working when a
-// hostname is set, which is the address that always works.
-func panelPortVhost(panelPort, port int, php string, certificate string) string {
+// With no hostname the block is the default server on that port and answers to
+// `_`: there is no other address for the panel yet, and the bare IP with the
+// port on it is how the operator got here in the first place.
+//
+// With a hostname it is named, and the default server on that port becomes the
+// 404 above. That is what takes the panel off the bare address entirely — before
+// this, `https://<ip>:8443` opened the login form for anyone who scanned the
+// port, whatever hostname the operator had put in front of it.
+func panelPortVhost(domain string, panelPort, port int, php string, certificate string) string {
 	tls := ""
 	listen := fmt.Sprintf(
 		"    listen %[1]d default_server;\n"+
 			"    listen [::]:%[1]d default_server;\n", panelPort)
+	name := "_"
+
+	if domain != "" {
+		listen = fmt.Sprintf(
+			"    listen %[1]d;\n"+
+				"    listen [::]:%[1]d;\n", panelPort)
+		name = domain
+	}
 
 	if certificate != "" {
+		ssl := " ssl"
+		if domain == "" {
+			ssl = " ssl default_server"
+		}
+
 		listen = fmt.Sprintf(
-			"    listen %[1]d ssl default_server;\n"+
-				"    listen [::]:%[1]d ssl default_server;\n", panelPort)
+			"    listen %[1]d%[2]s;\n"+
+				"    listen [::]:%[1]d%[2]s;\n", panelPort, ssl)
 
 		// error_page 497 is the one for "you spoke HTTP to an HTTPS port",
 		// which is what an old bookmark and a mistyped scheme both look like.
@@ -754,17 +820,23 @@ func panelPortVhost(panelPort, port int, php string, certificate string) string 
 				"\n", certificate, panelPort)
 	}
 
-	return fmt.Sprintf(
+	block := fmt.Sprintf(
 		"server {\n"+
 			"%s"+
-			"    server_name _;\n"+
+			"    server_name %s;\n"+
 			"\n"+
 			"%s"+
 			"%s\n"+
 			"%s"+
 			"}\n",
-		listen, tls, sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port),
+		listen, name, tls, sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port),
 		panelProxyBlock(port))
+
+	if domain == "" {
+		return block
+	}
+
+	return block + panelDenyBlock(panelPort, certificate != "")
 }
 
 // acmeLocation is the HTTP-01 challenge, on whichever block it is put in.
@@ -849,9 +921,11 @@ func panelVhost(domain string, panelPort, port int, php string, secure bool) str
 
 	file := "# Managed by " + config.Name + " — the panel, on port " +
 		strconv.Itoa(panelPort) + " and on its hostname.\n" +
-		"# Neither block is a default server: the address nobody configured belongs\n" +
-		"# to the catch-all, whose answer is a 404 rather than a login form.\n" +
-		panelPortVhost(panelPort, port, php, certificate)
+		"# No block here is a default server on 80 or 443: the address nobody\n" +
+		"# configured belongs to the catch-all, whose answer is a 404 rather than a\n" +
+		"# login form. Once a hostname is set the panel's own port is named too, and\n" +
+		"# the bare IP gets that same 404 there.\n" +
+		panelPortVhost(domain, panelPort, port, php, certificate)
 
 	if domain != "" {
 		file += panelHostVhost(domain, port, php, secure)
@@ -897,9 +971,11 @@ func (a *App) refreshPanelVhost(runner *tasks.Runner) error {
 	}
 
 	// The self-signed pair, for the same reason: without a certificate of its
-	// own the hostname's 443 block names that one, and a certificate nginx
-	// cannot open is a configuration it refuses for the whole machine.
-	if domain != "" && !secure {
+	// own the hostname's 443 block names that one, and so does the block that
+	// 404s the bare address on the panel's port whichever certificate the
+	// hostname has. A certificate nginx cannot open is a configuration it
+	// refuses for the whole machine.
+	if domain != "" {
 		sites.EnsureDefaultCert()
 	}
 

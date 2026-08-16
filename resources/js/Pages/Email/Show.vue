@@ -205,7 +205,39 @@ const deleteDomain = async () => {
             </ul>
         </div>
 
-        <!-- Connection details -->
+        <!--
+            Autoconfiguration first, because for most people it is instead of
+            everything below rather than as well as it.
+        -->
+        <div
+            class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <h3 class="font-semibold text-slate-900">
+                Setting up a mail client
+            </h3>
+            <p class="mt-1 text-sm text-slate-600">
+                In Thunderbird — and anything else that reads Mozilla
+                autoconfiguration — the address and the password are the whole
+                setup. It asks
+                <span class="font-mono">{{ domain.autoconfig_host }}</span> for
+                the hostnames and ports below and fills them in itself, so
+                nobody has to be told which port is which.
+            </p>
+            <p class="mt-2 text-xs text-slate-500">
+                Served from
+                <a
+                    :href="domain.autoconfig_url"
+                    target="_blank"
+                    rel="noopener"
+                    class="font-mono text-brand-600 hover:underline"
+                    >{{ domain.autoconfig_url }}</a
+                >. Its A record is published with the MX and the SPF — if the
+                lookup fails, set the domain up again from the button above and
+                the record is written with the rest.
+            </p>
+        </div>
+
+        <!-- Connection details, for everything that does not look them up. -->
         <div class="mt-6 grid gap-6 lg:grid-cols-2">
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Sending (SMTP)</h3>
@@ -303,7 +335,8 @@ const deleteDomain = async () => {
                 <h3 class="font-semibold text-slate-900">Remove this domain</h3>
                 <p class="text-sm text-slate-500">
                     Every mailbox on it and all stored mail are deleted, along
-                    with its DKIM key, webmail vhost and published DNS records.
+                    with its DKIM key, its webmail and autoconfig vhosts, and
+                    its published DNS records.
                 </p>
             </div>
             <button

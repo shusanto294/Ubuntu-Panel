@@ -20,6 +20,8 @@ const props = defineProps({
     cronJobs: { type: Array, default: () => [] },
     accessUsers: { type: Array, default: () => [] },
     database: { type: Object, default: null },
+    backups: { type: Array, default: () => [] },
+    backup: { type: Object, default: () => ({}) },
     logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
     cache: { type: Object, default: () => ({}) },
@@ -44,6 +46,7 @@ const tabs = computed(() => {
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
     entries.push({ key: 'cache', label: 'Cache' });
     entries.push({ key: 'files', label: 'File manager' });
+    entries.push({ key: 'backups', label: 'Backups' });
     entries.push({ key: 'access', label: 'SSH/SFTP' });
     entries.push({ key: 'cron', label: 'Cron jobs' });
     entries.push({ key: 'logs', label: 'Logs' });
@@ -676,7 +679,7 @@ const startPolling = () => {
     timer = setInterval(
         () =>
             router.reload({
-                only: ['site', 'logs', 'activeTask', 'latestTask'],
+                only: ['site', 'logs', 'activeTask', 'latestTask', 'backups', 'backup'],
                 preserveScroll: true,
             }),
         3000,
@@ -695,18 +698,124 @@ const stopPolling = () => {
 // the redirect, a certificate issued on a retry.
 const refetch = () =>
     router.reload({
-        only: ['site', 'logs', 'activeTask', 'latestTask'],
+        only: ['site', 'logs', 'activeTask', 'latestTask', 'backups', 'backup'],
         preserveScroll: true,
         preserveState: true,
     });
 
+// ---- Backups.
+//
+// A copy of the site's files and, where the panel made one, its database. The
+// two things anybody wants from this page are "give me a copy of it as it is
+// right now" and "put it back the way it was", so those are the two buttons.
+const backupNote = ref('');
+const backupSchedule = ref(props.backup.schedule ?? 'off');
+const backupKeep = ref(props.backup.keep ?? 7);
+
+// A backup that is still being written, or a restore that is still running.
+// Either one means the page has to keep looking, because neither finishes in
+// the request that started it.
+const backupWorking = computed(() =>
+    props.backups.some((entry) => ['pending', 'running'].includes(entry.status)),
+);
+
+const takeBackup = () => {
+    router.post(
+        route('sites.backups.store', props.site.id),
+        { note: backupNote.value },
+        {
+            preserveScroll: true,
+            onSuccess: () => {
+                backupNote.value = '';
+                startPolling();
+            },
+        },
+    );
+};
+
+const saveBackupSchedule = () =>
+    router.post(
+        route('sites.backups.schedule', props.site.id),
+        { schedule: backupSchedule.value, keep: backupKeep.value },
+        { preserveScroll: true },
+    );
+
+// The one destructive button on this tab, and the only one on the page that
+// throws away something that is working rather than something that is not. The
+// dialog names both halves of what goes, because "restore" sounds additive and
+// is not.
+const restoreBackup = async (entry) => {
+    const parts = [];
+    if (entry.has_files) parts.push('every file in the site directory');
+    if (entry.database) parts.push(`everything in the ${entry.database} database`);
+
+    const go = await confirmDanger(
+        `Restore ${props.site.domain} from the backup of ${entry.created_at}?`,
+        `This replaces ${parts.join(' and ')}. Anything added or changed since ` +
+            `that backup was taken is gone, and there is no undo. The site is ` +
+            `offline while it runs.`,
+        'Restore',
+    );
+
+    if (!go) return;
+
+    router.post(
+        route('sites.backups.restore', { site: props.site.id, backup: entry.id }),
+        {},
+        { preserveScroll: true, onSuccess: startPolling },
+    );
+};
+
+const deleteBackup = async (entry) => {
+    const go = await confirmDanger(
+        `Delete the backup of ${entry.created_at}?`,
+        'Its files and its database dump are removed from the server. The site itself is untouched.',
+        'Delete',
+    );
+
+    if (!go) return;
+
+    router.delete(route('sites.backups.destroy', { site: props.site.id, backup: entry.id }), {
+        preserveScroll: true,
+    });
+};
+
+// Bytes as somebody would say them. A backup is the one number on this page
+// that is routinely in gigabytes, and 4831838208 is not a number anybody reads.
+const formatBytes = (bytes) => {
+    if (!bytes) return '—';
+
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+
+    return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+};
+
+const backupContents = (entry) => {
+    const parts = [];
+    if (entry.has_files) parts.push('files');
+    if (entry.database) parts.push(`database (${entry.database})`);
+
+    return parts.length ? parts.join(' + ') : 'nothing';
+};
+
 onMounted(() => {
     refetch();
 
-    if (busy.value) startPolling();
+    if (busy.value || backupWorking.value) startPolling();
 });
 onBeforeUnmount(stopPolling);
 watch(busy, (value) => (value ? startPolling() : stopPolling()));
+watch(backupWorking, (value) => {
+    if (value) startPolling();
+    else if (!busy.value) stopPolling();
+});
 
 const post = (name, extra = {}) =>
     router.post(route(name, props.site.id), extra, { preserveScroll: true });
@@ -717,6 +826,8 @@ const destroy = async () => {
         parts.push(`${props.site.dns_provider ?? 'DNS'} records`);
     if (props.database) parts.push('the site database');
     if (props.site.is_proxied) parts.push('the systemd service');
+    if (props.backups.length)
+        parts.push(`all ${props.backups.length} of its backups`);
 
     const go = await confirmDanger(
         `Delete ${props.site.domain}?`,
@@ -1195,7 +1306,8 @@ const destroy = async () => {
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
                     Deleting removes the vhost, the systemd service, the site
-                    database created by the panel, and its DNS records.
+                    database created by the panel, its DNS records and every
+                    backup taken of it.
                 </p>
                 <label class="mt-4 flex items-center gap-2 text-sm">
                     <input
@@ -1925,6 +2037,212 @@ const destroy = async () => {
                 The password is shown once, when it is set — the panel does not
                 store it, and there is nowhere to read it again.
             </p>
+        </div>
+
+
+        <!--
+            Backups.
+
+            Two questions, in the order people ask them: give me a copy of this
+            as it is right now, and put it back the way it was. Everything else
+            on this tab is in service of those two.
+        -->
+        <div v-if="!busy && tab === 'backups'" class="grid gap-6 lg:grid-cols-3">
+            <div class="space-y-6 lg:col-span-2">
+                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h3 class="font-semibold text-slate-800">Backups</h3>
+                            <p class="mt-1 text-sm text-slate-500">
+                                A copy of
+                                <span class="font-mono">{{ site.root_path }}</span>
+                                <template v-if="backup.database">
+                                    and the
+                                    <span class="font-mono">{{ backup.database }}</span>
+                                    database</template
+                                >, kept on this server under
+                                <span class="font-mono">{{ backup.root }}</span
+                                >.
+                            </p>
+                        </div>
+                        <button
+                            @click="takeBackup"
+                            :disabled="backupWorking"
+                            class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                        >
+                            {{ backupWorking ? 'Working…' : 'Back up now' }}
+                        </button>
+                    </div>
+
+                    <div class="mt-4">
+                        <input
+                            v-model="backupNote"
+                            type="text"
+                            maxlength="120"
+                            placeholder="What is this copy for? (optional — e.g. before the plugin update)"
+                            class="block w-full rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        />
+                    </div>
+
+                    <!--
+                        Said here rather than only in the confirmation dialog. A
+                        site with no panel-made database is backed up perfectly
+                        well; somebody should not have to restore one to find
+                        out that half of what they expected was never in it.
+                    -->
+                    <p v-if="!backup.database" class="mt-3 text-xs text-slate-500">
+                        The panel did not create a database for this site, so a backup
+                        is its files alone. A database somebody attached by hand is not
+                        the panel's to copy — or to overwrite on a restore.
+                    </p>
+                </div>
+
+                <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+                    <ul class="divide-y divide-slate-100">
+                        <li
+                            v-for="entry in backups"
+                            :key="entry.id"
+                            class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
+                        >
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="font-mono text-sm text-slate-800">
+                                        {{ entry.created_at }}
+                                    </span>
+                                    <StatusBadge :status="entry.status" />
+                                    <span
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] uppercase tracking-wide text-slate-500"
+                                    >
+                                        {{ entry.kind }}
+                                    </span>
+                                </div>
+                                <p class="mt-1 text-xs text-slate-500">
+                                    {{ backupContents(entry) }} ·
+                                    {{ formatBytes(entry.size_bytes) }}
+                                    <template v-if="entry.note">
+                                        · {{ entry.note }}
+                                    </template>
+                                </p>
+                                <p v-if="entry.last_error" class="mt-1 text-xs text-rose-600">
+                                    {{ entry.last_error }}
+                                </p>
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <button
+                                    v-if="entry.status === 'complete'"
+                                    @click="restoreBackup(entry)"
+                                    class="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                                >
+                                    Restore
+                                </button>
+                                <button
+                                    @click="deleteBackup(entry)"
+                                    class="px-2 py-2 text-sm text-rose-600 hover:underline"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </li>
+
+                        <li
+                            v-if="!backups.length"
+                            class="px-5 py-16 text-center text-sm text-slate-500"
+                        >
+                            No backups yet. "Back up now" takes one, and it runs on the
+                            queue — you can leave this page.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="space-y-6">
+                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <h3 class="font-semibold text-slate-800">Automatic backups</h3>
+                    <p class="mt-1 text-sm text-slate-500">
+                        The panel takes one on this schedule and keeps the newest few.
+                    </p>
+
+                    <div class="mt-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700"
+                                >How often</label
+                            >
+                            <select
+                                v-model="backupSchedule"
+                                class="mt-1 block w-full rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            >
+                                <option value="off">Off — only when I ask</option>
+                                <option value="daily">Every day</option>
+                                <option value="weekly">Every week</option>
+                                <option value="monthly">Every month</option>
+                            </select>
+                        </div>
+
+                        <div v-if="backupSchedule !== 'off'">
+                            <label class="block text-sm font-medium text-slate-700"
+                                >Keep the newest</label
+                            >
+                            <input
+                                v-model="backupKeep"
+                                type="number"
+                                min="1"
+                                max="30"
+                                class="mt-1 block w-full rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            />
+                            <!--
+                                Only the scheduled ones are counted and only the
+                                scheduled ones are deleted. A copy somebody took
+                                by hand before changing something is theirs
+                                until they say otherwise.
+                            -->
+                            <p class="mt-1 text-xs text-slate-500">
+                                Older automatic backups are deleted once there are more
+                                than this. Backups you took yourself are never deleted
+                                by the schedule.
+                            </p>
+                        </div>
+
+                        <button
+                            @click="saveBackupSchedule"
+                            class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                        >
+                            Save schedule
+                        </button>
+
+                        <p v-if="backup.next_at" class="text-xs text-slate-500">
+                            Next automatic backup: {{ backup.next_at }} (UTC).
+                        </p>
+                    </div>
+                </div>
+
+                <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <h3 class="font-semibold text-slate-800">What a restore does</h3>
+                    <ul class="mt-3 space-y-2 text-sm text-slate-600">
+                        <li>
+                            Every file under
+                            <span class="font-mono">{{ site.root_path }}</span> is
+                            replaced by the ones in the backup. Files added since are
+                            removed.
+                        </li>
+                        <li v-if="backup.database">
+                            The <span class="font-mono">{{ backup.database }}</span>
+                            database is emptied and reloaded from the dump. The login
+                            the site uses is unchanged.
+                        </li>
+                        <li>
+                            The site is offline while it runs, and there is no undo —
+                            take a backup first if you might want today's version back.
+                        </li>
+                    </ul>
+
+                    <p class="mt-4 text-xs text-slate-500">
+                        All of it on disk here:
+                        {{ formatBytes(backup.total) }} across
+                        {{ backups.length }} backup{{ backups.length === 1 ? '' : 's' }}.
+                    </p>
+                </div>
+            </div>
         </div>
 
         <div

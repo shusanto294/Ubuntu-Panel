@@ -194,34 +194,30 @@ func RemoveForSite(ctx context.Context, st *store.Store, site *store.Site) (stri
 	return log.String(), nil
 }
 
-// SyncForMail publishes the records a mail domain needs.
+// MailRecords is every record a mail domain needs published, in the order they
+// are written.
 //
-// The A record for mail.<domain> is what the MX points at, what the
-// certificate is issued for, and what a client connects to — so it has to
-// exist before anything else is useful.
-func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain, publicIP string) (string, error) {
-	if !domain.ManageDNS || domain.DNSAccountID <= 0 {
-		return "", errors.New("DNS management is not enabled for this mail domain.")
-	}
-
-	account, err := st.FindDNSAccount(ctx, domain.DNSAccountID, 0)
-	if err != nil {
-		return "", errors.New("The DNS credential for this mail domain no longer exists.")
-	}
-
-	client := New(account)
-
-	zoneID, zoneName, err := client.FindZone(domain.Domain)
-	if err != nil {
-		return "", err
-	}
-
+// Its own function so there is one list rather than one per caller: what the
+// panel publishes and what it says it publishes have to be the same thing, and
+// a record added here is a record the tests can see.
+func MailRecords(domain *store.EmailDomain, publicIP string) []Record {
 	if publicIP == "" {
 		publicIP = "127.0.0.1"
 	}
 
 	wanted := []Record{
 		{Type: "A", Name: "mail." + domain.Domain, Content: publicIP, Priority: -1},
+
+		// What makes a mail client configure itself. Thunderbird — and
+		// Evolution, and K-9, and everything else that speaks Mozilla
+		// autoconfiguration — asks `autoconfig.<domain>` for
+		// /mail/config-v1.1.xml as soon as somebody has typed an address on the
+		// domain, and the panel serves that file from a vhost of its own.
+		// Without this record the lookup fails and the client falls back to
+		// guessing hostnames and ports, which is the mailbox setup that ends in
+		// "could not determine the settings" with nothing to say why.
+		{Type: "A", Name: "autoconfig." + domain.Domain, Content: publicIP, Priority: -1},
+
 		{Type: "MX", Name: domain.Domain, Content: "mail." + domain.Domain, Priority: 10},
 		{Type: "TXT", Name: domain.Domain, Content: "v=spf1 a:mail." + domain.Domain + " ~all", Priority: -1},
 		{Type: "TXT", Name: "_dmarc." + domain.Domain,
@@ -244,6 +240,33 @@ func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain
 			Priority: -1,
 		})
 	}
+
+	return wanted
+}
+
+// SyncForMail publishes the records a mail domain needs.
+//
+// The A record for mail.<domain> is what the MX points at, what the
+// certificate is issued for, and what a client connects to — so it has to
+// exist before anything else is useful.
+func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain, publicIP string) (string, error) {
+	if !domain.ManageDNS || domain.DNSAccountID <= 0 {
+		return "", errors.New("DNS management is not enabled for this mail domain.")
+	}
+
+	account, err := st.FindDNSAccount(ctx, domain.DNSAccountID, 0)
+	if err != nil {
+		return "", errors.New("The DNS credential for this mail domain no longer exists.")
+	}
+
+	client := New(account)
+
+	zoneID, zoneName, err := client.FindZone(domain.Domain)
+	if err != nil {
+		return "", err
+	}
+
+	wanted := MailRecords(domain, publicIP)
 
 	var log strings.Builder
 	var failure error
@@ -378,7 +401,7 @@ func ours(record Record, domain *store.EmailDomain) bool {
 
 	switch record.Type {
 	case "A", "AAAA":
-		return record.Name == host
+		return record.Name == host || record.Name == "autoconfig."+apex
 
 	case "MX":
 		return record.Name == apex && strings.TrimRight(record.Content, ".") == host

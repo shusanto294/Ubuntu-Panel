@@ -193,6 +193,10 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 	list.AddFn("Serve mail."+domain.Domain, s.serveMailHost(ctx, domainID)).Optional()
 	list.AddFn("Get a certificate for mail."+domain.Domain, s.secureMailHost(ctx, domainID)).Optional()
 
+	// After the certificate, because it asks Let's Encrypt for one of its own
+	// and the mail host's is the one that must not be held up behind it.
+	list.AddFn("Serve autoconfig."+domain.Domain, s.serveAutoconfig(ctx, domainID)).Optional()
+
 	if tasks.New(s.Store, taskID).Run(list) {
 		s.Store.SetEmailDomainStatus(domainID, "active", "")
 
@@ -235,10 +239,14 @@ func (s *Service) DeleteDomain(ctx context.Context, domainID int64) error {
 			"sudo systemctl restart opendkim || true",
 			domain.Domain, vmailRoot)).Optional()
 
-	list.Add("Remove the webmail vhost",
+	list.Add("Remove the webmail and autoconfig vhosts",
 		fmt.Sprintf("sudo rm -f '/etc/nginx/sites-enabled/webmail-%[1]s' "+
-			"'/etc/nginx/sites-available/webmail-%[1]s'; "+
-			"sudo nginx -t && sudo systemctl reload nginx", domain.Domain)).Optional()
+			"'/etc/nginx/sites-available/webmail-%[1]s' "+
+			"'/etc/nginx/sites-enabled/autoconfig-%[1]s' "+
+			"'/etc/nginx/sites-available/autoconfig-%[1]s'; "+
+			"sudo rm -rf '%[2]s/%[1]s'; "+
+			"sudo nginx -t && sudo systemctl reload nginx",
+			domain.Domain, autoconfigRoot)).Optional()
 
 	// Not gated on manage_dns: a domain whose DNS management was switched off
 	// after setup still has the records the panel published, and leaving an MX

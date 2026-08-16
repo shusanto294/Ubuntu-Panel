@@ -382,6 +382,13 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpSiteAccess(),
 		a.mcpWordPressLogin(),
 
+		// A site's backups
+		a.mcpListSiteBackups(),
+		a.mcpCreateSiteBackup(),
+		a.mcpRestoreSiteBackup(),
+		a.mcpDeleteSiteBackup(),
+		a.mcpSiteBackupSchedule(),
+
 		// A site's files
 		a.mcpListFiles(),
 		a.mcpReadFile(),
