@@ -65,7 +65,7 @@ PANEL_SWAP="${PANEL_SWAP:-1}"
 PANEL_SKIP_APT="${PANEL_SKIP_APT:-0}"
 PANEL_FROM_SOURCE="${PANEL_FROM_SOURCE:-0}"
 
-GET_URL="https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh"
+GET_URL="https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh"
 
 CONFIG_DIR=/etc/ubuntu-panel
 CONFIG_FILE="$CONFIG_DIR/panel.conf"
@@ -918,7 +918,7 @@ fi
 # installed an app.
 conf_ensure PANEL_INSTALL_APPS  "${PANEL_INSTALL_APPS:-all}"
 
-conf_ensure PANEL_REPOSITORY    "https://github.com/shusanto294/Ubuntu-Panel-Go"
+conf_ensure PANEL_REPOSITORY    "https://github.com/shusanto294/Ubuntu-Panel"
 conf_ensure PANEL_UPDATE_BRANCH "main"
 
 # The Go binary embeds its frontend. A PANEL_PUBLIC left behind by the C panel
@@ -928,13 +928,14 @@ if conf_has PANEL_PUBLIC; then
     ok "Removed PANEL_PUBLIC — the frontend is inside the binary now"
 fi
 
-# Same story for the repository: an install carried over from the C panel would
-# check the wrong tree for updates forever.
+# Same story for the repository: an install carried over from the C panel, or
+# from the Go panel's old repository, would check the wrong tree for updates
+# forever.
 CURRENT_REPO="$(conf_value PANEL_REPOSITORY)"
 case "$CURRENT_REPO" in
-    https://github.com/shusanto294/Ubuntu-Panel|https://github.com/shusanto294/Ubuntu-Panel-C)
-        sed -i "s|^\([[:space:]]*PANEL_REPOSITORY[[:space:]]*=[[:space:]]*\).*$|\1https://github.com/shusanto294/Ubuntu-Panel-Go|" "$CONFIG_FILE"
-        ok "PANEL_REPOSITORY repointed at Ubuntu-Panel-Go (it named an older panel)"
+    https://github.com/shusanto294/Ubuntu-Panel-C|https://github.com/shusanto294/Ubuntu-Panel-Go)
+        sed -i "s|^\([[:space:]]*PANEL_REPOSITORY[[:space:]]*=[[:space:]]*\).*$|\1https://github.com/shusanto294/Ubuntu-Panel|" "$CONFIG_FILE"
+        ok "PANEL_REPOSITORY repointed at Ubuntu-Panel (it named an older repository)"
         ;;
 esac
 

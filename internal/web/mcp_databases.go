@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
-	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The rest of the Databases pages: one database in full, the two repairs, the

@@ -20,7 +20,7 @@ const (
 
 	// Version is stamped into the page payload and reported by --version.
 	// Bumped in the same commit as the tag that builds a release from it.
-	Version = "2.5.91"
+	Version = "2.5.92"
 )
 
 // Config is the whole of the panel's settings. Every field has a working
@@ -106,7 +106,7 @@ func Load(path string) (*Config, error) {
 		BindHost:     get("PANEL_BIND_HOST", "127.0.0.1"),
 		SitesRoot:    get("PANEL_SITES_ROOT", "/var/www"),
 		SystemUser:   get("PANEL_SYSTEM_USER", "ubuntupanel"),
-		Repository:   get("PANEL_REPOSITORY", "https://github.com/shusanto294/Ubuntu-Panel-Go"),
+		Repository:   get("PANEL_REPOSITORY", "https://github.com/shusanto294/Ubuntu-Panel"),
 		UpdateBranch: get("PANEL_UPDATE_BRANCH", "main"),
 		AppKey:       get("PANEL_APP_KEY", ""),
 		InstallApps:  strings.ToLower(get("PANEL_INSTALL_APPS", "all")),

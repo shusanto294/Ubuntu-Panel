@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // SharedNginxConfig is what the nginx entry's configure step calls to write the

@@ -11,16 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/session"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
 // siteApps is everything any site type can want, so the create form can offer

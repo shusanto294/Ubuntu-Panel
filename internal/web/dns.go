@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
-	"github.com/shusanto294/ubuntu-panel-go/internal/session"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 func (a *App) dnsIndex(w http.ResponseWriter, r *http.Request) {

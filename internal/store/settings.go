@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 )
 
 // Setting reads a panel-wide setting, falling back when it is unset.

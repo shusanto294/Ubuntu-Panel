@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
 // siteResolution answers the question every other check on a site leaves open:

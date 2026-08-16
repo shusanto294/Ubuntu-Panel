@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The Backups tab, as tools.

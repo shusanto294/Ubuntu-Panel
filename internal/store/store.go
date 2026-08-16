@@ -15,7 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 
 	_ "modernc.org/sqlite"
 )

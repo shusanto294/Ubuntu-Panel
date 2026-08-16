@@ -2,7 +2,7 @@
 #
 # Ubuntu Panel — one-command install.
 #
-#   curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash
 #
 # It finds the newest release, downloads the tarball for this machine's
 # architecture, checks it against the published SHA-256, unpacks it and runs
@@ -31,7 +31,7 @@
 #
 set -Eeuo pipefail
 
-REPO="${PANEL_REPO:-shusanto294/Ubuntu-Panel-Go}"
+REPO="${PANEL_REPO:-shusanto294/Ubuntu-Panel}"
 REPO_URL="https://github.com/$REPO"
 API="https://api.github.com/repos/$REPO"
 
@@ -43,7 +43,7 @@ usage() {
     cat <<'EOF'
 Ubuntu Panel — one-command install.
 
-  curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash
 
 Options (flags need `bash -s --` when piped):
 

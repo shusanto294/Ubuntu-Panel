@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The Email pages, as tools.

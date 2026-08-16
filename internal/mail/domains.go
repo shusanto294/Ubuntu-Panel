@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // generateDKIM makes the key pair and reads the public half back for DNS.

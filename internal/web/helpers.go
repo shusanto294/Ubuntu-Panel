@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
-	"github.com/shusanto294/ubuntu-panel-go/internal/session"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 )
 
 // writeJSON answers a fetch() the frontend makes outside the Inertia protocol —

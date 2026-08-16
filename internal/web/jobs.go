@@ -3,8 +3,8 @@ package web
 import (
 	"context"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // registerJobs is the whole map from a queued job to the service that does the

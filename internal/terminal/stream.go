@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
 // streamInterval is how often a subscribed topic is looked at. The pages used

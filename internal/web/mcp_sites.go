@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
 // The tabs on a site's own page, as tools: its root directory, its PHP

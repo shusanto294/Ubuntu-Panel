@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 const (

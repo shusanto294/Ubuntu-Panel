@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The object cache, which is the other half of making a site fast and is not

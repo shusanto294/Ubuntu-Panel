@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
 )
 
 // server is a registry with one tool of each shape: one that works, and one

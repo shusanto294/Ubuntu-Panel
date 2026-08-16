@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // TestDelivery does what a mail client does, from this machine, and writes down

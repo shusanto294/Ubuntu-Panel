@@ -1,4 +1,4 @@
-module github.com/shusanto294/ubuntu-panel-go
+module github.com/shusanto294/Ubuntu-Panel
 
 go 1.24
 

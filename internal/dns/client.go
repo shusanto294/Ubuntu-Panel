@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // Client talks to one credential's provider.

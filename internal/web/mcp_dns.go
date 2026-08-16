@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The DNS page, as tools: connecting a provider, and reading and writing the

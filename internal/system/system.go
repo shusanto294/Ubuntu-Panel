@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 )
 
 // Metrics is one reading.

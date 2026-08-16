@@ -1,20 +1,20 @@
-# Ubuntu Panel — Go
+# Ubuntu Panel
 
 A server control panel: one static binary with the frontend inside it, nothing
 to install on the machine it runs on, and a SQLite file for state.
 
 Sites, databases, email, DNS, apps and logs, on one machine, from a browser.
-This is the Go rewrite of the C panel: the frontend came across unchanged — the
-same Vue pages, the same Inertia protocol, the same route names — and the
-database schema is the same, so the same `panel.db` can be served by either
-binary.
+It is written in Go, and it is the panel that replaced an earlier C one: the
+frontend came across unchanged — the same Vue pages, the same Inertia protocol,
+the same route names — and the database schema is the same, so the same
+`panel.db` can be served by either binary.
 
 ## Install
 
 One command on a fresh Ubuntu server:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash
 ```
 
 It downloads the release built for this machine's architecture, checks it
@@ -47,9 +47,9 @@ a decision the panel keeps.
 Options are environment variables, or flags after `bash -s --`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo PANEL_PORT=9000 bash
-curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash -s -- --from-source
-curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash -s -- --version v1.2.0
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo PANEL_PORT=9000 bash
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash -s -- --from-source
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash -s -- --version v1.2.0
 ```
 
 `--version` pins a release. `--from-source` is the escape hatch: it clones and
@@ -74,7 +74,7 @@ useful — an address nobody has been told still answers nothing.
 The same command:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash
 ```
 
 It backs the database up first, keeps the database, the application key, the
@@ -211,7 +211,7 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_APP_KEY` | — (written by the installer; encrypts every stored credential) |
 | `PANEL_WORKERS` | `2` (`1` on a machine under 1.5 GB) |
 | `PANEL_INSTALL_APPS` | `all` — what the installer puts on the machine before starting the panel: `all`, `core` or `none` |
-| `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel-Go` |
+| `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel` |
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |
 

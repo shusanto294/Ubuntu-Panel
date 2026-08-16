@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/dns"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // recipe builds the deployment steps for a site, branching on its type.

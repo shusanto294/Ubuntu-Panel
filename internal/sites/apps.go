@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/system"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // NextcloudArchive is the release the panel installs. `latest` rather than a

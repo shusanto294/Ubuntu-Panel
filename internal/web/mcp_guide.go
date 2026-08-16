@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
 )
 
 // panel_guide is the map of this panel, written for whoever is holding the

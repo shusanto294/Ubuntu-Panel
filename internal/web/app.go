@@ -8,17 +8,17 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/catalog"
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
-	"github.com/shusanto294/ubuntu-panel-go/internal/databases"
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mail"
-	"github.com/shusanto294/ubuntu-panel-go/internal/mcp"
-	"github.com/shusanto294/ubuntu-panel-go/internal/queue"
-	"github.com/shusanto294/ubuntu-panel-go/internal/session"
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
-	"github.com/shusanto294/ubuntu-panel-go/internal/terminal"
+	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mail"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/terminal"
 )
 
 // App holds what every handler needs.

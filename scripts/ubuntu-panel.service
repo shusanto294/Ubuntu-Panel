@@ -8,7 +8,7 @@
 
 [Unit]
 Description=Ubuntu Panel
-Documentation=https://github.com/shusanto294/Ubuntu-Panel-Go
+Documentation=https://github.com/shusanto294/Ubuntu-Panel
 After=network-online.target
 Wants=network-online.target
 

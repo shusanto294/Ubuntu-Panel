@@ -98,5 +98,5 @@ Publish with:
 
 Then the one-liner installs it:
 
-    curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel-Go/main/get.sh | sudo bash
+    curl -fsSL https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh | sudo bash
 EOF

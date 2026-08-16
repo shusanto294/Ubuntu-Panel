@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/proc"
-	"github.com/shusanto294/ubuntu-panel-go/internal/tasks"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // mysqlRemoteSetting records that the server has been opened to the network,

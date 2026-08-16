@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 )
 
 // logsIndex is every task the panel has run, newest first.

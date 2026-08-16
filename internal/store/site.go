@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 )
 
 // Site is one hosted site: a vhost, a directory, and whatever runtime its type

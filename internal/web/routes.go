@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
-	"github.com/shusanto294/ubuntu-panel-go/internal/terminal"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/terminal"
 )
 
 // routes is the whole route table.

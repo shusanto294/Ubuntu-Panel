@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // The kinds of work the queue carries. They are strings in the database, so

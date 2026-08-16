@@ -3,7 +3,7 @@ package dns
 import (
 	"testing"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // Providers spell the apex three different ways, and a record written under the

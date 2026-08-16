@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 )
 
 // The file Thunderbird reads has to describe this server, not a guess at it.

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // SyncForSite publishes the records a site needs: its own hostname and every

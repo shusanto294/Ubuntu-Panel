@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 )
 
 // TicketTTL is how long a terminal ticket is worth anything. It is handed out

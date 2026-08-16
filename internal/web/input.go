@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 )
 
 // maxBody caps what a request may send. Inertia posts small JSON objects; an

@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 )
 
 // Database is a database the panel created on one of the engines installed on

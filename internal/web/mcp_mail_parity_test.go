@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // mailInstalled tells the panel the mail server is on this machine and set up,

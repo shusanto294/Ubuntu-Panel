@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
 // A schedule is an interval from now, and "off" is not a schedule.

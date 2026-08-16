@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/shusanto294/ubuntu-panel-go/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 )
 
 // APIToken is a key an AI assistant signs its MCP requests with.
