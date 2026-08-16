@@ -49,7 +49,7 @@ func New(st *store.Store) *Service { return &Service{Store: st} }
 // **Bump this when you change what writeConfigs, writeDKIMConfig or
 // EnsureSchema produce.** Nothing else needs to move with it: the panel's
 // version is about releases, and this is about the contents of six files.
-const ConfigRevision = "2"
+const ConfigRevision = "3"
 
 // IsConfigured reports whether the mail server is installed and set up.
 func (s *Service) IsConfigured() bool {
@@ -492,51 +492,7 @@ func (s *Service) writeConfigs() error {
 	// Plaintext auth is allowed because the only clients are on this machine:
 	// Roundcube over the loopback and Postfix over a unix socket. Anything
 	// arriving from outside meets TLS first.
-	dovecot := "# Managed by " + config.Name + " — included last, so these win.\n" +
-		"protocols = imap pop3 lmtp\n" +
-		"\n" +
-		"mail_home = " + vmailRoot + "/%d/%n\n" +
-		"mail_location = maildir:~/Maildir\n" +
-		"mail_uid = vmail\n" +
-		"mail_gid = vmail\n" +
-		"first_valid_uid = 5000\n" +
-		"last_valid_uid = 5000\n" +
-		"\n" +
-		"auth_mechanisms = plain login\n" +
-		"disable_plaintext_auth = no\n" +
-		"\n" +
-		"passdb {\n" +
-		"  driver = sql\n" +
-		"  args = /etc/dovecot/dovecot-sql.conf.ext\n" +
-		"}\n" +
-		"\n" +
-		"userdb {\n" +
-		"  driver = static\n" +
-		"  args = uid=vmail gid=vmail home=" + vmailRoot + "/%d/%n\n" +
-		"}\n" +
-		"\n" +
-		"service auth {\n" +
-		"  unix_listener /var/spool/postfix/private/auth {\n" +
-		"    mode = 0660\n" +
-		"    user = postfix\n" +
-		"    group = postfix\n" +
-		"  }\n" +
-		"\n" +
-		"  unix_listener auth-userdb {\n" +
-		"    mode = 0600\n" +
-		"    user = vmail\n" +
-		"  }\n" +
-		"}\n" +
-		"\n" +
-		"service lmtp {\n" +
-		"  unix_listener /var/spool/postfix/private/dovecot-lmtp {\n" +
-		"    mode = 0600\n" +
-		"    user = postfix\n" +
-		"    group = postfix\n" +
-		"  }\n" +
-		"}\n"
-
-	if err := proc.PutFile("/etc/dovecot/conf.d/99-ubuntu-panel.conf", dovecot, true); err != nil {
+	if err := proc.PutFile("/etc/dovecot/conf.d/99-ubuntu-panel.conf", dovecotConfig(), true); err != nil {
 		return err
 	}
 
@@ -764,4 +720,101 @@ func (s *Service) NeedsConfiguring() bool {
 	}
 
 	return s.Store.Setting("mail_configured_revision", "") != ConfigRevision
+}
+
+// dovecotConfig is the drop-in, built rather than written straight to disk so
+// that what it promises a mailbox will have can be checked without a Dovecot
+// running to be asked.
+func dovecotConfig() string {
+	return "# Managed by " + config.Name + " — included last, so these win.\n" +
+		"protocols = imap pop3 lmtp\n" +
+		"\n" +
+		"mail_home = " + vmailRoot + "/%d/%n\n" +
+		"mail_location = maildir:~/Maildir\n" +
+		"mail_uid = vmail\n" +
+		"mail_gid = vmail\n" +
+		"first_valid_uid = 5000\n" +
+		"last_valid_uid = 5000\n" +
+		"\n" +
+		"auth_mechanisms = plain login\n" +
+		"disable_plaintext_auth = no\n" +
+		"\n" +
+		// The folders every mail client expects a mailbox to already have.
+		//
+		// A fresh Maildir has an inbox and nothing else, and Dovecot will not
+		// invent the rest unless it is told to. Thunderbird then refuses to
+		// send at all — "no Sent folder" — because it will not file a copy of
+		// the message into a folder that is not there, and the person is left
+		// with a mailbox that receives and cannot send. Roundcube papered over
+		// it by creating the folders itself on first use, which is why sending
+		// one webmail message appeared to repair the account.
+		//
+		// `auto = subscribe` is both halves: the folder is created the first
+		// time the mailbox is opened, and it is added to the subscription list
+		// so a client that only lists subscribed folders can see it. `create`
+		// alone leaves Thunderbird looking at an empty list.
+		//
+		// `special_use` is what stops the guessing. It is the IMAP flag that
+		// says "this is the Sent folder" independently of what it is called, so
+		// a client in any language files sent mail, drafts and deletions in the
+		// right place rather than matching on the English name.
+		"namespace inbox {\n" +
+		"  inbox = yes\n" +
+		"\n" +
+		"  mailbox Drafts {\n" +
+		"    special_use = \\Drafts\n" +
+		"    auto = subscribe\n" +
+		"  }\n" +
+		"\n" +
+		"  mailbox Sent {\n" +
+		"    special_use = \\Sent\n" +
+		"    auto = subscribe\n" +
+		"  }\n" +
+		"\n" +
+		"  mailbox Junk {\n" +
+		"    special_use = \\Junk\n" +
+		"    auto = subscribe\n" +
+		"  }\n" +
+		"\n" +
+		"  mailbox Trash {\n" +
+		"    special_use = \\Trash\n" +
+		"    auto = subscribe\n" +
+		"  }\n" +
+		"\n" +
+		"  mailbox Archive {\n" +
+		"    special_use = \\Archive\n" +
+		"    auto = subscribe\n" +
+		"  }\n" +
+		"}\n" +
+		"\n" +
+		"passdb {\n" +
+		"  driver = sql\n" +
+		"  args = /etc/dovecot/dovecot-sql.conf.ext\n" +
+		"}\n" +
+		"\n" +
+		"userdb {\n" +
+		"  driver = static\n" +
+		"  args = uid=vmail gid=vmail home=" + vmailRoot + "/%d/%n\n" +
+		"}\n" +
+		"\n" +
+		"service auth {\n" +
+		"  unix_listener /var/spool/postfix/private/auth {\n" +
+		"    mode = 0660\n" +
+		"    user = postfix\n" +
+		"    group = postfix\n" +
+		"  }\n" +
+		"\n" +
+		"  unix_listener auth-userdb {\n" +
+		"    mode = 0600\n" +
+		"    user = vmail\n" +
+		"  }\n" +
+		"}\n" +
+		"\n" +
+		"service lmtp {\n" +
+		"  unix_listener /var/spool/postfix/private/dovecot-lmtp {\n" +
+		"    mode = 0600\n" +
+		"    user = postfix\n" +
+		"    group = postfix\n" +
+		"  }\n" +
+		"}\n"
 }
