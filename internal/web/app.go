@@ -108,6 +108,10 @@ func (a *App) Start(ctx context.Context) {
 		a.EnsureMailConfigured()
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLReachable(ctx)
+
+		// After the helpers, because it rewrites vhosts and reloads nginx, and
+		// the configuration those write is what nginx is being asked to take.
+		a.EnsureSiteAliases(ctx)
 	}()
 
 	// The sites that back themselves up. Its own goroutine rather than part of

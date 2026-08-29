@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,6 +152,7 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		Type:          input["type"],
 		Domain:        input["domain"],
 		Aliases:       listInput(input, "aliases"),
+		WWW:           boolPointer(boolInput(input, "www", true)),
 		PHPVersion:    input["php_version"],
 		WebDirectory:  input["web_directory"],
 		Repository:    input["repository"],
@@ -487,6 +489,22 @@ func (a *App) sitesSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The tab saves its two cards separately, so a post carries one of them and
+	// the other is left exactly as it was rather than cleared.
+	if _, sent := input["aliases"]; sent {
+		note, err := a.applyAliases(r.Context(), id, listInput(input, "aliases"))
+		if err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		sess.Flash("success", note)
+
+		inertia.Back(w, r, "/sites")
+
+		return
+	}
+
 	if err := a.Sites.SetWebDirectory(r.Context(), id, input["web_directory"]); err != nil {
 		a.failBack(w, r, err.Error())
 		return
@@ -495,6 +513,62 @@ func (a *App) sitesSettings(w http.ResponseWriter, r *http.Request) {
 	sess.Flash("success", "The root directory was changed and nginx reloaded.")
 
 	inertia.Back(w, r, "/sites")
+}
+
+// applyAliases is the whole of changing the hostnames a site answers on, for
+// the settings form and for the tool alike.
+//
+// Three things, because a hostname is three things: a name in the vhost, a
+// record at the DNS provider, and a name on the certificate. Doing only the
+// first is what a www alias looked like for a while — nginx served it, nothing
+// resolved to it, and the browser said the site could not be reached.
+//
+// The certificate goes on the queue rather than being waited for: it is
+// certbot, a challenge and somebody else's rate limit, which is minutes, and
+// the person is looking at a form.
+func (a *App) applyAliases(ctx context.Context, siteID int64, aliases []string) (string, error) {
+	site, err := a.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return "", errors.New("that site no longer exists")
+	}
+
+	for _, alias := range aliases {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+
+		if !validDomain(alias) {
+			return "", fmt.Errorf("%q is not a hostname. Use something like www.%s.",
+				alias, site.Domain)
+		}
+	}
+
+	changed, err := a.Sites.SetAliases(ctx, siteID, aliases)
+	if err != nil {
+		return "", err
+	}
+
+	if !changed {
+		return "Those are the hostnames this site already answers on.", nil
+	}
+
+	note := "The hostnames were saved and nginx reloaded."
+
+	if site.ManageDNS {
+		if updated, err := a.Store.FindSite(ctx, siteID); err == nil {
+			if _, err := dns.SyncForSite(ctx, a.Store, updated); err != nil {
+				note += " Their DNS records could not be published: " + err.Error()
+			} else {
+				note += " Their DNS records were published."
+			}
+		}
+	}
+
+	if site.SSL {
+		a.Queue.PushID(queue.SiteCertificate, "site", siteID)
+
+		note += " A certificate covering them was requested — the Logs tab has the run."
+	}
+
+	return note, nil
 }
 
 // sitesPHP writes the site's php.ini overrides.

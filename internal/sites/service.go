@@ -388,12 +388,6 @@ func (s *Service) requestCertificate(ctx context.Context, siteID int64) func(*ta
 			return "", errors.New("site vanished")
 		}
 
-		var domains strings.Builder
-
-		for _, hostname := range site.Hostnames() {
-			domains.WriteString(" -d " + proc.Quote(hostname))
-		}
-
 		// The record was published a moment ago, and Let's Encrypt is about to
 		// ask a resolver that has not heard about it. Waiting turns "certbot
 		// did not issue a certificate" into a certificate a minute later.
@@ -411,6 +405,28 @@ func (s *Service) requestCertificate(ctx context.Context, siteID int64) func(*ta
 			runner.Writef("%s resolves to %s rather than %s. Trying anyway: a proxy in front "+
 				"passes the challenge through, and a stale record does not.\n",
 				site.Domain, strings.Join(resolution.Addresses, ", "), expected)
+		}
+
+		// Certbot is asked for every name in one request and refuses the whole
+		// of it over any one of them. An alias nobody published a record for
+		// would therefore cost the site the certificate its own domain had
+		// earned — so an alias that answers nowhere is left out, named in the
+		// log, and picked up by the next redeploy once its record exists. The
+		// domain itself is never dropped: it resolved, or this returned above.
+		var domains strings.Builder
+
+		for _, hostname := range site.Hostnames() {
+			// A shorter wait than the domain's: the record was published in
+			// the same deployment, so it is either seconds young or absent.
+			if hostname != site.Domain &&
+				!system.WaitForHostname(ctx, hostname, expected, 30*time.Second).Resolves() {
+				runner.Writef("%s does not resolve, so it is left out of this certificate. "+
+					"Publish its record and redeploy to have it covered.\n", hostname)
+
+				continue
+			}
+
+			domains.WriteString(" -d " + proc.Quote(hostname))
 		}
 
 		email := "admin@" + site.Domain

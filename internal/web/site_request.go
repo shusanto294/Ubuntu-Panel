@@ -31,6 +31,10 @@ type siteRequest struct {
 	Domain  string
 	Aliases []string
 
+	// WWW is whether an apex domain also answers on its www host. Unset means
+	// yes, which is what somebody asking for example.com meant.
+	WWW *bool
+
 	PHPVersion   string
 	WebDirectory string
 	Repository   string
@@ -133,17 +137,7 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 		webDirectory = "/" + webDirectory
 	}
 
-	// An alias that is not a hostname would go straight into an nginx
-	// server_name, so it is dropped rather than written.
-	aliases := []string{}
-
-	for _, alias := range in.Aliases {
-		alias = strings.ToLower(strings.TrimSpace(alias))
-
-		if validDomain(alias) && alias != domain {
-			aliases = append(aliases, alias)
-		}
-	}
+	aliases := siteAliases(domain, in.Aliases, boolOr(in.WWW, true))
 
 	site := &store.Site{
 		UserID:       user.ID,
@@ -186,6 +180,47 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 	}
 
 	return site, nil
+}
+
+// siteAliases is every extra hostname a site answers on: the ones asked for,
+// and — for a domain at its root — its www host.
+//
+// The www is added rather than waited for because leaving it out is not a
+// smaller site, it is a broken one. A person who puts example.com on this
+// server has not asked for a site that 404s the moment somebody types the www
+// in front of it, and the panel had no second chance to add it: aliases were
+// settable at creation and nowhere else, so the vhost was written without the
+// www and stayed that way. Every hostname here goes into the nginx
+// server_name, the certbot request and the DNS records the panel publishes, so
+// one alias in one place is the whole of the fix.
+//
+// An alias that is not a hostname is dropped rather than written: it would go
+// straight into a server_name, and nginx refuses the whole configuration —
+// every site on the machine — over one bad name in one file.
+func siteAliases(domain string, requested []string, www bool) []string {
+	aliases := []string{}
+	seen := map[string]bool{domain: true}
+
+	add := func(alias string) {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+
+		if !validDomain(alias) || seen[alias] {
+			return
+		}
+
+		seen[alias] = true
+		aliases = append(aliases, alias)
+	}
+
+	for _, alias := range requested {
+		add(alias)
+	}
+
+	if www && isApexDomain(domain) {
+		add("www." + domain)
+	}
+
+	return aliases
 }
 
 // resolveDNS decides whether the panel publishes this site's records, and with

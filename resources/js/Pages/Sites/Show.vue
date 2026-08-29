@@ -64,6 +64,34 @@ const saveDirectory = () =>
         { preserveScroll: true },
     );
 
+// ---- Settings: the other hostnames this site answers on.
+//
+// The list is edited whole and posted whole, which is what the server does with
+// it: what is sent is what the site answers on afterwards.
+const aliases = ref([...(props.site.aliases ?? [])]);
+const aliasInput = ref('');
+
+const addAlias = () => {
+    const value = aliasInput.value.trim().toLowerCase();
+
+    if (value && value !== props.site.domain && !aliases.value.includes(value)) {
+        aliases.value.push(value);
+    }
+
+    aliasInput.value = '';
+};
+
+const removeAlias = (alias) => {
+    aliases.value = aliases.value.filter((a) => a !== alias);
+};
+
+const saveAliases = () =>
+    router.post(
+        route('sites.settings', props.site.id),
+        { aliases: aliases.value },
+        { preserveScroll: true },
+    );
+
 // ---- PHP: one field per directive the panel is willing to write.
 const phpValues = ref(
     Object.fromEntries(
@@ -1385,6 +1413,71 @@ const destroy = async () => {
             v-if="!busy && tab === 'settings'"
             class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
         >
+            <h3 class="font-semibold text-slate-800">Hostnames</h3>
+            <p class="mt-2 text-sm text-slate-500">
+                Besides <span class="font-mono">{{ site.domain }}</span>, which
+                this site always answers on. Each one goes into the nginx
+                <span class="font-mono">server_name</span>, is published where
+                the panel manages this site's DNS, and is covered by the
+                certificate.
+            </p>
+
+            <div class="mt-4 flex gap-2">
+                <input
+                    v-model="aliasInput"
+                    type="text"
+                    :placeholder="'www.' + site.domain"
+                    class="w-full max-w-sm rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    @keydown.enter.prevent="addAlias"
+                />
+                <button
+                    type="button"
+                    @click="addAlias"
+                    class="shrink-0 rounded-xl px-3 text-sm text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                >
+                    Add
+                </button>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+                <span
+                    class="inline-flex items-center rounded-full bg-slate-900 px-2.5 py-0.5 text-xs text-white"
+                >
+                    {{ site.domain }}
+                </span>
+                <span
+                    v-for="alias in aliases"
+                    :key="alias"
+                    class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                >
+                    {{ alias }}
+                    <button
+                        type="button"
+                        @click="removeAlias(alias)"
+                        class="text-slate-400 hover:text-rose-600"
+                    >
+                        ×
+                    </button>
+                </span>
+            </div>
+
+            <button
+                @click="saveAliases"
+                class="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            >
+                Save hostnames
+            </button>
+
+            <p class="mt-3 text-xs text-slate-500">
+                Saving rewrites the vhost, reloads nginx, publishes the records
+                where this site's DNS is managed here, and asks for a
+                certificate covering the new names — the Logs tab has that run.
+                A hostname that resolves nowhere is left off the certificate
+                rather than costing the site the one it has.
+            </p>
+
+            <hr class="my-6 border-slate-900/5" />
+
             <h3 class="font-semibold text-slate-800">Root directory</h3>
             <p class="mt-2 text-sm text-slate-500">
                 The folder inside the site that nginx serves. A Laravel site

@@ -28,6 +28,7 @@ const form = useForm({
     type: 'wordpress',
     domain: '',
     aliases: [],
+    www: true,
     php_version: props.phpVersion ?? props.phpVersions[0],
     web_directory: '',
     ssl: true,
@@ -47,6 +48,26 @@ const form = useForm({
 });
 
 const aliasInput = ref('');
+
+// Whether the domain typed is a root domain — example.com, example.co.uk —
+// rather than a host inside one. Only a root domain has a www worth offering,
+// which is the same question the panel asks on the server before it adds one.
+const registryLabels = [
+    'co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'me', 'in',
+    'biz', 'info', 'nom', 'gob', 'mil',
+];
+
+const isApexDomain = computed(() => {
+    const labels = form.domain.trim().toLowerCase().split('.').filter(Boolean);
+
+    if (labels.length === 2) return true;
+
+    return (
+        labels.length === 3 &&
+        registryLabels.includes(labels[1]) &&
+        labels[2].length <= 3
+    );
+});
 
 // The orange cloud is Cloudflare's alone; every other provider just serves the
 // record, so offering the toggle would be offering something that does nothing.
@@ -212,6 +233,25 @@ const submit = () => form.post(route('sites.store'));
                             placeholder="app.example.com"
                         />
                         <InputError class="mt-2" :message="form.errors.domain" />
+                    </div>
+
+                    <div v-if="isApexDomain">
+                        <label class="flex items-start gap-3">
+                            <input
+                                v-model="form.www"
+                                type="checkbox"
+                                class="mt-0.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                            />
+                            <span class="text-sm text-slate-700">
+                                Also answer on
+                                <span class="font-mono">www.{{ form.domain.trim().toLowerCase() }}</span>
+                                <span class="mt-0.5 block text-xs text-slate-500">
+                                    The record is published with the domain's
+                                    and the certificate covers both. Unticked,
+                                    a visitor who types the www gets a 404.
+                                </span>
+                            </span>
+                        </label>
                     </div>
 
                     <div>

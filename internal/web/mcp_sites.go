@@ -57,6 +57,55 @@ func (a *App) mcpSetWebDirectory() *mcp.Tool {
 	}
 }
 
+func (a *App) mcpSetSiteAliases() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "set_site_aliases",
+		Capability: capSitesWrite,
+		Title:      "Change the hostnames a site answers on",
+		Description: "Replace the extra hostnames a site answers on besides its own domain — its " +
+			"www host, a domain it was moved from, a second brand pointing at the same site. The " +
+			"vhost is rewritten and nginx reloaded, the records are published where the panel " +
+			"manages the site's DNS, and a certificate covering the new names is requested.\n\n" +
+			"The whole list, not an addition: what is sent is what the site answers on " +
+			"afterwards, so read `aliases` from get_site first and send that plus whatever is " +
+			"being added. An empty list leaves the site answering on its domain alone.\n\n" +
+			"A site created for a root domain already has its www host, so there is nothing to " +
+			"add for that. This is for the ones made before the panel did that, and for the " +
+			"hostnames nobody could have guessed at creation.",
+		Properties: map[string]mcp.Property{
+			"site": {Description: "The site's id, or its domain."},
+			"aliases": {Type: "array",
+				Description: "Every extra hostname the site answers on, as the whole list."},
+		},
+		Required: []string{"site", "aliases"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			site, err := a.mcpSite(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			note, err := a.applyAliases(ctx, site.ID, args.List("aliases"))
+			if err != nil {
+				return nil, err
+			}
+
+			updated, err := a.Store.FindSite(ctx, site.ID)
+			if err != nil {
+				return nil, err
+			}
+
+			return map[string]any{
+				"site_id":   updated.ID,
+				"domain":    updated.Domain,
+				"aliases":   updated.Aliases,
+				"hostnames": updated.Hostnames(),
+				"applied":   true,
+				"note":      note,
+			}, nil
+		},
+	}
+}
+
 func (a *App) mcpSitePHPSettings() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "site_php_settings",

@@ -48,6 +48,7 @@ var panelGuide = []guideArea{
 			"static HTML, and the applications the panel installs itself (Nextcloud, n8n).",
 		Tools: []string{"list_site_types", "list_sites", "get_site", "create_site", "deploy_site",
 			"pull_site", "restart_site", "delete_site", "site_logs", "set_web_directory",
+			"set_site_aliases",
 			"site_php_settings", "request_certificate", "site_cache", "site_cron", "site_access",
 			"wordpress_login_link", "sync_dns"},
 		Recipes: []guideRecipe{
@@ -70,6 +71,21 @@ var panelGuide = []guideArea{
 				Steps: []string{
 					"pull_site — fetches the repository again and rebuilds, leaving nginx and the certificate alone.",
 					"get_site until the task finishes; site_logs if the site then answers with a 500.",
+				},
+			},
+			{
+				Task: "A site answers on its domain but not on www",
+				Steps: []string{
+					"get_site — `aliases` is every hostname besides the domain. A site created " +
+						"for a root domain has its www there already; one made before the panel " +
+						"did that does not, and the www reaches the catch-all vhost instead, " +
+						"which answers \"No site is configured for this hostname\".",
+					"set_site_aliases with the whole list: what `aliases` had, plus the www host. " +
+						"That writes the vhost, publishes the record where the panel manages the " +
+						"site's DNS, and asks for a certificate covering it.",
+					"get_task or site_logs for certbot's run. A hostname that still resolves " +
+						"nowhere is left off the certificate rather than failing the request, so " +
+						"publish its record and deploy_site to have it covered.",
 				},
 			},
 			{

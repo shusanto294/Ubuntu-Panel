@@ -22,6 +22,12 @@ import (
 // restart.
 const bootstrapSetting = "apps_bootstrapped"
 
+// aliasBackfillSetting is how the panel remembers it has already given the
+// sites it hosts their www hostnames. A setting rather than "does every apex
+// site have one?", so that an operator who deliberately removes a www alias is
+// not handed it back on the next restart.
+const aliasBackfillSetting = "www_aliases_backfilled"
+
 // EnsureMailConfigured sets the mail server up when it needs it, without
 // anybody asking.
 //
@@ -50,6 +56,84 @@ func (a *App) EnsureMailConfigured() {
 
 	a.Log.Info("configuring the mail server", "reason",
 		"nothing has configured it, or the panel now writes it differently")
+}
+
+// EnsureSiteAliases gives the sites already on this server the www hostname a
+// site created now is given at birth.
+//
+// The bug it closes was silent and total: a site created for example.com was
+// written into nginx with that one name in its server_name, so a visitor who
+// typed www.example.com reached the catch-all vhost and read "No site is
+// configured for this hostname" — a 404 for what is, for a great many people,
+// the only way they know how to type a domain. Nothing in the panel could fix
+// it either, because aliases were settable when a site was created and nowhere
+// afterwards. Updating the panel is therefore the moment to repair it, on every
+// site at once, rather than a thing to go and do site by site.
+//
+// What each site gets is the whole change, not the nginx third of it: the name
+// in the vhost, the record published where the panel manages the site's DNS,
+// and a certificate that covers it. The certificate goes on the queue — it is
+// certbot and somebody else's rate limit — and requestCertificate leaves out
+// any hostname that still resolves nowhere, so a site whose DNS lives
+// elsewhere keeps the certificate it already had rather than losing it to a
+// www nobody has pointed anywhere.
+//
+// Only root domains, and only where the operator has not already said
+// otherwise: a site for app.example.com is a host inside a domain and has no
+// www, and a site that already answers on some www host is left exactly as it
+// is.
+func (a *App) EnsureSiteAliases(ctx context.Context) {
+	if a.Store.SettingBool(aliasBackfillSetting, false) {
+		return
+	}
+
+	// Written before the work rather than after it. A panel restarted in the
+	// middle would otherwise start again from the top, and the half of the
+	// sites already done would each be handed another certificate request.
+	a.Store.SetSetting(aliasBackfillSetting, "1")
+
+	sites, err := a.Store.Sites(ctx)
+	if err != nil {
+		a.Log.Error("could not read the sites to check their hostnames", "error", err)
+
+		return
+	}
+
+	for _, site := range sites {
+		// A site mid-deployment is having its vhost written by the deployment
+		// itself, and one that never finished has no directory for a vhost to
+		// serve. Both are left to deploy_site, which writes the server_name
+		// from the same row and so picks the www up on its own.
+		if site.Status != "active" || !isApexDomain(site.Domain) {
+			continue
+		}
+
+		www := "www." + strings.ToLower(site.Domain)
+
+		if hasHost(site.Aliases, www) {
+			continue
+		}
+
+		note, err := a.applyAliases(ctx, site.ID, append(append([]string{}, site.Aliases...), www))
+		if err != nil {
+			a.Log.Error("could not add the www hostname", "site", site.Domain, "error", err)
+
+			continue
+		}
+
+		a.Log.Info("added the www hostname", "site", site.Domain, "result", note)
+	}
+}
+
+// hasHost is whether a list already holds a hostname, however it was typed.
+func hasHost(hosts []string, wanted string) bool {
+	for _, host := range hosts {
+		if strings.EqualFold(strings.TrimSpace(host), wanted) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // BootstrapApps installs the software a server needs, on a panel that has never

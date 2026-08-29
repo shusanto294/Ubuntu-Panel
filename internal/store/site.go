@@ -295,6 +295,25 @@ func (s *Store) SetSiteCache(id int64, mode, ttl string) {
 		mode, mode == "nginx", nullText(ttl), id)
 }
 
+// SetSiteAliases replaces the extra hostnames a site answers on. The vhost,
+// the certificate and the published DNS records are all written from
+// Hostnames(), so this is the row half of the change and never the whole of it.
+func (s *Store) SetSiteAliases(id int64, aliases []string) error {
+	if aliases == nil {
+		aliases = []string{}
+	}
+
+	encoded, err := json.Marshal(aliases)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE sites SET aliases = ?, updated_at = datetime('now') WHERE id = ?`,
+		string(encoded), id)
+
+	return err
+}
+
 // SetSiteWebDirectory moves the document root inside the site directory.
 func (s *Store) SetSiteWebDirectory(id int64, directory string) {
 	s.db.Exec(`UPDATE sites SET web_directory = ?, updated_at = datetime('now')

@@ -172,6 +172,44 @@ func validDomain(text string) bool {
 	return label > 0 && dots > 0
 }
 
+// registryLabels are the second-level labels a registry runs rather than a
+// person: the `co` of co.uk, the `com` of com.au. They are what tells
+// example.co.uk — a domain somebody bought — from api.example.com, a host
+// inside one.
+//
+// A list rather than the public suffix list itself, which is thousands of lines
+// that would have to be shipped and kept current for the one question asked of
+// it here. Being wrong either way costs a www alias somebody can add or remove
+// by hand, so the short list is the right size of answer.
+var registryLabels = map[string]bool{
+	"co": true, "com": true, "net": true, "org": true, "gov": true, "edu": true,
+	"ac": true, "or": true, "ne": true, "me": true, "in": true, "biz": true,
+	"info": true, "nom": true, "gob": true, "mil": true,
+}
+
+// isApexDomain says whether this is a domain at its root — example.com,
+// example.co.uk — rather than a host inside one, like app.example.com.
+//
+// This is the whole of what decides whether a new site is given its www alias.
+// A root domain typed into a browser without the www is the one case where
+// visitors reliably type it with the www as well; app.example.com is not.
+func isApexDomain(domain string) bool {
+	labels := strings.Split(strings.ToLower(strings.TrimSpace(domain)), ".")
+
+	switch len(labels) {
+	case 2:
+		return true
+
+	case 3:
+		// example.co.uk: the middle label belongs to the registry and the last
+		// is a country. app.example.com fails both halves.
+		return registryLabels[labels[1]] && len(labels[2]) <= 3
+
+	default:
+		return false
+	}
+}
+
 // validIdentifier is letters, digits and underscore. See the databases package
 // for why identifiers are validated rather than escaped.
 func validIdentifier(text string, max int) bool {

@@ -375,6 +375,7 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpRestartSite(),
 		a.mcpSiteLogs(),
 		a.mcpSetWebDirectory(),
+		a.mcpSetSiteAliases(),
 		a.mcpSitePHPSettings(),
 		a.mcpRequestCertificate(),
 		a.mcpSiteCache(),
@@ -693,16 +694,26 @@ func (a *App) mcpCreateSite() *mcp.Tool {
 			"everything else out: every argument here has the same default as the panel's own " +
 			"create form, and a site made through this tool with nothing but a type and a domain " +
 			"is the same site a person gets by opening that form and pressing the button. Do not " +
-			"turn things off to be careful — switching manage_dns or ssl off produces a site that " +
-			"resolves nowhere or has no certificate, which is not a safer site, only a broken one.",
+			"turn things off to be careful — switching manage_dns, ssl or www off produces a site " +
+			"that resolves nowhere, has no certificate, or answers nothing when a visitor types " +
+			"the www, which is not a safer site, only a broken one.\n\n" +
+			"A root domain — example.com — is given www.example.com as well: in the vhost, in the " +
+			"records the panel publishes and on the certificate. There is no www alias to add, " +
+			"and set_site_aliases changes the list afterwards for a site that wants more.",
 		Properties: map[string]mcp.Property{
 			"type": {
 				Description: "The site type. list_site_types has them and says which this machine can host.",
 				Enum: []string{"wordpress", "laravel", "nextcloud", "n8n", "php", "nodejs",
 					"nextjs", "static"},
 			},
-			"domain":      {Description: "The hostname the site answers on, like app.example.com."},
-			"aliases":     {Type: "array", Description: "Extra hostnames the same site answers on."},
+			"domain": {Description: "The hostname the site answers on, like app.example.com."},
+			"aliases": {Type: "array", Description: "Extra hostnames the same site answers on. " +
+				"A root domain is given its www host already, so there is nothing to add for that."},
+			"www": {Type: "boolean", Default: true,
+				Description: "For a root domain like example.com: also answer on www.example.com, " +
+					"with the record published and the certificate covering it. Leave it out. " +
+					"Switching it off produces a site that 404s for every visitor who types the " +
+					"www, which is most of them."},
 			"repository":  {Description: "A git URL to deploy from, for the types that are not installed by the panel. HTTPS, and public — the panel clones without credentials."},
 			"branch":      {Description: "The branch to deploy.", Default: "main"},
 			"php_version": {Description: "For a PHP site. Defaults to the panel's own default."},
@@ -769,6 +780,10 @@ func (a *App) mcpProvisionSite(ctx context.Context, args mcp.Args) (any, error) 
 
 	if args.Has("ssl") {
 		request.SSL = boolPointer(args.Bool("ssl", true))
+	}
+
+	if args.Has("www") {
+		request.WWW = boolPointer(args.Bool("www", true))
 	}
 
 	if args.Has("manage_dns") {

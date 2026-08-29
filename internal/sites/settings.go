@@ -129,6 +129,77 @@ func (s *Service) SetWebDirectory(ctx context.Context, siteID int64, directory s
 	return s.rewriteVhost(ctx, site.ID)
 }
 
+// ------------------------------------------------------------- the hostnames
+
+// SetAliases replaces the extra hostnames a site answers on and writes the
+// vhost from them.
+//
+// The vhost half only. A new hostname also wants a DNS record published and a
+// certificate that covers it, and both of those are minutes of work against
+// somebody else's server — so the caller queues them, the same way the site
+// page's own buttons do. `changed` is false when the list is the one already
+// stored, which is what keeps a saved form from asking Let's Encrypt for a
+// certificate it issued a moment ago.
+//
+// A name that nginx will not take never reaches a served configuration:
+// rewriteVhost asks `nginx -t` before reloading and puts the previous file back
+// if the answer is no.
+func (s *Service) SetAliases(ctx context.Context, siteID int64, aliases []string) (bool, error) {
+	site, err := s.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return false, errors.New("that site no longer exists")
+	}
+
+	clean := []string{}
+	seen := map[string]bool{strings.ToLower(site.Domain): true}
+
+	for _, alias := range aliases {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+
+		// The site's own domain is already the first name in the server_name,
+		// and repeating it is a vhost nginx refuses as a conflicting name.
+		if alias == "" || seen[alias] {
+			continue
+		}
+
+		seen[alias] = true
+		clean = append(clean, alias)
+	}
+
+	if equalStrings(clean, site.Aliases) {
+		return false, nil
+	}
+
+	if err := s.Store.SetSiteAliases(site.ID, clean); err != nil {
+		return false, errors.New("the panel could not store the hostnames")
+	}
+
+	if err := s.rewriteVhost(ctx, site.ID); err != nil {
+		// nginx refused it and kept serving the old file, so the row is put
+		// back to match what is actually on disk.
+		s.Store.SetSiteAliases(site.ID, site.Aliases)
+
+		return false, err
+	}
+
+	return true, nil
+}
+
+// equalStrings compares two lists in order.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // ---------------------------------------------------------------- the cache
 
 // SetCache gives a site one cache, or none.
