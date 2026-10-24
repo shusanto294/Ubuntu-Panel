@@ -5,6 +5,8 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import FileIcon from '@/Components/FileIcon.vue';
 import FolderTree from '@/Components/FolderTree.vue';
 import TaskProgress from '@/Components/TaskProgress.vue';
+import SiteStaging from '@/Components/SiteStaging.vue';
+import SiteGit from '@/Components/SiteGit.vue';
 import { formatRelative } from '@/time';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
@@ -28,6 +30,8 @@ const props = defineProps({
     logFiles: { type: Array, default: () => [] },
     certificate: { type: Object, default: () => ({}) },
     cache: { type: Object, default: () => ({}) },
+    staging: { type: Object, default: () => ({}) },
+    git: { type: Object, default: () => ({}) },
 });
 
 const deleteFiles = ref(true);
@@ -45,11 +49,17 @@ const tabs = computed(() => {
 
     if (!props.site.is_proxied) entries.push({ key: 'php', label: 'PHP' });
 
+    // Only where there is a repository, or where one could be added: a
+    // WordPress or Nextcloud site is installed by the panel and has no git
+    // remote to talk about.
+    if (!props.site.managed) entries.push({ key: 'git', label: 'Git' });
+
     entries.push({ key: 'database', label: 'Database' });
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
     entries.push({ key: 'cache', label: 'Cache' });
     entries.push({ key: 'files', label: 'File manager' });
     entries.push({ key: 'backups', label: 'Backups' });
+    entries.push({ key: 'staging', label: props.staging.is_staging ? 'Push to production' : 'Staging' });
     entries.push({ key: 'access', label: 'SSH/SFTP' });
     entries.push({ key: 'cron', label: 'Cron jobs' });
     entries.push({ key: 'logs', label: 'Logs' });
@@ -917,11 +927,19 @@ const destroy = async () => {
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h2 class="text-xl font-semibold text-slate-800">
+                    <h2 class="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-800">
                         {{ site.domain }}
+                        <span
+                            v-if="staging.is_staging"
+                            class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800"
+                            >staging</span
+                        >
                     </h2>
                     <p class="text-sm text-slate-500">
                         {{ site.type_label }} · {{ site.document_root }}
+                        <template v-if="staging.is_staging && staging.parent">
+                            · a copy of {{ staging.parent.domain }}
+                        </template>
                     </p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -2841,6 +2859,14 @@ const destroy = async () => {
                 </template>
             </div>
         </div>
+
+        <SiteGit v-if="!busy && tab === 'git'" :site="site" :git="git" />
+
+        <SiteStaging
+            v-if="!busy && tab === 'staging'"
+            :site="site"
+            :staging="staging"
+        />
 
         <div v-if="!busy && tab === 'logs'">
             <!--

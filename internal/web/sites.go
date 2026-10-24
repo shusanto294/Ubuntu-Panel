@@ -295,6 +295,8 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"defaultPhpVersion":    a.Store.PHPVersion(),
 		"accessUsers":          a.Sites.AccessUsers(site),
 		"cache":                a.cacheSummary(site),
+		"staging":              a.stagingProps(r.Context(), site),
+		"git":                  a.gitProps(r.Context(), site),
 		"cronJobs":             a.Sites.CronJobs(site),
 		"certificate":          a.certificateSummary(site),
 		"site":                 site.Summary(true),
@@ -421,6 +423,11 @@ func dnsAccountSummary(account *store.DNSAccount) map[string]any {
 		"supports_proxy": dns.SupportsProxy(account.Provider),
 		"verified_at":    verified,
 		"sites_count":    account.SitesCount,
+
+		// This machine's own nameserver rather than an API somewhere. It has
+		// no credential to check or revoke, so the pages that list credentials
+		// show it differently and send you to the nameserver page instead.
+		"local": dns.IsLocal(account.Provider),
 	}
 }
 

@@ -61,6 +61,40 @@ var schema = []string{
 		updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
 
+	// The zones this machine answers for itself, and the records in them.
+	//
+	// Unlike every other DNS the panel drives, these rows are the record of
+	// truth: the zone files under /etc/bind are generated from them on every
+	// change. A zone's name is unique across the machine rather than per
+	// person, because there is one nameserver here and it cannot answer two
+	// ways for the same name.
+	`CREATE TABLE IF NOT EXISTS dns_zones (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER,
+		name       TEXT NOT NULL UNIQUE,
+		serial     INTEGER NOT NULL DEFAULT 0,
+		ttl        INTEGER NOT NULL DEFAULT 3600,
+		refresh    INTEGER NOT NULL DEFAULT 3600,
+		retry      INTEGER NOT NULL DEFAULT 600,
+		expire     INTEGER NOT NULL DEFAULT 1209600,
+		minimum    INTEGER NOT NULL DEFAULT 3600,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS dns_zone_records (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		zone_id    INTEGER NOT NULL,
+		type       TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		content    TEXT NOT NULL,
+		priority   INTEGER NOT NULL DEFAULT -1,
+		ttl        INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS dns_zone_records_zone ON dns_zone_records(zone_id)`,
+
 	// One row per catalogue entry: what the machine has, and what is being
 	// installed onto it.
 	`CREATE TABLE IF NOT EXISTS services (
@@ -295,6 +329,42 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN backup_schedule TEXT`,
 	`ALTER TABLE sites ADD COLUMN backup_keep INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sites ADD COLUMN backup_next_at INTEGER NOT NULL DEFAULT 0`,
+
+	// The site this one is a staging copy of.
+	//
+	// A staging site is an ordinary site row and not a second kind of thing:
+	// it has a vhost, a certificate, a PHP version, backups and a terminal,
+	// because it is a site. This column is the only difference, and what it
+	// buys is the pair of buttons that keep the two in step.
+	`ALTER TABLE sites ADD COLUMN staging_of INTEGER`,
+	`CREATE INDEX IF NOT EXISTS sites_staging_of ON sites(staging_of)`,
+
+	// How the panel authenticates to this site's git remote.
+	//
+	// `repo_auth` is none, key or token. The deploy key's private half is a
+	// file on disk under the panel's own directory, never a column — only its
+	// public half is here, because the page shows it on every render and
+	// reading a file for that is a sudo per page load. The token is a
+	// credential and is encrypted with the application key like every other.
+	`ALTER TABLE sites ADD COLUMN repo_auth TEXT`,
+	`ALTER TABLE sites ADD COLUMN repo_token TEXT`,
+	`ALTER TABLE sites ADD COLUMN repo_deploy_key TEXT`,
+
+	// Pulling without being asked.
+	//
+	// Two mechanisms, because they fail in opposite situations: a webhook is
+	// instant and needs the panel to be reachable from the internet, and
+	// polling needs nothing of anybody but finds out late. `auto_pull` is the
+	// polling interval, `auto_pull_next_at` the Unix second it is next due —
+	// the same arrangement as the backup schedule, so nothing has to parse a
+	// cron expression. `webhook_secret` is what a push is signed with.
+	`ALTER TABLE sites ADD COLUMN webhook_secret TEXT`,
+	`ALTER TABLE sites ADD COLUMN auto_pull TEXT`,
+	`ALTER TABLE sites ADD COLUMN auto_pull_next_at INTEGER NOT NULL DEFAULT 0`,
+
+	// The commit the site is serving, so a pull can say what it changed and a
+	// poll can tell whether there is anything to do.
+	`ALTER TABLE sites ADD COLUMN last_commit TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

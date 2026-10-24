@@ -50,7 +50,9 @@ var panelGuide = []guideArea{
 			"pull_site", "restart_site", "delete_site", "site_logs", "set_web_directory",
 			"set_site_aliases",
 			"site_php_settings", "request_certificate", "site_cache", "site_cron", "site_access",
-			"wordpress_login_link", "sync_dns"},
+			"wordpress_login_link", "sync_dns",
+			"create_staging_site", "push_staging_site", "list_staging_sites",
+			"site_git"},
 		Recipes: []guideRecipe{
 			{
 				Task: "Put a new site on this server",
@@ -64,6 +66,53 @@ var panelGuide = []guideArea{
 					"If it failed: get_task with the id in `latest_task` for the console, fix, then deploy_site.",
 					"Report the URL, and — where the type has one — the admin login in `application`. " +
 						"get_site's `dns_problem` is there whenever the name still resolves nowhere.",
+				},
+			},
+			{
+				Task: "Deploy from a private repository, or fix one that will not clone",
+				Steps: []string{
+					"site_git with the site alone. Its `access.message` is why the clone " +
+						"fails, written as something to fix rather than as git's own words.",
+					"A private repository with `auth: none` is the usual answer. " +
+						"site_git with auth: \"key\" generates a deploy key and returns it " +
+						"in `tell_the_person`.",
+					"Give the person that key and where to paste it, and say that nothing " +
+						"works until they have. You cannot do this step and neither can " +
+						"the panel.",
+					"Once they say it is added: site_git again with the site alone to " +
+						"confirm `access.ok`, then `pull: true` to deploy.",
+					"Where a deploy key is not possible, auth: \"token\" with a read-only " +
+						"token works immediately. Ask for one scoped to that repository's " +
+						"contents and nothing else.",
+				},
+			},
+			{
+				Task: "Make a site deploy itself when somebody pushes",
+				Steps: []string{
+					"site_git with webhook: true. The answer's `tell_the_person` has the " +
+						"URL and the secret to paste into the repository's webhook " +
+						"settings — again, a step only a person can do.",
+					"Add auto_pull: \"15m\" as well. The two are not alternatives: the " +
+						"webhook deploys the moment somebody pushes and needs this panel " +
+						"reachable from the internet, and the interval is the backstop for " +
+						"the push that arrived while the panel was restarting.",
+					"Only a push to the site's own branch deploys; the rest are answered " +
+						"and ignored.",
+				},
+			},
+			{
+				Task: "Try something risky without touching the live site",
+				Steps: []string{
+					"create_staging_site with the production site. The copy gets its own " +
+						"hostname, files, database and certificate, and its URLs are " +
+						"rewritten so it does not redirect back to production.",
+					"Read the answer's `url` and do the work there — the upgrade, the " +
+						"plugin, the theme change.",
+					"When it is right: push_staging_site. Default is files only, which is " +
+						"what shipping code means. Pass `database: true` only if the " +
+						"person has been told it replaces everything written to production " +
+						"since the copy was made, and has said yes to that.",
+					"Production is backed up before the push either way; list_backups has it.",
 				},
 			},
 			{
@@ -114,11 +163,30 @@ var panelGuide = []guideArea{
 			},
 		},
 		Warnings: []string{
+			"A deploy key and a webhook both have one step the panel cannot do: somebody has " +
+				"to paste something into the repository's settings. site_git returns those " +
+				"in `tell_the_person` — hand them over verbatim and say that nothing works " +
+				"until they are added. Never report a repository as connected because the " +
+				"panel accepted the settings; `access.ok` is the only answer that counts.",
+			"A pull resets the working tree to the branch, so anything tracked that was " +
+				"changed on the server is lost. Untracked files — uploads, .env, " +
+				"node_modules — survive. Say so before pulling a site somebody has been " +
+				"editing in place.",
 			"The panel owns a site's nginx vhost, its systemd unit and its directory. Writing any " +
 				"of those by hand is overwritten by the next deployment.",
 			"PHP is per site. A panel update installs the newest PHP and makes it the default " +
 				"for new sites; nothing moves an existing site but site_php_settings, one site " +
 				"at a time.",
+			"push_staging_site replaces what is on production rather than merging into it. " +
+				"With `database` on, every order, comment, signup and page written to the " +
+				"live site since the copy was taken is gone — and a staging copy days old " +
+				"is days of somebody's business. Never pass `database: true` on your own " +
+				"reading of what the person wants: say what it destroys and let them " +
+				"answer. Files only is the ordinary push.",
+			"A staging site is a complete second copy of somebody's content on a hostname " +
+				"that is reachable from the internet. Do not put one on a hostname the " +
+				"person did not choose, and do not leave copies lying around: delete_site " +
+				"takes one away.",
 		},
 	},
 	{
@@ -288,10 +356,16 @@ var panelGuide = []guideArea{
 		Key:  "dns",
 		Page: "DNS",
 		What: "Credentials for DNS providers, and the records in the zones they hold. The panel " +
-			"publishes a site's and a mail domain's records itself; this is for everything else.",
+			"publishes a site's and a mail domain's records itself; this is for everything else. " +
+			"This machine can also be the nameserver rather than a client of one — a hosted " +
+			"zone is then reached through the same credential and the same record tools as " +
+			"Cloudflare's, and the tools whose names say nameserver or hosted_zone are the " +
+			"ones for setting that up.",
 		Tools: []string{"list_dns_accounts", "list_dns_providers", "connect_dns_account",
 			"update_dns_account", "verify_dns_account", "delete_dns_account", "list_dns_zones",
-			"list_dns_records", "set_dns_record", "delete_dns_record"},
+			"list_dns_records", "set_dns_record", "delete_dns_record",
+			"nameserver_status", "set_nameserver_hostnames", "list_hosted_zones",
+			"host_dns_zone", "remove_hosted_zone"},
 		Recipes: []guideRecipe{
 			{
 				Task: "Add a record somebody asked for — a TXT verification, a subdomain elsewhere",
@@ -300,10 +374,30 @@ var panelGuide = []guideArea{
 					"list_dns_records to read it back.",
 				},
 			},
+			{
+				Task: "Host a domain's DNS on this server instead of at a provider",
+				Steps: []string{
+					"nameserver_status. Its `next_step` is the one thing to do next, in order; the rest of this recipe is what those steps are.",
+					"The `dns` app, if it is not installed: install_apps.",
+					"set_nameserver_hostnames with two names on a domain the person owns — ns1 and ns2 by convention. Its answer carries the exact glue records to register.",
+					"Give the person those glue records and say plainly that only they can add them, at the registrar of the domain the nameserver names are on. Nothing resolves until that is done, and it is not something this panel can do or check immediately.",
+					"host_dns_zone for the domain the nameserver names are on, so the nameservers have addresses of their own.",
+					"host_dns_zone for each domain they want managed here, then tell them to change that domain's nameservers at its own registrar.",
+					"After that the zone is an ordinary provider: set_dns_record, and create_site publishes a site's records into it by itself.",
+				},
+			},
 		},
 		Warnings: []string{
 			"A site's own records belong to create_site and delete_site. Writing them here leaves " +
 				"the panel's record and the zone disagreeing.",
+			"Hosting DNS here depends on glue records registered at a registrar, which is outside " +
+				"this panel and outside your reach. Never report it as set up because the panel " +
+				"accepted the settings: nameserver_status asks the public DNS what the " +
+				"nameserver names actually resolve to, and that answer is the only one that " +
+				"counts. A registration just made can take hours to appear.",
+			"host_dns_zone before the person changes the domain's nameservers, never after. A " +
+				"domain delegated to a zone that does not exist here is answered \"no such " +
+				"domain\", and that answer is cached by every resolver that asked.",
 			"set_dns_record replaces rather than adds: the record already at that name and type, " +
 				"and any duplicates of it, are overwritten and removed. The answer's `replaced` " +
 				"says what was there. A TXT only replaces one of its own kind — SPF over SPF, " +

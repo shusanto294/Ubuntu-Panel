@@ -111,6 +111,26 @@ var SiteTypes = []SiteType{
 		Build: "npm run build", Start: "npm run start",
 	},
 	{
+		Key: "nuxt", Label: "Nuxt",
+		Description: "systemd service behind nginx · built on deploy",
+		Runtime:     "node", Proxied: true,
+
+		// `nuxt build` leaves a self-contained Nitro server at
+		// .output/server/index.mjs, and that is what a Nuxt site is started
+		// with. Not `npm run start`, which is what every other Node type here
+		// uses: Nuxt's own scaffold has no `start` script at all — it has
+		// `preview`, which runs `nuxt preview` and is a development
+		// convenience rather than a production server. A Nuxt site started
+		// with `npm run start` is a systemd unit that fails, restarts, and
+		// fails again for ever.
+		Build: "npm run build", Start: "node .output/server/index.mjs",
+
+		// Nuxt 4 wants Node 20.19 or newer. 20 is the floor the panel
+		// upgrades to; its own default for new sites is 22, so this only ever
+		// moves a machine still on 18.
+		NodeMinimum: 20,
+	},
+	{
 		Key: "static", Label: "Static HTML",
 		Description: "served straight from disk",
 		Runtime:     "static",

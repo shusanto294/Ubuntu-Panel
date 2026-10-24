@@ -45,6 +45,14 @@ const (
 	SiteBackup  = "site.backup"
 	SiteRestore = "site.restore"
 
+	// SiteStagingCreate clones a site onto a second hostname; SiteStagingPush
+	// copies the clone back over the original. On the queue because both are a
+	// copy of every file and a dump and load of a database, and because the
+	// push backs the destination up before it starts — which is itself a
+	// backup's worth of work.
+	SiteStagingCreate = "site.staging.create"
+	SiteStagingPush   = "site.staging.push"
+
 	DatabaseCreate = "database.create"
 	DatabaseDelete = "database.delete"
 

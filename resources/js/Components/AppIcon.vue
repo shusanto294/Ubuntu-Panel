@@ -65,6 +65,8 @@ const MARKS = {
     },
     nodejs: { path: 'M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm-2 6v5a2 2 0 0 0 4 0V9', tint: 'emerald' },
     nextjs: { path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 16V9l6 8M15 9v4', tint: 'slate' },
+    // Nuxt's mark is a mountain; this is the two-stroke version of it.
+    nuxt: { path: 'M3 18h18L14 6l-3 5m-1-2L4 18', tint: 'emerald' },
     static: { path: 'M4 5h16v12H4zM4 20h16M9 9l-2 2 2 2m6-4l2 2-2 2', tint: 'violet' },
 };
 

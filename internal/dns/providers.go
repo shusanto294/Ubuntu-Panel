@@ -22,10 +22,26 @@ type Provider struct {
 	Proxy       bool   `json:"proxy"`
 	Help        string `json:"help"`
 	URL         string `json:"url"`
+
+	// Local is this machine answering for the zone itself, rather than an API
+	// somewhere else being written to.
+	//
+	// It is a provider like the rest on purpose. Everything that publishes a
+	// record — creating a site, syncing a mail domain's SPF and DKIM, the zone
+	// editor, every MCP tool — goes through a Client and a credential id, so
+	// the panel hosting the zone itself is one more entry in this table rather
+	// than a second path through all of that code. What it has instead of a
+	// token is a running BIND and a registrar pointed at it.
+	Local bool `json:"local"`
 }
 
 // Providers is every DNS host the panel can write to.
 var Providers = []Provider{
+	{
+		Key: "panel", Label: "This server", TokenLabel: "", Local: true,
+		Help: "This machine answers for the zone itself. Point the domain's " +
+			"nameservers here and manage the records in the panel.",
+	},
 	{
 		Key: "cloudflare", Label: "Cloudflare", TokenLabel: "API token", Proxy: true,
 		Help: "Create a token with Zone · DNS · Edit on the zones you want the panel to manage.",
@@ -78,9 +94,20 @@ func ProviderLabel(key string) string {
 	return key
 }
 
-// ProviderExists, NeedsSecret and SupportsProxy are what the handlers validate
-// against.
+// ProviderExists, NeedsSecret, SupportsProxy and IsLocal are what the handlers
+// validate against.
 func ProviderExists(key string) bool { return FindProvider(key) != nil }
+
+// IsLocal reports whether this provider is this machine's own nameserver.
+func IsLocal(key string) bool {
+	provider := FindProvider(key)
+
+	return provider != nil && provider.Local
+}
+
+// LocalProvider is the key of the panel's own nameserver, named once so the
+// string is not spelled out in a dozen comparisons.
+const LocalProvider = "panel"
 
 func NeedsSecret(key string) bool {
 	provider := FindProvider(key)
@@ -147,4 +174,22 @@ func relativeName(name, zone, apex string) string {
 	}
 
 	return name
+}
+
+// Connectable is every provider the connect form can render.
+//
+// All of them but this machine. The panel's own nameserver is a provider to
+// everything that writes a record, and it is not something you connect with a
+// pasted credential — it is something you set up, on its own page, by pointing
+// a registrar at this server.
+func Connectable() []Provider {
+	list := make([]Provider, 0, len(Providers))
+
+	for _, provider := range Providers {
+		if !provider.Local {
+			list = append(list, provider)
+		}
+	}
+
+	return list
 }

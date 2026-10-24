@@ -7,6 +7,7 @@ import (
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
@@ -137,6 +138,19 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 		webDirectory = "/" + webDirectory
 	}
 
+	// The repository, checked for shape here and for reachability by the
+	// deployment's own first step.
+	//
+	// Validated at all because it is the one field on this form nobody can
+	// check by reading it back, and an unvalidated one reached a command line
+	// and failed four steps into a deployment — after the vhost, the database
+	// and the certificate.
+	repository, repositoryProblem := NormaliseRepositoryInput(in.Repository)
+
+	if repositoryProblem != "" {
+		return nil, problem("repository", repositoryProblem)
+	}
+
 	aliases := siteAliases(domain, in.Aliases, boolOr(in.WWW, true))
 
 	site := &store.Site{
@@ -150,7 +164,7 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 		PHPVersion:   php,
 		NodeVersion:  a.Store.NodeVersion(),
 		SSL:          boolOr(in.SSL, true),
-		Repository:   strings.TrimSpace(in.Repository),
+		Repository:   repository,
 		Branch:       orDefault(strings.TrimSpace(in.Branch), "main"),
 		ManageDNS:    manageDNS,
 		DNSType:      dnsType,
@@ -272,7 +286,7 @@ func (a *App) resolveDNS(ctx context.Context, user *store.User, domain string,
 		// credential rather than the person choosing it, so refusing would be a
 		// dead end in front of somebody whose domain is simply hosted somewhere
 		// else, and whose site is otherwise perfectly buildable.
-		if _, _, err := dns.New(account).FindZone(domain); errors.Is(err, dns.ErrNoZone) {
+		if _, _, err := dns.New(a.Store, account).FindZone(domain); errors.Is(err, dns.ErrNoZone) {
 			return false, 0, nil
 		}
 
@@ -282,7 +296,7 @@ func (a *App) resolveDNS(ctx context.Context, user *store.User, domain string,
 	var unreachable int64
 
 	for _, account := range accounts {
-		_, _, err := dns.New(account).FindZone(domain)
+		_, _, err := dns.New(a.Store, account).FindZone(domain)
 
 		switch {
 		case err == nil:
@@ -316,3 +330,22 @@ func boolOr(value *bool, fallback bool) bool {
 
 // boolPointer is how a caller that has a real answer passes one.
 func boolPointer(value bool) *bool { return &value }
+
+// NormaliseRepositoryInput is the repository field, cleaned, with the reason it
+// was refused — or empty for one that is fine.
+//
+// A thin wrapper so the handlers do not each have to know that credentials in a
+// URL are stripped rather than refused: somebody who pasted a URL with a token
+// in it has given the panel the right token in the wrong field, and the useful
+// answer is to take it out of the URL and tell them where it belongs.
+func NormaliseRepositoryInput(repository string) (string, string) {
+	cleaned, err := sites.NormaliseRepository(repository)
+
+	switch {
+	case err == nil, sites.ErrCredentialsInURL(err):
+		return cleaned, ""
+
+	default:
+		return "", err.Error()
+	}
+}

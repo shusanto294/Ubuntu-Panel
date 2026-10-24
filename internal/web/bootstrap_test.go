@@ -45,16 +45,31 @@ func bootstrapApp(t *testing.T, choice string) *App {
 }
 
 // A fresh server should be ready to host a site without anybody installing
-// anything first.
-func TestAFreshPanelQueuesEveryApp(t *testing.T) {
+// anything first — everything in the catalogue except the apps that change what
+// the machine is to the rest of the internet, which wait to be asked for.
+func TestAFreshPanelQueuesEveryAppItIsAllowedTo(t *testing.T) {
 	app := bootstrapApp(t, "all")
 
 	app.BootstrapApps(context.Background())
 
-	queued := app.Store.QueuedServices(context.Background())
+	queued := map[string]bool{}
 
-	if len(queued) != len(catalog.Entries) {
-		t.Fatalf("queued %d of %d apps: %v", len(queued), len(catalog.Entries), queued)
+	for _, key := range app.Store.QueuedServices(context.Background()) {
+		queued[key] = true
+	}
+
+	for _, entry := range catalog.Entries {
+		switch {
+		case entry.OnlyWhenAsked && queued[entry.Key]:
+			// The nameserver is the one of these today. Installing it puts a
+			// service on port 53 of a public address, which is not something
+			// the catalogue growing should decide on somebody's behalf.
+			t.Errorf("%s installs itself on a fresh panel, and should wait to be asked",
+				entry.Key)
+
+		case !entry.OnlyWhenAsked && !queued[entry.Key]:
+			t.Errorf("%s was not queued on a fresh panel", entry.Key)
+		}
 	}
 }
 

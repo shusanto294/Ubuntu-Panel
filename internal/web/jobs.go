@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
@@ -27,6 +28,15 @@ func (a *App) registerJobs() {
 
 	type backupPayload struct {
 		Backup int64 `json:"backup"`
+	}
+
+	// Which halves of a staging site are being pushed back over the site it
+	// came from.
+	type stagingPushPayload struct {
+		Site        int64 `json:"site"`
+		Files       bool  `json:"files"`
+		Database    bool  `json:"database"`
+		KeepUploads bool  `json:"keep_uploads"`
 	}
 
 	type userPayload struct {
@@ -110,6 +120,30 @@ func (a *App) registerJobs() {
 		}
 
 		return a.Sites.Backup(ctx, payload.Backup)
+	})
+
+	a.Queue.Handle(queue.SiteStagingCreate, func(ctx context.Context, job *store.Job) error {
+		var payload sitePayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Sites.CreateStaging(ctx, payload.Site)
+	})
+
+	a.Queue.Handle(queue.SiteStagingPush, func(ctx context.Context, job *store.Job) error {
+		var payload stagingPushPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Sites.Push(ctx, payload.Site, sites.StagingOptions{
+			Files:       payload.Files,
+			Database:    payload.Database,
+			KeepUploads: payload.KeepUploads,
+		})
 	})
 
 	a.Queue.Handle(queue.SiteRestore, func(ctx context.Context, job *store.Job) error {

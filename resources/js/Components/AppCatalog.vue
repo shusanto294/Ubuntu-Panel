@@ -31,6 +31,7 @@ const GROUPS = [
     { key: 'core', label: 'Web stack' },
     { key: 'database', label: 'Databases' },
     { key: 'runtime', label: 'Runtimes' },
+    { key: 'dns', label: 'DNS' },
     { key: 'mail', label: 'Mail' },
 ];
 

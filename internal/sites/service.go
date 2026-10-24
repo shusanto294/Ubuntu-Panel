@@ -718,6 +718,19 @@ func (s *Service) scaffoldNodeApp(ctx context.Context, siteID int64) func(*tasks
 			return "", errors.New("site vanished")
 		}
 
+		// A framework whose start command is its own build output needs that
+		// output to exist, so the placeholder has to be a real application
+		// rather than a one-file server.
+		//
+		// The alternative was a `.output/server/index.mjs` written by hand that
+		// serves a holding page — which would look exactly like a Nuxt build
+		// and not be one, and would be overwritten the first time anybody ran
+		// a build. A minimal real app costs an npm install and gives somebody
+		// a site they can start editing.
+		if site.Type == "nuxt" {
+			return s.scaffoldNuxtApp(site)
+		}
+
 		packageJSON := "{\n" +
 			"  \"name\": \"ubuntu-panel-app\",\n" +
 			"  \"private\": true,\n" +
@@ -752,6 +765,79 @@ func (s *Service) scaffoldNodeApp(ctx context.Context, siteID int64) func(*tasks
 
 		return "Starter Node app scaffolded. Replace it with your repository when ready.", nil
 	}
+}
+
+// scaffoldNuxtApp writes a minimal Nuxt application for a site with no
+// repository.
+//
+// Three files and no network: the install and build steps that follow in the
+// recipe are what turn them into something that runs, which is the same path a
+// repository takes. `nuxt` is a dependency rather than a dev dependency here
+// even though Nuxt's own template has it the other way round — this is the one
+// package the build cannot happen without, and putting it where a production
+// install will always find it is one less thing that has to go right.
+func (s *Service) scaffoldNuxtApp(site *store.Site) (string, error) {
+	// A compatibility date is what Nitro asks for and warns about on every
+	// build without one; pinning it means a build a year from now behaves the
+	// way this one did.
+	files := map[string]string{
+		"package.json": `{
+  "name": "ubuntu-panel-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "preview": "nuxt preview"
+  },
+  "dependencies": {
+    "nuxt": "^4.0.0"
+  }
+}
+`,
+		"nuxt.config.ts": `// https://nuxt.com/docs/api/configuration/nuxt-config
+export default defineNuxtConfig({
+  compatibilityDate: '2025-07-01',
+  devtools: { enabled: false },
+})
+`,
+
+		// Nuxt 4 reads the application from app/ rather than from the project
+		// root, which is the change that makes a root app.vue render Nuxt's own
+		// welcome page instead of yours.
+		"app/app.vue": fmt.Sprintf(`<template>
+  <main>
+    <h1>%s is live</h1>
+    <p>
+      Deployed by Ubuntu Panel. This is a starter Nuxt application — edit
+      <code>app/app.vue</code>, or point this site at your repository to
+      replace it.
+    </p>
+  </main>
+</template>
+
+<style>
+main {
+  margin: 4rem auto;
+  max-width: 40rem;
+  padding: 0 1.5rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}
+</style>
+`, site.Domain),
+	}
+
+	for name, contents := range files {
+		if err := proc.PutFile(site.RootPath+"/"+name, contents, true); err != nil {
+			return "", err
+		}
+	}
+
+	proc.Ok("sudo chown -R www-data:www-data " + proc.Quote(site.RootPath))
+
+	return "Starter Nuxt app scaffolded. The next two steps install it and build it; " +
+		"replace it with your repository when ready.", nil
 }
 
 func (s *Service) createSystemdUnit(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {

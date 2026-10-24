@@ -79,6 +79,17 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                             >
                                 {{ site.domain }}
                             </Link>
+                            <!--
+                                Marked here, not only on the site's own page. A
+                                staging copy sitting among a page of live sites
+                                is the row somebody hands to a customer, or
+                                deletes thinking it is the spare one.
+                            -->
+                            <span
+                                v-if="site.is_staging"
+                                class="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800"
+                                >staging</span
+                            >
                             <p
                                 v-if="site.aliases.length"
                                 class="text-xs text-slate-500"

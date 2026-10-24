@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
+	"github.com/shusanto294/Ubuntu-Panel/internal/nameserver"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
@@ -34,8 +35,13 @@ func (s *Service) packagesFor(key string) string {
 
 	switch key {
 	case "base":
+		// openssh-client for ssh-keygen and ssh, which is what a site deployed
+		// from a private repository over a deploy key needs. Present on every
+		// Ubuntu Server image and absent from some minimal containers, which
+		// is exactly where its absence would show up as a clone that fails
+		// for no visible reason.
 		return "software-properties-common curl wget unzip zip git ufw " +
-			"ca-certificates gnupg lsb-release apt-transport-https rsync"
+			"ca-certificates gnupg lsb-release apt-transport-https rsync openssh-client"
 
 	case "php":
 		return PHPPackages(php)
@@ -366,6 +372,45 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 				return "phpMyAdmin is served at /phpmyadmin on the panel's own address.", nil
 			}).Optional().Group(key)
 
+	case "dns":
+		// BIND's packaged configuration is a caching resolver for the local
+		// network. Writing the panel's own — which is authoritative and
+		// recursive for nobody — before the service is started is what keeps
+		// this machine from spending a few minutes as an open resolver on a
+		// public address.
+		list.AddFn("Write the nameserver configuration", func(runner *tasks.Runner) (string, error) {
+			err := nameserver.Apply(context.Background(), s.Store)
+
+			switch {
+			case err == nil:
+				return "Configured as an authoritative nameserver; recursion is off.", nil
+
+			case errors.Is(err, nameserver.ErrNotConfigured):
+				// The packages are down and the service will start; what is
+				// missing is two hostnames, which is a form on the DNS page
+				// and not something an install can decide.
+				return "Installed. The nameserver hostnames still have to be set on " +
+					"the DNS page before a zone can be served.", nil
+
+			default:
+				return "", err
+			}
+		}).Group(key)
+
+		list.Add("Start the DNS server",
+			"sudo systemctl enable --now named 2>/dev/null || sudo systemctl enable --now bind9",
+			"sudo systemctl is-active --quiet named || sudo systemctl is-active --quiet bind9").
+			Group(key)
+
+		// Both protocols, and both are needed. A query goes over UDP; an
+		// answer too big for one datagram, and every zone transfer, goes over
+		// TCP — so a firewall that opens only UDP produces a nameserver that
+		// works until an answer grows, and then fails for a reason nothing
+		// about DNS makes obvious.
+		list.Add("Open the DNS port",
+			"sudo ufw allow 53/tcp",
+			"sudo ufw allow 53/udp").Optional().Group(key)
+
 	case "mail":
 		list.Add("Start the mail server",
 			"sudo systemctl enable --now postfix dovecot opendkim",
@@ -513,6 +558,18 @@ func (s *Service) resourcesHolding(ctx context.Context, key string) string {
 		if count := s.Store.EmailDomainCount(ctx); count > 0 {
 			return fmt.Sprintf("%d mail domain%s still configured, and their mailboxes hold mail. "+
 				"Delete them from the Email page first.", count, plural(count, " is", "s are"))
+		}
+
+	case "dns":
+		// A zone hosted here is a domain whose registrar is pointing the whole
+		// internet at this machine for answers. Removing the nameserver under
+		// it does not break the zone slowly: every name in it stops resolving
+		// within the TTL, including the mail it was receiving.
+		if count := s.Store.DNSZoneCount(ctx); count > 0 {
+			return fmt.Sprintf("%d zone%s hosted on this server, and %s domains would "+
+				"stop resolving. Move them to another nameserver and remove the zones "+
+				"from the DNS page first.",
+				count, plural(count, " is", "s are"), plural(count, "its", "their"))
 		}
 	}
 

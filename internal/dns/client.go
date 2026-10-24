@@ -19,15 +19,26 @@ import (
 type Client struct {
 	Account *store.DNSAccount
 
+	// Store is only read for a local account — the `panel` provider, whose
+	// zones are the panel's own rows rather than somebody's API. The remote
+	// providers never touch it.
+	Store *store.Store
+
 	http *http.Client
 }
 
 // New prepares a client. The timeout is per request and deliberately short:
 // a deployment waiting on a DNS API that is not answering should fail the step
 // and say so, not hold the queue worker for minutes.
-func New(account *store.DNSAccount) *Client {
+//
+// The store is a parameter rather than something this package reaches for
+// because one of the providers is this machine: `panel` zones live in the
+// panel's tables, and a client that cannot read them can only serve the remote
+// providers. Every caller has it to hand.
+func New(st *store.Store, account *store.DNSAccount) *Client {
 	return &Client{
 		Account: account,
+		Store:   st,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -244,6 +255,10 @@ func identifier(from map[string]any, key, fallback string) string {
 
 // Verify checks the credential and returns something worth showing the user.
 func (c *Client) Verify() (string, error) {
+	if c.local() {
+		return c.localVerify()
+	}
+
 	switch c.Account.Provider {
 	case "cloudflare":
 		body, err := c.request("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", nil)
@@ -376,6 +391,10 @@ func edgeTLSFromMode(mode string) EdgeTLS {
 
 // Zones lists every zone the credential can see.
 func (c *Client) Zones() ([]Zone, error) {
+	if c.local() {
+		return c.localZones()
+	}
+
 	zones := []Zone{}
 
 	for page := 1; page <= 20; page++ {
@@ -617,6 +636,10 @@ func splitPriority(record *Record) {
 // Records lists a zone's records, normalised and sorted the way a zone file
 // reads.
 func (c *Client) Records(zoneID, zoneName string) ([]Record, error) {
+	if c.local() {
+		return c.localRecords(zoneID)
+	}
+
 	records := []Record{}
 
 	for page := 1; page <= 20; page++ {
@@ -886,6 +909,10 @@ func (c *Client) recordEndpoint(zoneID, zoneName, recordID string) string {
 
 // CreateRecord writes a new record and returns the provider's id for it.
 func (c *Client) CreateRecord(zoneID, zoneName string, record Record) (string, error) {
+	if c.local() {
+		return c.localCreate(zoneID, record)
+	}
+
 	url := c.recordEndpoint(zoneID, zoneName, "")
 	if url == "" {
 		return "", fmt.Errorf("Unknown DNS provider: %s", c.Account.Provider)
@@ -916,6 +943,10 @@ func (c *Client) CreateRecord(zoneID, zoneName string, record Record) (string, e
 
 // UpdateRecord replaces one.
 func (c *Client) UpdateRecord(zoneID, zoneName, recordID string, record Record) error {
+	if c.local() {
+		return c.localUpdate(zoneID, recordID, record)
+	}
+
 	url := c.recordEndpoint(zoneID, zoneName, recordID)
 	if url == "" {
 		return fmt.Errorf("Unknown DNS provider: %s", c.Account.Provider)
@@ -937,6 +968,10 @@ func (c *Client) UpdateRecord(zoneID, zoneName, recordID string, record Record) 
 
 // DeleteRecord removes one.
 func (c *Client) DeleteRecord(zoneID, zoneName, recordID string) error {
+	if c.local() {
+		return c.localDelete(zoneID, recordID)
+	}
+
 	if c.Account.Provider == "porkbun" {
 		url := fmt.Sprintf("https://api.porkbun.com/api/json/v3/dns/delete/%s/%s", zoneName, recordID)
 

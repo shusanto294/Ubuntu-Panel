@@ -113,7 +113,7 @@ func (a *App) mcpMailDNSAccount(ctx context.Context, userID int64, domain string
 	}
 
 	for _, account := range accounts {
-		if _, _, err := dns.New(account).FindZone(domain); err == nil {
+		if _, _, err := dns.New(a.Store, account).FindZone(domain); err == nil {
 			return account.ID
 		}
 	}

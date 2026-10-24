@@ -175,6 +175,12 @@ func (a *App) BootstrapApps(ctx context.Context) {
 	keys := []string{}
 
 	for _, entry := range catalog.Entries {
+		// `all` is still not quite everything: an app that changes what this
+		// machine is to the rest of the internet waits to be asked for.
+		if entry.OnlyWhenAsked {
+			continue
+		}
+
 		if choice == "all" || entry.Core {
 			keys = append(keys, entry.Key)
 		}
@@ -298,6 +304,12 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 	keys := []string{}
 
 	for _, entry := range catalog.Entries {
+		// `all` is still not quite everything: an app that changes what this
+		// machine is to the rest of the internet waits to be asked for.
+		if entry.OnlyWhenAsked {
+			continue
+		}
+
 		if choice == "all" || entry.Core {
 			keys = append(keys, entry.Key)
 		}

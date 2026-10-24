@@ -8,6 +8,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/nameserver"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
@@ -28,14 +29,24 @@ func (a *App) dnsIndex(w http.ResponseWriter, r *http.Request) {
 
 	a.Render.Render(w, r, "System/Dns", inertia.Props{
 		"accounts":    summaries,
-		"providers":   dns.Providers,
+		"providers":   dns.Connectable(),
 		"recordTypes": config.DNSRecordTypes,
+
+		// The other way of doing this, summarised: rather than writing records
+		// at somebody else's nameserver, be the nameserver. The page offers it
+		// beside the credentials because somebody who has no account at any of
+		// the providers above has not run out of options.
+		"nameserver": map[string]any{
+			"installed": a.Store.ServiceInstalled("dns"),
+			"ready":     nameserver.CurrentSettings(a.Store).Configured(),
+			"zones":     a.Store.DNSZoneCount(r.Context()),
+		},
 	})
 }
 
 func (a *App) dnsCreate(w http.ResponseWriter, r *http.Request) {
 	a.Render.Render(w, r, "System/DnsCreate", inertia.Props{
-		"providers": dns.Providers,
+		"providers": dns.Connectable(),
 	})
 }
 
@@ -54,7 +65,10 @@ func (a *App) dnsStore(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(input["api_token"])
 	secret := strings.TrimSpace(input["api_secret"])
 
-	if !dns.ProviderExists(provider) {
+	if !dns.ProviderExists(provider) || dns.IsLocal(provider) {
+		// The local one is excluded on purpose: this machine's own nameserver
+		// is not a credential, and it is registered by setting it up rather
+		// than by pasting anything.
 		sess.Error("provider", "Pick a DNS host the panel supports.")
 	}
 	if label == "" {
@@ -85,7 +99,7 @@ func (a *App) dnsStore(w http.ResponseWriter, r *http.Request) {
 	// Tried before it is stored. A token that does not work is worse than no
 	// token: DNS then fails halfway through creating a site, when the vhost
 	// already exists and the certificate is being issued.
-	if _, err := dns.New(account).Verify(); err != nil {
+	if _, err := dns.New(a.Store, account).Verify(); err != nil {
 		sess.Error("api_token", dns.ProviderLabel(provider)+" rejected this credential: "+err.Error())
 		inertia.Back(w, r, "/dns/create")
 
@@ -171,7 +185,7 @@ func (a *App) dnsVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := dns.New(account).Verify()
+	detail, err := dns.New(a.Store, account).Verify()
 
 	a.Store.MarkDNSAccountVerified(account.ID, err == nil)
 
@@ -192,7 +206,7 @@ func (a *App) dnsZones(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	zones, err := dns.New(account).Zones()
+	zones, err := dns.New(a.Store, account).Zones()
 	if err != nil {
 		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"zones": []any{},
@@ -226,7 +240,7 @@ func (a *App) dnsRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, err := dns.New(account).Records(zoneID, zoneName)
+	records, err := dns.New(a.Store, account).Records(zoneID, zoneName)
 	if err != nil {
 		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"records": []any{},
@@ -294,7 +308,7 @@ func (a *App) dnsStoreRecord(w http.ResponseWriter, r *http.Request) {
 		Proxied:  boolInput(input, "proxied", false) && dns.SupportsProxy(account.Provider),
 	}
 
-	result, err := dns.New(account).Upsert(zoneID, zoneName, record)
+	result, err := dns.New(a.Store, account).Upsert(zoneID, zoneName, record)
 	if err != nil {
 		a.failBack(w, r, "Could not write the record: "+err.Error())
 		return
@@ -341,7 +355,7 @@ func (a *App) dnsDestroyRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dns.New(account).DeleteRecord(zoneID, zoneName, recordID); err != nil {
+	if err := dns.New(a.Store, account).DeleteRecord(zoneID, zoneName, recordID); err != nil {
 		a.failBack(w, r, "Could not delete the record: "+err.Error())
 		return
 	}

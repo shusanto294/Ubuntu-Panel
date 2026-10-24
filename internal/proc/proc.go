@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -318,6 +319,19 @@ func Exists(path string, sudo bool) bool {
 	return Ok("sudo test -e " + Quote(path))
 }
 
+// redactUserInfo is the userinfo half of a URL — `scheme://user:secret@host`.
+//
+// Its own pass because it is not a prefix the table below can match: the secret
+// is in the middle of a word, between a colon and an at sign, and the word
+// around it is a URL that has to stay readable. A git clone over HTTPS with an
+// access token is exactly this shape, and the deployment console it would
+// otherwise appear in is a page the panel renders and a row it stores.
+var redactUserInfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s:]+):([^/@\s]*)@`)
+
+func redactURLCredentials(command string) string {
+	return redactUserInfo.ReplaceAllString(command, "${1}${2}:***@")
+}
+
 // redactions are the places a secret ends up on a command line.
 var redactions = []struct {
 	needle string
@@ -341,6 +355,8 @@ var redactions = []struct {
 // failed command ends up on the page beside the thing that failed. Neither is
 // a place for a password.
 func Redact(command string) string {
+	command = redactURLCredentials(command)
+
 	var out strings.Builder
 
 	for i := 0; i < len(command); {

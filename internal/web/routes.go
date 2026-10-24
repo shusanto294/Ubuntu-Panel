@@ -104,6 +104,15 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/cache", "sites.cache", authenticated, a.sitesCache)
 	rt.post("/sites/{site}/access", "sites.access", authenticated, a.sitesAccess)
 
+	// Staging. Two endpoints and two directions: the first is posted from a
+	// production site's page and makes the copy, the second from the copy's own
+	// page and puts it back.
+	rt.post("/sites/{site}/git", "sites.git", authenticated, a.sitesGit)
+
+	rt.post("/sites/{site}/staging", "sites.staging.store", authenticated, a.sitesStagingStore)
+	rt.post("/sites/{site}/staging/push", "sites.staging.push", authenticated,
+		a.sitesStagingPush)
+
 	rt.post("/sites/{site}/backups", "sites.backups.store", authenticated, a.sitesBackupStore)
 	rt.post("/sites/{site}/backups/schedule", "sites.backups.schedule", authenticated,
 		a.sitesBackupSchedule)
@@ -129,6 +138,14 @@ func (a *App) routes() *router {
 	// anything else is 401 — where `authenticated` would redirect to /login,
 	// and a redirect is a 302, which auth_request reads as "allowed".
 	rt.get(phpMyAdminGatePath, "", public, a.phpMyAdminGate)
+
+	// The git webhook. Public because a git host sends no cookie, and it
+	// authenticates itself on every request: a signature over the body, or the
+	// secret in a header, both compared in constant time. Anything it cannot
+	// verify is a 401, and the most a verified request can cause is a pull of
+	// a repository somebody had already configured.
+	rt.post("/webhooks/git/{site}", "webhooks.git", public, a.gitWebhook)
+	rt.get("/webhooks/git/{site}", "", public, a.gitWebhook)
 
 	// Email.
 	//
@@ -171,6 +188,17 @@ func (a *App) routes() *router {
 	rt.post("/dns-accounts/{account}/records", "dns.records.store", authenticated, a.dnsStoreRecord)
 	rt.delete("/dns-accounts/{account}/records", "dns.records.destroy", authenticated,
 		a.dnsDestroyRecord)
+
+	// The panel's own nameserver: the zones this machine answers for itself,
+	// and the setup that has to happen at a registrar before it answers for
+	// anything. A page of its own rather than a section of /dns, because
+	// connecting a provider and becoming one are different jobs.
+	rt.get("/dns/nameserver", "dns.nameserver", authenticated, a.nameserverIndex)
+	rt.post("/dns/nameserver", "dns.nameserver.settings", authenticated, a.nameserverSettings)
+	rt.post("/dns/nameserver/resync", "dns.nameserver.resync", authenticated, a.nameserverResync)
+	rt.post("/dns/zones", "dns.zones.store", authenticated, a.nameserverZoneStore)
+	rt.get("/dns/zones/{zone}/check", "dns.zones.check", authenticated, a.nameserverZoneCheck)
+	rt.delete("/dns/zones/{zone}", "dns.zones.destroy", authenticated, a.nameserverZoneDestroy)
 
 	// AI access: the keys an assistant signs its MCP requests with. The MCP
 	// endpoint itself is not in this table — it is routed before the session

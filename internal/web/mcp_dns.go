@@ -91,7 +91,7 @@ func (a *App) mcpZone(ctx context.Context, args mcp.Args) (*store.DNSAccount, st
 			return nil, "", "", err
 		}
 
-		zoneID, zoneName, err := dns.New(account).FindZone(hostname)
+		zoneID, zoneName, err := dns.New(a.Store, account).FindZone(hostname)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -111,7 +111,7 @@ func (a *App) mcpZone(ctx context.Context, args mcp.Args) (*store.DNSAccount, st
 	}
 
 	for _, account := range accounts {
-		if zoneID, zoneName, err := dns.New(account).FindZone(hostname); err == nil {
+		if zoneID, zoneName, err := dns.New(a.Store, account).FindZone(hostname); err == nil {
 			return account, zoneID, zoneName, nil
 		}
 	}
@@ -146,6 +146,12 @@ func (a *App) mcpConnectDNSAccount() *mcp.Tool {
 
 			provider := strings.ToLower(args.String("provider"))
 
+			if dns.IsLocal(provider) {
+				return nil, errors.New("this machine's own nameserver is not connected " +
+					"with a credential — it is set up with set_nameserver_hostnames and " +
+					"host_dns_zone, and nameserver_status says what is still missing")
+			}
+
 			if !dns.ProviderExists(provider) {
 				return nil, fmt.Errorf("%q is not a DNS provider this panel supports — "+
 					"list_dns_providers has them", provider)
@@ -171,7 +177,7 @@ func (a *App) mcpConnectDNSAccount() *mcp.Tool {
 				Email:     args.String("email"),
 			}
 
-			detail, err := dns.New(account).Verify()
+			detail, err := dns.New(a.Store, account).Verify()
 			if err != nil {
 				return nil, fmt.Errorf("%s rejected this credential: %w",
 					dns.ProviderLabel(provider), err)
@@ -229,7 +235,7 @@ func (a *App) mcpVerifyDNSAccount() *mcp.Tool {
 				return nil, err
 			}
 
-			detail, err := dns.New(account).Verify()
+			detail, err := dns.New(a.Store, account).Verify()
 
 			a.Store.MarkDNSAccountVerified(account.ID, err == nil)
 
@@ -362,7 +368,7 @@ func (a *App) mcpListDNSZones() *mcp.Tool {
 				return nil, err
 			}
 
-			zones, err := dns.New(account).Zones()
+			zones, err := dns.New(a.Store, account).Zones()
 			if err != nil {
 				return nil, err
 			}
@@ -398,7 +404,7 @@ func (a *App) mcpListDNSRecords() *mcp.Tool {
 				return nil, err
 			}
 
-			records, err := dns.New(account).Records(zoneID, zoneName)
+			records, err := dns.New(a.Store, account).Records(zoneID, zoneName)
 			if err != nil {
 				return nil, err
 			}
@@ -495,7 +501,7 @@ func (a *App) mcpSetDNSRecord() *mcp.Tool {
 				Proxied:  args.Bool("proxied", false) && dns.SupportsProxy(account.Provider),
 			}
 
-			result, err := dns.New(account).Upsert(zoneID, zoneName, record)
+			result, err := dns.New(a.Store, account).Upsert(zoneID, zoneName, record)
 			if err != nil {
 				return nil, err
 			}
@@ -550,7 +556,7 @@ func (a *App) mcpDeleteDNSRecord() *mcp.Tool {
 				return nil, err
 			}
 
-			client := dns.New(account)
+			client := dns.New(a.Store, account)
 
 			recordID := args.String("record_id")
 			label := recordID

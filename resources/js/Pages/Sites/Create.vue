@@ -109,6 +109,11 @@ const starterNote = computed(() => {
             return 'n8n is installed and run as a service, with its data under the site directory';
         case 'laravel':
             return 'a fresh Laravel application is created';
+        case 'nuxt':
+            // Not "a minimal Node server": Nuxt is started from its own build
+            // output, so the placeholder has to be a real Nuxt app that the
+            // install and build steps then turn into one.
+            return 'a starter Nuxt application is created, installed and built';
         default:
             return isProxied.value
                 ? 'a minimal Node server is scaffolded'

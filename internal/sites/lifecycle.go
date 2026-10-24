@@ -53,11 +53,15 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	}
 
 	clone := func() {
-		list.Add("Clone the repository",
-			fmt.Sprintf("sudo rm -rf %s && sudo mkdir -p %s && sudo chown www-data:www-data %s",
-				root, root, root),
-			fmt.Sprintf("sudo -u www-data git clone --depth 1 --branch %s %s %s",
-				proc.Quote(branch), proc.Quote(site.Repository), root))
+		// Before the clone, not after it: a repository the panel cannot read
+		// is the commonest way a deployment fails, and failing here costs
+		// nothing — while failing at the clone itself is a site that already
+		// has a vhost, a database and a certificate.
+		list.AddFn("Check the repository can be read", s.checkRepository(ctx, site.ID))
+
+		list.Add("Clone the repository", CloneCommand(site, root, branch))
+
+		list.AddFn("Record the commit", s.recordCommit(ctx, site.ID))
 	}
 
 	php := site.PHPVersion
@@ -114,9 +118,25 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 				list.AddFn("Scaffold a starter app", s.scaffoldNodeApp(ctx, site.ID))
 			}
 
+			// Dev dependencies are installed when there is something to
+			// build with them, and skipped when there is not.
+			//
+			// `--omit=dev` for a type that builds is a deployment that cannot
+			// work: the build tool is a dev dependency in every scaffold these
+			// frameworks ship — `nuxt` is one in Nuxt's own template, and so
+			// are the Tailwind and PostCSS a Next.js app is generated with —
+			// so the install succeeds, and the build then fails on a command
+			// that is not installed. A plain Node service with no build step
+			// still gets production dependencies only, which is what it
+			// should run with.
+			omit := " --omit=dev"
+			if site.BuildCommand != "" {
+				omit = ""
+			}
+
 			list.Add("Install dependencies",
-				fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install --omit=dev --no-audit --no-fund",
-					root))
+				fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install%s --no-audit --no-fund",
+					root, omit))
 
 			if site.BuildCommand != "" {
 				list.Add("Build the application",
@@ -266,6 +286,16 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 			proc.Quote(EnabledPath(site)), proc.Quote(AvailablePath(site)),
 			proc.Quote(CacheConfigPath(site)), proc.Quote(CacheDir(site))))
 
+	if site.RepoDeployKey != "" || proc.Exists(DeployKeyPath(site), true) {
+		list.AddFn("Remove the deploy key", func(runner *tasks.Runner) (string, error) {
+			RemoveDeployKey(site)
+
+			return "The deploy key is gone from this server. It is still listed on the " +
+				"repository until somebody removes it there — it can no longer be used " +
+				"to read anything, but it is tidier gone.", nil
+		}).Optional()
+	}
+
 	// Records the panel published are the panel's to take away. A provider
 	// that has already lost them is not a reason to keep the site row, so this
 	// step is optional.
@@ -385,10 +415,7 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 
 	list := &tasks.List{}
 
-	list.Add("Pull the latest commit",
-		fmt.Sprintf("cd %s && sudo -u www-data git fetch --depth 1 origin %s && "+
-			"sudo -u www-data git reset --hard %s",
-			root, proc.Quote(branch), proc.Quote("origin/"+branch)))
+	list.Add("Pull the latest commit", FetchCommand(site, root, branch))
 
 	if site.Type == "laravel" {
 		list.Add("Update dependencies and migrate",
@@ -402,8 +429,18 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 	}
 
 	if site.IsProxied() {
+		// Dev dependencies when there is something to build with them, the
+		// same rule the deployment follows: the build tool is a dev dependency
+		// in every scaffold these frameworks ship, so `--omit=dev` here is an
+		// install that succeeds and a rebuild that fails.
+		omit := " --omit=dev"
+		if site.BuildCommand != "" {
+			omit = ""
+		}
+
 		list.Add("Reinstall dependencies",
-			fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install --omit=dev --no-audit --no-fund", root))
+			fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install%s --no-audit --no-fund",
+				root, omit))
 
 		if site.BuildCommand != "" {
 			list.Add("Rebuild", fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, site.BuildCommand))
@@ -415,11 +452,58 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 			fmt.Sprintf("sudo systemctl restart %s; sleep 2; sudo systemctl is-active %s", service, service))
 	}
 
+	list.AddFn("Record the commit", s.recordCommit(ctx, site.ID))
+
 	if !tasks.New(s.Store, taskID).Run(list) {
 		return errors.New("the pull did not complete")
 	}
 
 	return nil
+}
+
+// checkRepository is the pre-flight, as a step.
+func (s *Service) checkRepository(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", errors.New("site vanished")
+		}
+
+		access := CheckAccess(site, site.Branch)
+
+		if !access.OK || !access.Found {
+			return "", errors.New(access.Message)
+		}
+
+		return access.Message, nil
+	}
+}
+
+// recordCommit stores what the site is serving, so the page can say it and a
+// polled pull can tell whether there is anything to do.
+//
+// Optional in effect — it returns no error — because a site that deployed is
+// deployed whether or not the panel managed to read its git log.
+func (s *Service) recordCommit(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		site, err := s.Store.FindSite(ctx, siteID)
+		if err != nil {
+			return "", nil
+		}
+
+		commit := LocalHead(site)
+		if commit == "" {
+			return "Could not read the commit from the checkout.", nil
+		}
+
+		s.Store.SetSiteLastCommit(site.ID, commit)
+
+		if subject := LocalSubject(site); subject != "" {
+			return "Serving " + commit + " — " + subject, nil
+		}
+
+		return "Serving " + commit + ".", nil
+	}
 }
 
 // SyncDNS republishes a site's records on demand, as its own task.

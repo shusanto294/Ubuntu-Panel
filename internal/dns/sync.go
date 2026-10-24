@@ -35,7 +35,7 @@ func EdgeTLSForSite(ctx context.Context, st *store.Store, site *store.Site) (Edg
 		return EdgeTLS{OriginNeedsCertificate: true}, nil
 	}
 
-	client := New(account)
+	client := New(st, account)
 
 	zoneID := site.DNSZoneID
 
@@ -61,7 +61,7 @@ func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string
 		return "", errors.New("The DNS credential for this site no longer exists.")
 	}
 
-	client := New(account)
+	client := New(st, account)
 
 	zoneID, zoneName, err := client.FindZone(site.Domain)
 	if err != nil {
@@ -173,7 +173,7 @@ func RemoveForSite(ctx context.Context, st *store.Store, site *store.Site) (stri
 		return "The DNS credential for this site no longer exists; its records were left in place.", nil
 	}
 
-	client := New(account)
+	client := New(st, account)
 
 	zoneID, zoneName, err := client.FindZone(site.Domain)
 	if err != nil {
@@ -259,7 +259,7 @@ func SyncForMail(ctx context.Context, st *store.Store, domain *store.EmailDomain
 		return "", errors.New("The DNS credential for this mail domain no longer exists.")
 	}
 
-	client := New(account)
+	client := New(st, account)
 
 	zoneID, zoneName, err := client.FindZone(domain.Domain)
 	if err != nil {
@@ -336,7 +336,7 @@ func RemoveForMail(ctx context.Context, st *store.Store, domain *store.EmailDoma
 		return "The DNS credential for this domain no longer exists; its records were left in place.", nil
 	}
 
-	client := New(account)
+	client := New(st, account)
 
 	zoneID, zoneName, err := client.FindZone(domain.Domain)
 	if err != nil {

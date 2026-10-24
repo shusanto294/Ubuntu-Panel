@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 )
@@ -78,6 +79,34 @@ type Site struct {
 	BackupKeep     int
 	BackupNextAt   int64
 
+	// How the panel reaches this site's git remote, and what it does about new
+	// commits without being asked.
+	//
+	// RepoAuth is "none", "key" or "token". RepoDeployKey is the *public* half
+	// of the key the panel generated — the private half is a file, never a
+	// column. RepoToken and WebhookSecret are credentials and are stored
+	// encrypted.
+	RepoAuth      string
+	RepoToken     string // decrypted
+	RepoDeployKey string
+	WebhookSecret string // decrypted
+
+	// AutoPull is the polling interval: "off", or a key from
+	// sites.PullSchedules. AutoPullNextAt is the Unix second it is next due.
+	AutoPull       string
+	AutoPullNextAt int64
+
+	// LastCommit is the commit the site is serving, short form.
+	LastCommit string
+
+	// StagingOf is the site this one is a staging copy of, or zero.
+	//
+	// A staging site is an ordinary site in every other respect — its own
+	// vhost, its own database, its own certificate — and this is what lets the
+	// panel offer the two operations that make the pair useful: clone
+	// production down, and push staging back up.
+	StagingOf int64
+
 	CreatedAt string
 }
 
@@ -91,7 +120,9 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
 	manage_dns, dns_zone_id, dns_record_ids, dns_type, dns_content, dns_proxied,
 	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode,
-	backup_schedule, backup_keep, backup_next_at, created_at`
+	backup_schedule, backup_keep, backup_next_at, staging_of,
+	repo_auth, repo_token, repo_deploy_key, webhook_secret, auto_pull,
+	auto_pull_next_at, last_commit, created_at`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -105,7 +136,9 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var repository, wpUser, wpPassword, wpEmail, wpTitle text
 	var dnsZoneID, dnsRecordIDs, dnsContent, phpSettings, cacheTTL, cacheMode, tlsMode text
 	var backupSchedule text
-	var cacheEnabled, backupKeep, backupNextAt nullInt
+	var cacheEnabled, backupKeep, backupNextAt, stagingOf nullInt
+	var repoAuth, repoToken, repoDeployKey, webhookSecret, autoPull, lastCommit text
+	var autoPullNextAt nullInt
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -114,7 +147,9 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&wpUser, &wpPassword, &wpEmail, &wpTitle,
 		&site.ManageDNS, &dnsZoneID, &dnsRecordIDs, &site.DNSType, &dnsContent,
 		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
-		&backupSchedule, &backupKeep, &backupNextAt, &site.CreatedAt)
+		&backupSchedule, &backupKeep, &backupNextAt, &stagingOf,
+		&repoAuth, &repoToken, &repoDeployKey, &webhookSecret, &autoPull,
+		&autoPullNextAt, &lastCommit, &site.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -143,6 +178,14 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.BackupSchedule = backupSchedule.String()
 	site.BackupKeep = int(backupKeep.Int64)
 	site.BackupNextAt = backupNextAt.Int64
+	site.StagingOf = stagingOf.Int64
+	site.RepoAuth = repoAuth.String()
+	site.RepoToken = s.decrypt(repoToken.String())
+	site.RepoDeployKey = repoDeployKey.String()
+	site.WebhookSecret = s.decrypt(webhookSecret.String())
+	site.AutoPull = autoPull.String()
+	site.AutoPullNextAt = autoPullNextAt.Int64
+	site.LastCommit = lastCommit.String()
 
 	// A site from before the choice existed has the page cache or nothing, and
 	// says so rather than reading as "off" with the cache running.
@@ -220,25 +263,62 @@ func (s *Store) CreateSite(ctx context.Context, site *Site) (int64, error) {
 		}
 	}
 
+	// The repository credential, where the caller set one — which a staging
+	// copy does, so it inherits production's access to the same repository.
+	repoToken := ""
+
+	if site.RepoToken != "" {
+		if repoToken, err = s.encrypt(site.RepoToken); err != nil {
+			return 0, err
+		}
+	}
+
 	result, err := s.db.ExecContext(ctxOrBackground(ctx),
 		`INSERT INTO sites (user_id, dns_account_id, database_id, domain, type, aliases,
 			root_path, web_directory, php_version, node_version, status, ssl,
 			app_port, start_command, build_command, repository, branch,
 			wp_admin_user, wp_admin_password, wp_admin_email, wp_title,
-			manage_dns, dns_type, dns_content, dns_proxied)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			manage_dns, dns_type, dns_content, dns_proxied, staging_of,
+			repo_auth, repo_token)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		         ?, ?)`,
 		nullID(site.UserID), nullID(site.DNSAccountID), nullID(site.DatabaseID),
 		strings.ToLower(site.Domain), site.Type, string(aliases),
 		site.RootPath, site.WebDirectory, site.PHPVersion, site.NodeVersion,
 		site.SSL, nullID(int64(site.AppPort)), site.StartCommand, site.BuildCommand,
 		site.Repository, site.Branch,
 		site.WPAdminUser, password, site.WPAdminEmail, site.WPTitle,
-		site.ManageDNS, site.DNSType, site.DNSContent, site.DNSProxied)
+		site.ManageDNS, site.DNSType, site.DNSContent, site.DNSProxied,
+		nullID(site.StagingOf), nullText(site.RepoAuth), nullText(repoToken))
 	if err != nil {
 		return 0, err
 	}
 
 	return result.LastInsertId()
+}
+
+// StagingSitesFor is the staging copies of one site, newest first.
+func (s *Store) StagingSitesFor(ctx context.Context, siteID int64) ([]*Site, error) {
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT `+siteColumns+` FROM sites
+		  WHERE staging_of = ? AND deleted_at IS NULL ORDER BY id DESC`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sites []*Site
+
+	for rows.Next() {
+		site, err := s.scanSite(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		sites = append(sites, site)
+	}
+
+	return sites, rows.Err()
 }
 
 // SetSiteStatus records where a site got to. An empty error clears the last
@@ -470,6 +550,9 @@ func (site *Site) NeedsDatabase() bool {
 	return kind != nil && kind.Database
 }
 
+// IsStaging reports whether this site is a staging copy of another.
+func (site *Site) IsStaging() bool { return site.StagingOf > 0 }
+
 // IsManaged reports whether the panel installs the application itself, rather
 // than deploying whatever the operator's repository contains.
 func (site *Site) IsManaged() bool {
@@ -626,6 +709,13 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		"admin_url":  site.AdminURL(),
 		"last_error": site.LastError,
 		"created_at": site.CreatedAt,
+
+		// Which half of a production/staging pair this is. On the list as well
+		// as the site page, because a staging site among a page of live ones
+		// needs saying — it is the row somebody would otherwise point a
+		// customer at.
+		"is_staging": site.IsStaging(),
+		"staging_of": nullableInt64(site.StagingOf),
 	}
 
 	if detailed {
@@ -673,6 +763,14 @@ func nullableInt(value int) any {
 	return value
 }
 
+func nullableInt64(value int64) any {
+	if value <= 0 {
+		return nil
+	}
+
+	return value
+}
+
 func decodeStringList(encoded string) []string {
 	var list []string
 
@@ -693,4 +791,116 @@ func nullText(value string) any {
 	}
 
 	return value
+}
+
+// ---------------------------------------------------------- git deployment
+
+// SetSiteRepository changes where a site is deployed from.
+//
+// Settable after creation on purpose. A repository typed wrong used to mean
+// deleting the site and making it again, which takes the database and the
+// certificate with it — and a URL is the single most likely thing on the create
+// form to be wrong, because it is the one field nobody can check by reading it.
+func (s *Store) SetSiteRepository(id int64, repository, branch string) {
+	s.db.Exec(`UPDATE sites SET repository = ?, branch = ?, updated_at = datetime('now')
+	           WHERE id = ?`, nullText(repository), branch, id)
+}
+
+// SetSiteRepoAuth stores how the panel authenticates to the remote.
+//
+// An empty token means "keep the one already stored", which is what the form
+// sends when the field was not touched — the browser never receives it back, so
+// it cannot send it again.
+func (s *Store) SetSiteRepoAuth(id int64, method, token string) error {
+	if token == "" {
+		_, err := s.db.Exec(`UPDATE sites SET repo_auth = ?, updated_at = datetime('now')
+		                     WHERE id = ?`, nullText(method), id)
+
+		return err
+	}
+
+	encrypted, err := s.encrypt(token)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE sites SET repo_auth = ?, repo_token = ?,
+	                    updated_at = datetime('now') WHERE id = ?`,
+		nullText(method), nullText(encrypted), id)
+
+	return err
+}
+
+// SetSiteDeployKey stores the public half of the key the panel generated.
+func (s *Store) SetSiteDeployKey(id int64, publicKey string) {
+	s.db.Exec(`UPDATE sites SET repo_deploy_key = ?, updated_at = datetime('now')
+	           WHERE id = ?`, nullText(publicKey), id)
+}
+
+// SetSiteWebhookSecret stores what a pushed webhook is signed with.
+func (s *Store) SetSiteWebhookSecret(id int64, secret string) error {
+	if secret == "" {
+		_, err := s.db.Exec(`UPDATE sites SET webhook_secret = NULL,
+		                     updated_at = datetime('now') WHERE id = ?`, id)
+
+		return err
+	}
+
+	encrypted, err := s.encrypt(secret)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE sites SET webhook_secret = ?, updated_at = datetime('now')
+	                    WHERE id = ?`, nullText(encrypted), id)
+
+	return err
+}
+
+// SetSiteAutoPull stores the polling interval and when it is next due.
+func (s *Store) SetSiteAutoPull(id int64, schedule string, nextAt int64) {
+	s.db.Exec(`UPDATE sites SET auto_pull = ?, auto_pull_next_at = ?,
+	           updated_at = datetime('now') WHERE id = ?`, nullText(schedule), nextAt, id)
+}
+
+// SetSiteAutoPullNext moves the due time on without touching the interval.
+func (s *Store) SetSiteAutoPullNext(id, nextAt int64) {
+	s.db.Exec(`UPDATE sites SET auto_pull_next_at = ? WHERE id = ?`, nextAt, id)
+}
+
+// SetSiteLastCommit records the commit the site is now serving.
+func (s *Store) SetSiteLastCommit(id int64, commit string) {
+	s.db.Exec(`UPDATE sites SET last_commit = ?, updated_at = datetime('now')
+	           WHERE id = ?`, nullText(commit), id)
+}
+
+// DuePulls is every live site whose polled pull is due.
+//
+// The same arrangement as DueBackups, and for the same reason: the panel's own
+// ticker rather than cron, so a machine that was switched off catches up as
+// soon as it is back instead of waiting for the next window.
+func (s *Store) DuePulls(ctx context.Context, now time.Time) ([]*Site, error) {
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT `+siteColumns+` FROM sites
+		 WHERE deleted_at IS NULL AND repository IS NOT NULL AND repository != ''
+		   AND auto_pull IS NOT NULL AND auto_pull != '' AND auto_pull != 'off'
+		   AND auto_pull_next_at > 0 AND auto_pull_next_at <= ?
+		 ORDER BY id`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var due []*Site
+
+	for rows.Next() {
+		site, err := s.scanSite(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		due = append(due, site)
+	}
+
+	return due, rows.Err()
 }

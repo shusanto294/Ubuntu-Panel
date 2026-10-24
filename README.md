@@ -107,16 +107,31 @@ Everything the C panel does, from the same pages:
   Composer, WP-CLI, PM2, phpMyAdmin, Certbot, and a Postfix/Dovecot/OpenDKIM
   mail server with Roundcube. A bulk install puts every app's packages into one
   apt transaction, because dpkg takes an exclusive lock
-- **Sites** — WordPress, Laravel, PHP, Node.js, Next.js and static, with git
-  deployment, an nginx vhost, a systemd unit for the proxied types, DNS and a
+- **Sites** — WordPress, Laravel, PHP, Node.js, Next.js, Nuxt and static, with
+  git deployment from public or private repositories — a generated deploy key or
+  a read-only token — and a pull on a button, on a push, or on an interval, an nginx vhost, a systemd unit for the proxied types, DNS and a
   Let's Encrypt certificate. Each PHP site picks its own PHP version on its PHP
   tab — a version the machine already runs is a vhost rewrite and a reload, one
   it does not is installed first, on the queue, with the console on the page
+- **Staging** — clone a site to a hostname of its own, break it, and push it
+  back. The copy gets its own files, database and certificate, and every
+  absolute URL in it is rewritten — for WordPress that means WP-CLI's own
+  search and replace over every table, in plain, protocol-relative and
+  JSON-escaped form and correctly through serialised PHP, so the copy does not
+  load and then redirect whoever is editing it back to production. A push backs
+  the live site up first and does not start if that backup fails
 - **Databases** — MariaDB and MongoDB, with generated credentials
 - **Email** — mail domains and mailboxes in Postfix/Dovecot's SQL tables, DKIM
   keys, the SPF/DKIM/DMARC/MX records to go with them, and webmail per domain
-- **DNS** — Cloudflare, DigitalOcean, Linode, Vultr, Hetzner and Porkbun, with
-  a full zone editor
+- **DNS** — two ways round. Either the panel writes records at somebody else's
+  nameserver — Cloudflare, DigitalOcean, Linode, Vultr, Hetzner or Porkbun,
+  with a full zone editor — or this machine *is* the nameserver: BIND serving
+  zones held in the panel's own tables, the way Namecheap and GoDaddy serve
+  theirs. Either one is a DNS provider to the rest of the panel, so a site gets
+  its records published and a mail domain gets its SPF, DKIM and DMARC written
+  whichever you picked. The nameserver page is mostly instructions, because the
+  half the panel cannot do — registering two nameserver names as glue records
+  at a registrar — is the half that decides whether any of it resolves
 - **Logs** — every deployment and install streams its console to the page
 - **Terminal** — a real shell in the browser, on a PTY over a websocket
 
@@ -139,6 +154,210 @@ And one thing the C panel does not:
 
 The database schema matches the C panel's, so the same `panel.db` can be served
 by either binary.
+
+## Deploying from git
+
+A site can be deployed from any git host over https or SSH, public or private,
+and the Git tab on the site's page is where all of it lives: the URL and branch,
+how the panel authenticates, a connection test, a pull button, and what should
+happen when somebody pushes.
+
+### Private repositories
+
+Two ways, and the panel prefers the first:
+
+- **A deploy key.** The panel generates an ed25519 pair per site, keeps the
+  private half outside every site's directory under `/var/lib/ubuntu-panel`, and
+  shows you the public half to add to the repository — on GitHub that is the
+  repository's *Settings → Deploy keys*. Read-only, scoped to one repository,
+  and revoked by deleting it there. ssh is given that key and only that key
+  (`IdentitiesOnly=yes`), never prompts (`BatchMode=yes`), and pins the host key
+  after the first connection (`accept-new`).
+- **An access token.** Stored encrypted with the application key and never sent
+  back to the browser. Use it where a deploy key is not an option. The token is
+  passed per command and the stored remote is scrubbed to the clean URL, so it
+  is never written into `.git/config` — which would otherwise put it in the
+  working tree, in every backup of the site, and in reach of every other site on
+  the machine. It is redacted out of the console the panel renders.
+
+Either way the repository is checked before the site is created, with
+`git ls-remote` — a few hundred bytes and a second. That turns a deployment that
+fails on its fourth step, with a vhost and a database already built, into a
+sentence under the form field. The check also reports which branches the
+repository *does* have, because `main` against a repository whose default is
+still `master` is the second commonest way this goes wrong.
+
+Git's own words are translated rather than passed through, because git is
+answering a different question: "could not read from remote repository" is what a
+private repository says to a client with no key, and "repository not found" is
+what GitHub says to a perfectly valid token that has no access to it. Neither
+reads as the thing to go and fix.
+
+### Pulling
+
+**On a button** — Pull now, on the Git tab. Fetches the branch and resets the
+working tree to it, then runs what the type needs: Composer and migrations for
+Laravel, npm and a rebuild and a service restart for the Node types. Tracked
+files changed on the server are lost, which is what makes a deployment
+repeatable; untracked ones — uploads, `.env`, `node_modules` — are left alone.
+
+**On a push** — a webhook. The panel generates a secret and shows the URL and
+the secret to paste into the repository's settings. A delivery is acted on only
+when it carries a signature made with that secret: GitHub's `X-Hub-Signature-256`
+(HMAC-SHA256 over the body), GitLab's `X-Gitlab-Token`, or a plain token for
+anything else, all compared in constant time. Only a push to the site's own
+branch deploys, so a feature branch pushed for review cannot land on production.
+
+**On an interval** — every 5 or 15 minutes, hourly or daily. The panel asks the
+remote for the branch's commit and pulls only when it has changed, so an
+interval on a repository nobody touched costs one small request. This is the one
+that needs nothing configured anywhere else, and it is the backstop for the
+webhook delivery that arrived while the panel was restarting — the two are not
+alternatives and most sites want both.
+
+## Staging sites
+
+A staging site is an ordinary site row with `staging_of` pointing at the one it
+was copied from. That is most of the design: it gets a vhost, a database, a
+certificate, a PHP version picker, backups, the file manager and a terminal
+without a line of extra code, because it *is* a site. What the Staging tab adds
+is the two operations that keep the pair in step.
+
+**Creating one** copies the files with `cp -a` into a directory beside the
+destination and swaps it in, dumps the source's database and loads it into a new
+one of the copy's own, then re-points the application. The copy deliberately
+does not inherit:
+
+- **the aliases** — production's hostnames stay on production. Two vhosts
+  claiming one `server_name` and nginx hands it to whichever it loaded first, so
+  production would quietly start being served out of the staging directory
+- **the cache** — every site on the machine shares one Redis and one nginx cache
+  zone, so a copy carrying production's cache configuration would be serving
+  production's cached pages
+- **indexing** — on WordPress the copy sets `blog_public` to 0, because a
+  staging site is a complete second copy of somebody's content on a hostname
+  reachable from the internet
+
+**Pushing back** takes a backup of the live site first and does not start if that
+backup fails. Files and database are separate choices: files alone is the
+ordinary push, and the database is off by default because turning it on destroys
+everything written to production since the copy was taken. On WordPress a files
+push keeps production's `wp-content/uploads` by default — anything uploaded there
+since the clone exists in no backup of staging.
+
+### Why URLs are the hard part
+
+An application that stores absolute URLs comes up on the new hostname still
+convinced it lives at the old one. That does not look like a broken site: it
+loads, and then redirects whoever is editing it back to production — so the
+person thinks they are working on staging and is in fact editing the live site.
+
+For WordPress that means WP-CLI's `search-replace` over **every** table,
+`--precise` so the length prefixes inside serialised PHP are rewritten rather
+than corrupted, and six passes rather than one, because the same URL is stored
+as `https://example.com` in an option, as `https:\/\/example.com` inside a block
+editor's JSON, and as `//example.com` in a theme's asset — and a replacement
+looking for the first matches neither of the others. The scheme-ful forms run
+first so the destination's own scheme wins; `guid` is skipped, because it looks
+like a URL and is a permanent post identifier that feed readers dedupe on.
+
+Then `home` and `siteurl`, the `WP_HOME` and `WP_SITEURL` constants where the
+install defines them (they override the options entirely), `DOMAIN_CURRENT_SITE`
+on a multisite network, and a flush of the permalinks, the transients and the
+object cache.
+
+Two things happen at opposite ends of the copy, and it matters which:
+
+- **the database credentials** are re-pointed the moment the files are in place,
+  before the vhost exists. Until then the copy's `wp-config.php` names the
+  *source's* database, and a live hostname in front of that is production under
+  a second name
+- **the URLs** are rewritten after the certificate step, because what goes into
+  the database is a scheme as well as a hostname. A certificate that fails to
+  issue leaves the site on HTTP, and `https://` URLs written before anybody knew
+  that are assets nothing answers
+
+Laravel is the short version of the same job: `APP_URL` and the `DB_*` keys in
+`.env`, rewritten line by line so the API keys and comments around them survive,
+then `config:clear` and `config:cache` because `config:cache` had compiled the
+old values into a PHP file. `APP_KEY` is left alone, so anything the source
+encrypted still decrypts.
+
+Nextcloud and n8n are refused rather than half-supported: Nextcloud records the
+absolute path of its data directory inside itself, and n8n's workflows would fire
+every schedule and webhook a second time.
+
+## Hosting DNS on this machine
+
+The panel can be the nameserver itself rather than a client of one. Install the
+**DNS server** app and the machine runs BIND, authoritative for the zones in the
+panel's own tables and recursive for nobody — an open resolver on a public
+address is found within days and used to reflect traffic at somebody else, so
+`recursion no` is not negotiable and is written before the service is started.
+
+Four of the five steps are in the panel, on **DNS → This server**. The one that
+is not is the one everything depends on.
+
+1. **Install the DNS server** from the Apps page. Port 53 is opened on TCP *and*
+   UDP: a query goes over UDP, but an answer too large for one datagram goes
+   over TCP, so a firewall that opens only UDP gives you a nameserver that works
+   until an answer grows. If your host has its own firewall in front of the
+   machine, open 53 there too.
+
+2. **Name the nameservers.** Two hostnames on a domain you own and intend to
+   keep — `ns1.example.com` and `ns2.example.com` by convention. Every domain
+   hosted here is pointed at those two names, so losing that domain takes all of
+   them down. It does not have to be a domain hosted in the panel.
+
+3. **Register them as glue records at that domain's registrar.** This is the
+   step the panel cannot do, and the reason it exists is worth knowing. A
+   resolver looking up `yoursite.com` asks the `.com` registry who serves it and
+   is told `ns1.example.com` — a *name*, so it now needs that name's address.
+   If the only machine that knows the address is the one it is trying to reach,
+   it can never get started. A glue record is the registry storing the address
+   alongside the delegation, so the answer arrives in the same reply.
+
+   Every registrar calls the screen something different: glue record, host
+   record, child nameserver, private nameserver, personal DNS server, "register
+   a nameserver". Namecheap has it under *Advanced DNS → Personal DNS Server*,
+   GoDaddy under *DNS → Hostnames*, Porkbun under *Details → Glue Records*.
+   Cloudflare Registrar does not offer it at all, so name your nameservers on a
+   domain held somewhere that does.
+
+   Two nameservers on one machine means two names pointing at one address. Most
+   registries accept that; some require the two to differ and a few require
+   different networks. If yours refuses the second, give the server a second
+   address or point `ns2` at another machine — a delegation to a nameserver that
+   does not answer is worse than one that lists a single name, because resolvers
+   pick at random and the domain then works intermittently.
+
+4. **Host the nameservers' own domain here too.** The glue gets a resolver here
+   the first time; after that it asks *this* machine for the addresses of `ns1`
+   and `ns2` and believes the answer, so the machine has to have one. Add
+   `example.com` as a zone and the panel writes those A records itself. A zone
+   that delegates to names it holds no addresses for is the lame delegation
+   every DNS checker reports and some registries reject.
+
+5. **Point each domain at the nameservers.** Add the zone in the panel *first*,
+   then change the nameservers at that domain's registrar. The other order
+   points a domain at a machine that answers "no such domain", and that answer
+   gets cached. Nameserver changes propagate over hours, and the old
+   nameservers keep answering for whoever has them cached — so leave the
+   records at the old host in place until traffic has moved.
+
+The nameserver page tracks which of these is done, and asks a public resolver
+what the nameserver names and each zone's delegation actually resolve to, which
+is the only check that means anything: the panel accepting the settings says
+nothing about what a registry is handing out.
+
+After that it is a DNS provider like any other. "This server" appears wherever
+one does, so creating a site publishes its records and issues its certificate,
+a mail domain gets its MX, SPF, DKIM and DMARC written straight into the zone,
+and deleting either takes the records back out. The zones are rows in
+`dns_zones` and `dns_zone_records`; the files under `/etc/bind` are generated
+from them and validated with `named-checkzone` before anything is reloaded, so
+a record that would produce an unloadable zone is an error on the form rather
+than a change that appeared to work and did nothing.
 
 ## Why the rewrite
 
@@ -256,9 +475,11 @@ internal/proc         running commands, quoting, writing files
 internal/tasks        the step runner behind every live console
 internal/queue        the jobs table and its workers
 internal/catalog      what the panel can install, and how
-internal/sites        nginx vhosts, systemd units, the per-type deploy recipes
+internal/sites        nginx vhosts, systemd units, the per-type deploy recipes,
+                      backups, and the staging clone/push with its URL rewriting
 internal/databases    creating and dropping databases on the installed engines
-internal/dns          six DNS providers behind one interface
+internal/dns          seven DNS providers behind one interface, one of them this machine
+internal/nameserver   BIND: zone files generated from the panel's own rows
 internal/mail         Postfix, Dovecot, OpenDKIM and Roundcube
 internal/system       /proc, the public IP, the panel's own hostname
 internal/terminal     the browser shell, and the live stream sharing its socket

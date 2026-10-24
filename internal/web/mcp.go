@@ -431,6 +431,12 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpTestMailDelivery(),
 
 		// DNS
+		a.mcpSiteGit(),
+
+		a.mcpCreateStagingSite(),
+		a.mcpPushStagingSite(),
+		a.mcpListStagingSites(),
+
 		a.mcpListDNSAccounts(),
 		a.mcpListDNSProviders(),
 		a.mcpConnectDNSAccount(),
@@ -442,6 +448,15 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpSetDNSRecord(),
 		a.mcpDeleteDNSRecord(),
 		a.mcpSyncDNS(),
+
+		// The panel as the nameserver rather than as a client of one. The
+		// records in a hosted zone go through the tools above, because a
+		// hosted zone is reached through a credential like any other.
+		a.mcpNameserverStatus(),
+		a.mcpSetNameserverHostnames(),
+		a.mcpListHostedZones(),
+		a.mcpHostDNSZone(),
+		a.mcpRemoveHostedZone(),
 
 		// Apps
 		a.mcpListApps(),
@@ -704,7 +719,7 @@ func (a *App) mcpCreateSite() *mcp.Tool {
 			"type": {
 				Description: "The site type. list_site_types has them and says which this machine can host.",
 				Enum: []string{"wordpress", "laravel", "nextcloud", "n8n", "php", "nodejs",
-					"nextjs", "static"},
+					"nextjs", "nuxt", "static"},
 			},
 			"domain": {Description: "The hostname the site answers on, like app.example.com."},
 			"aliases": {Type: "array", Description: "Extra hostnames the same site answers on. " +

@@ -106,6 +106,7 @@ func (a *App) Start(ctx context.Context) {
 
 		a.EnsureNginxHelpers()
 		a.EnsureMailConfigured()
+		a.EnsureNameserverConfigured(ctx)
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLReachable(ctx)
 
@@ -119,6 +120,11 @@ func (a *App) Start(ctx context.Context) {
 	// nothing but look at the time every minute and push jobs onto the queue
 	// that has just started.
 	go a.runBackupSchedules(ctx)
+
+	// And the sites that follow a branch. Its own clock for the same reason:
+	// it looks at the time every minute, asks the remote whether anything
+	// moved, and pushes a pull onto the queue only when it has.
+	go a.runPullSchedules(ctx)
 }
 
 // Stop lets the workers finish.

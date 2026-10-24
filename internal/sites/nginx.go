@@ -420,6 +420,25 @@ func SupportsHTTP2Directive(versionOutput string) bool {
 	return patch >= 1
 }
 
+// staticOutput is where a proxied framework leaves its built client assets, and
+// the URL prefix they are served under — or empty for a type that has none.
+//
+// Both frameworks here do the same thing under different names, which is the
+// only reason this is a table rather than two `if`s.
+func staticOutput(site *store.Site) (directory, prefix string) {
+	switch site.Type {
+	case "nextjs":
+		return ".next/static", "/_next/static/"
+
+	case "nuxt":
+		// Nitro writes everything a browser fetches directly into
+		// .output/public, and the hashed bundles into _nuxt inside it.
+		return ".output/public/_nuxt", "/_nuxt/"
+	}
+
+	return "", ""
+}
+
 // body is the directives that actually serve the site, shared by the HTTP and
 // HTTPS forms so the two can never drift apart.
 func body(out *strings.Builder, site *store.Site, tls bool) {
@@ -436,14 +455,22 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 			out.WriteString(cacheSkipRules(site))
 		}
 
-		if site.Type == "nextjs" {
+		// The framework's own build output, served off disk rather than
+		// proxied through the application.
+		//
+		// Every one of these files is content-addressed — the name changes when
+		// the bytes do — so it can be cached for a year, and there is nothing
+		// for the Node process to decide about it. Left to the proxy they are
+		// dozens of requests per page woken through a single-threaded server
+		// that could be answering something that matters.
+		if directory, prefix := staticOutput(site); directory != "" {
 			fmt.Fprintf(out,
 				"\n"+
-					"    location /_next/static/ {\n"+
-					"        alias %s/.next/static/;\n"+
+					"    location %s {\n"+
+					"        alias %s/%s/;\n"+
 					"        expires 365d;\n"+
 					"        access_log off;\n"+
-					"    }\n", site.RootPath)
+					"    }\n", prefix, site.RootPath, directory)
 		}
 
 		// A WebSocket upgrade must never be answered from a cache. Without

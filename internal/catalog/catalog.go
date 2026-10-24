@@ -53,6 +53,17 @@ type Entry struct {
 
 	// SizeHint is roughly what lands on disk, shown before installing.
 	SizeHint string
+
+	// OnlyWhenAsked keeps an app out of the first-run install, even the `all`
+	// one.
+	//
+	// "Everything in the catalogue" is a reasonable thing to want from a web
+	// server, a database and a runtime: having them and not using them costs
+	// disk. It is not reasonable for an app that changes what the machine is.
+	// A nameserver listening on port 53 of a public address is a service
+	// somebody else can now send traffic to, and putting one on every panel
+	// because the catalogue grew is not a default anybody chose.
+	OnlyWhenAsked bool
 }
 
 // Entries is the catalogue. Array order is install order.
@@ -164,6 +175,21 @@ var Entries = []Entry{
 		Detect: "command -v wp", Version: "wp --version --allow-root 2>/dev/null | head -1",
 		Removable: true,
 		Keywords:  "wordpress cli command line php", SizeHint: "~7 MB",
+	},
+	{
+		Key: "dns", Label: "DNS server", Group: "dns",
+		OnlyWhenAsked: true,
+		Description: "BIND, so this machine can host zones itself. Point a domain's " +
+			"nameservers here and manage its records in the panel instead of at a " +
+			"registrar or Cloudflare.",
+		Requires: []string{"base"},
+		Detect:   "command -v named", Version: "named -v 2>/dev/null | head -1",
+		Packages:       "bind9 bind9-utils bind9-dnsutils",
+		RemovePackages: "bind9 bind9-utils bind9-dnsutils bind9-libs",
+		Removable:      true,
+		Keywords: "dns bind named nameserver zone authoritative glue registrar " +
+			"ns1 ns2 soa",
+		SizeHint: "~15 MB",
 	},
 	{
 		Key: "mail", Label: "Mail server", Group: "mail",
