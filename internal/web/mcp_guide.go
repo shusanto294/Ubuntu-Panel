@@ -89,6 +89,21 @@ var panelGuide = []guideArea{
 				},
 			},
 			{
+				Task: "Move a site to another PHP version",
+				Steps: []string{
+					"site_php_settings with only `site` — it lists the versions the panel " +
+						"installs, which of them this machine is running (`php_installed`), " +
+						"what this site is on, and what a new site would get.",
+					"site_php_settings with `php_version`. One in `php_installed` is a vhost " +
+						"rewrite and an nginx reload, applied before the call returns; one that " +
+						"is not is installed first on the queue, and the answer says so.",
+					"For the queued case: site_logs for the install, and get_site's " +
+						"`php_version` for what it ended up on. Then check the site actually " +
+						"works — a new PHP is where code that has been deprecated for years " +
+						"finally stops running, and moving back is the same call.",
+				},
+			},
+			{
 				Task: "A site is up but does not answer, or has no certificate",
 				Steps: []string{
 					"get_site — `resolution` says whether the domain points at this server, `resolution.record` is the record it needs, and `certificate` says what is on disk.",
@@ -101,6 +116,9 @@ var panelGuide = []guideArea{
 		Warnings: []string{
 			"The panel owns a site's nginx vhost, its systemd unit and its directory. Writing any " +
 				"of those by hand is overwritten by the next deployment.",
+			"PHP is per site. A panel update installs the newest PHP and makes it the default " +
+				"for new sites; nothing moves an existing site but site_php_settings, one site " +
+				"at a time.",
 		},
 	},
 	{

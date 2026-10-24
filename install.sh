@@ -35,6 +35,9 @@
 #   PANEL_SKIP_APT=0         skip the apt dependency step
 #   PANEL_INSTALL_APPS=all   what the installer puts on the machine before it
 #                            starts the panel: all | core | none
+#   PANEL_UPDATE_APPS=1      on an update, ask apt for the newest of everything
+#                            the panel installed, and add the newest PHP it
+#                            knows about. 0 leaves the machine as it is
 #   PANEL_FROM_SOURCE=0      1 forces a source build even inside a release
 #   NO_COLOR=1               plain output
 #
@@ -63,6 +66,12 @@ PANEL_PUBLIC_PORT="${PANEL_PUBLIC_PORT:-8443}"
 PANEL_PHP_VERSION="${PANEL_PHP_VERSION:-8.3}"
 PANEL_SWAP="${PANEL_SWAP:-1}"
 PANEL_SKIP_APT="${PANEL_SKIP_APT:-0}"
+
+# On an update, whether the apps already on the machine are brought up to date
+# along with the panel. On by default: a panel that installed PHP is the thing
+# that should keep PHP current, and a year of updates that touch only the
+# binary is a year of apt never being asked again.
+PANEL_UPDATE_APPS="${PANEL_UPDATE_APPS:-1}"
 PANEL_FROM_SOURCE="${PANEL_FROM_SOURCE:-0}"
 
 GET_URL="https://raw.githubusercontent.com/shusanto294/Ubuntu-Panel/main/get.sh"
@@ -1181,7 +1190,11 @@ fi
 
 # ====================================================== 12. start the panel
 
-step "Installing the server's apps"
+if [ "$MODE" = update ]; then
+    step "Updating the server's apps"
+else
+    step "Installing the server's apps"
+fi
 
 # nginx, PHP-FPM, MariaDB, Node.js and the rest, now — before the service is
 # started rather than on the queue behind it.
@@ -1200,8 +1213,33 @@ step "Installing the server's apps"
 APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
 APPS_CHOICE="${APPS_CHOICE:-all}"
 
-if [ "$MODE" = update ]; then
-    same "Update — whatever is on this machine is left as it is."
+if [ "$MODE" = update ] && [ "$PANEL_SKIP_APT" = "1" ]; then
+    same "PANEL_SKIP_APT=1 — the apps on this machine are left as they are."
+elif [ "$MODE" = update ] && [ "$PANEL_UPDATE_APPS" = "0" ]; then
+    same "PANEL_UPDATE_APPS=0 — the apps on this machine are left as they are."
+elif [ "$MODE" = update ]; then
+    # An update used to stop here, which over a year of updates is a server
+    # still running the PHP, MariaDB and nginx it was installed with — security
+    # fixes and all. The panel put them there, so the panel asks apt for the
+    # newest of them again.
+    #
+    # Only what is already here, and only the panel's own packages: `apt-get
+    # upgrade` on somebody's server is a larger promise than this makes. The one
+    # thing it adds is the newest PHP the panel knows about, which becomes the
+    # default for new sites — every site already here keeps the version it was
+    # built against, and its own PHP tab is where that moves.
+    detail "Asking apt for the newest of everything the panel installed. On a small"
+    detail "VPS this is a minute or two. Every step is also in $INSTALL_LOG."
+
+    printf '\n$ ubuntu-panel --upgrade-apps\n' >>"$INSTALL_LOG"
+
+    if sudo -u "$PANEL_USER" "$PANEL_ROOT/bin/ubuntu-panel" \
+            --config "$CONFIG_FILE" --upgrade-apps 2>&1 | tee -a "$INSTALL_LOG"; then
+        ok "The server's apps are up to date"
+    else
+        warn "Some of it did not update. The panel is fine and starts anyway —"
+        warn "the Apps page has the console, and a Retry beside each app."
+    fi
 elif [ "$APPS_CHOICE" = none ]; then
     same "PANEL_INSTALL_APPS=none — nothing installed; pick what you need on the Apps page."
 elif [ "$PANEL_SKIP_APT" = "1" ]; then
@@ -1373,6 +1411,10 @@ if [ "$MODE" = install ]; then
                 "Apps" "${APPS_CHOICE:-all}"
             ;;
     esac
+elif [ "$PANEL_SKIP_APT" != "1" ] && [ "$PANEL_UPDATE_APPS" != "0" ]; then
+    printf '    %-13s brought up to date too, and the newest PHP is now the default for\n' "Apps"
+    printf '    %-13s new sites. Every site already here keeps the PHP it was built\n' ""
+    printf '    %-13s against — its own PHP tab moves it\n' ""
 fi
 
 printf '\n'

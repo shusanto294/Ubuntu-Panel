@@ -33,6 +33,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	installApps := flag.String("install-apps", "",
 		"install the server's apps and exit: all | core | none (default: PANEL_INSTALL_APPS)")
+	upgradeApps := flag.Bool("upgrade-apps", false,
+		"update the apps already on this machine and exit")
 
 	flag.Parse()
 
@@ -53,28 +55,40 @@ func main() {
 		return
 	}
 
+	// The other one-shot, which a panel update runs after it has swapped the
+	// binary: everything the panel installed, asked of apt again.
+	if *upgradeApps {
+		if err := upgradeAppsAndExit(*configPath); err != nil {
+			fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
 	if err := run(*configPath); err != nil {
 		fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
 		os.Exit(1)
 	}
 }
 
-// installAppsAndExit puts the software a server needs on the machine, printing
-// each step as it lands, and returns when there is nothing left to do.
-func installAppsAndExit(configPath, choice string) error {
+// oneShot builds the panel without serving anything, for the modes the
+// installer runs and then exits from. The returned function closes the
+// database and the log file.
+func oneShot(configPath string) (*web.App, func(), error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("reading the configuration: %w", err)
+		return nil, nil, fmt.Errorf("reading the configuration: %w", err)
 	}
 
 	log, closeLog := logger(cfg)
-	defer closeLog()
 
 	db, err := store.Open(cfg.DatabasePath)
 	if err != nil {
-		return err
+		closeLog()
+
+		return nil, nil, err
 	}
-	defer db.Close()
 
 	cipher, err := crypto.New(cfg.AppKey)
 	if err != nil {
@@ -85,6 +99,21 @@ func installAppsAndExit(configPath, choice string) error {
 
 	app := web.New(cfg, db, assets.FS(cfg.PublicPath, cfg.Debug), log)
 
+	return app, func() {
+		db.Close()
+		closeLog()
+	}, nil
+}
+
+// installAppsAndExit puts the software a server needs on the machine, printing
+// each step as it lands, and returns when there is nothing left to do.
+func installAppsAndExit(configPath, choice string) error {
+	app, done, err := oneShot(configPath)
+	if err != nil {
+		return err
+	}
+	defer done()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -92,6 +121,23 @@ func installAppsAndExit(configPath, choice string) error {
 	// own progress, read by whoever is watching it scroll, and a line of
 	// key=value logging per apt step is not that.
 	return app.InstallAppsNow(ctx, choice, func(line string) {
+		fmt.Println("       ", line)
+	})
+}
+
+// upgradeAppsAndExit brings what is on the machine up to date, printing each
+// step, and returns when there is nothing left to do.
+func upgradeAppsAndExit(configPath string) error {
+	app, done, err := oneShot(configPath)
+	if err != nil {
+		return err
+	}
+	defer done()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return app.UpgradeAppsNow(ctx, func(line string) {
 		fmt.Println("       ", line)
 	})
 }

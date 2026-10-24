@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
@@ -106,22 +108,84 @@ func (a *App) mcpSetSiteAliases() *mcp.Tool {
 	}
 }
 
+// mcpMovePHPVersion is the tool's half of the site page's version card: the
+// same two paths, and the same answer about which one it took.
+func (a *App) mcpMovePHPVersion(ctx context.Context, site *store.Site, version string) (any, error) {
+	if !site.IsPHP() {
+		return nil, fmt.Errorf("%s is a %s site, so PHP-FPM is not what serves it and it has "+
+			"no PHP version to set", site.Domain, strings.ToLower(site.TypeLabel()))
+	}
+
+	if !config.IsPHPVersion(version) {
+		return nil, fmt.Errorf("this panel does not install PHP %s — it offers %s",
+			version, strings.Join(config.PHPVersions, ", "))
+	}
+
+	answer := map[string]any{
+		"site_id":     site.ID,
+		"domain":      site.Domain,
+		"php_version": version,
+	}
+
+	if version == site.PHPVersion {
+		answer["applied"] = true
+		answer["note"] = "This site was already on PHP " + version + "."
+
+		return answer, nil
+	}
+
+	if sites.PHPVersionReady(version) {
+		if err := a.Sites.SetPHPVersion(ctx, site.ID, version); err != nil {
+			return nil, err
+		}
+
+		answer["applied"] = true
+		answer["note"] = fmt.Sprintf("%s now runs on PHP %s, and nginx was reloaded.",
+			site.Domain, version)
+
+		return answer, nil
+	}
+
+	if _, err := a.Queue.Push(queue.SitePHPVersion, map[string]any{
+		"site":    site.ID,
+		"version": version,
+	}); err != nil {
+		return nil, errors.New("the move could not be queued: " + err.Error())
+	}
+
+	answer["applied"] = false
+	answer["queued"] = true
+	answer["next"] = fmt.Sprintf("PHP %s is not on this machine, so it is being installed "+
+		"first — apt, its extensions and a tuned PHP-FPM, a few minutes. %s moves to it when "+
+		"that finishes. site_logs has the run, and get_site's `php_version` is what it ended "+
+		"up on.", version, site.Domain)
+
+	return answer, nil
+}
+
 func (a *App) mcpSitePHPSettings() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "site_php_settings",
 		Capability: capSitesWrite,
 		Title:      "Read or write a site's PHP settings",
-		Description: "The php.ini values the panel lets a site override — upload size, memory " +
-			"limit, execution time and the rest. Called with no `settings`, it lists what can be " +
-			"set, what this site has set, and what PHP would use otherwise. Called with them, it " +
-			"writes them and reloads PHP-FPM.\n\n" +
+		Description: "Which PHP serves a site, and the php.ini values the panel lets it " +
+			"override — upload size, memory limit, execution time and the rest. Called with " +
+			"neither `settings` nor `php_version`, it lists the versions, which of them this " +
+			"machine is running, what this site has set and what PHP would use otherwise. " +
+			"Called with them, it writes them and reloads PHP-FPM.\n\n" +
 			"Only the directives listed are accepted; anything else is refused rather than " +
-			"written into a file the site's pool reads.",
+			"written into a file the site's pool reads.\n\n" +
+			"`php_version` is per site: moving one leaves every other site on the machine " +
+			"where it is. A version the machine already runs is a vhost rewrite and an nginx " +
+			"reload; one it does not is installed first, on the queue, and the task it returns " +
+			"is where that is watched.",
 		Properties: map[string]mcp.Property{
 			"site": {Description: "The site's id, or its domain."},
 			"settings": {Type: "object",
 				Description: "The directives to set, as {name: value} — for example " +
 					"{\"upload_max_filesize\": \"128M\"}. An empty string clears one."},
+			"php_version": {Description: "Move the site to this PHP — one of the versions " +
+				"this tool lists. Installed first if the machine does not have it."},
 		},
 		Required: []string{"site"},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
@@ -131,6 +195,14 @@ func (a *App) mcpSitePHPSettings() *mcp.Tool {
 			}
 
 			overrides := site.PHPOverrides()
+
+			// The version first, and on its own: it is a different change from
+			// the directives — minutes rather than a reload when the version is
+			// not on the machine — and a call that did both would report one
+			// outcome for two.
+			if version := strings.TrimSpace(args.String("php_version")); version != "" {
+				return a.mcpMovePHPVersion(ctx, site, version)
+			}
 
 			asked, _ := args["settings"].(map[string]any)
 
@@ -148,9 +220,14 @@ func (a *App) mcpSitePHPSettings() *mcp.Tool {
 				}
 
 				return map[string]any{
-					"site_id":    site.ID,
-					"domain":     site.Domain,
-					"directives": directives,
+					"site_id":       site.ID,
+					"domain":        site.Domain,
+					"php_version":   site.PHPVersion,
+					"php_versions":  config.PHPVersions,
+					"php_installed": system.InstalledPHPVersions(),
+					"php_default":   a.Store.PHPVersion(),
+					"runs_php":      site.IsPHP(),
+					"directives":    directives,
 				}, nil
 			}
 

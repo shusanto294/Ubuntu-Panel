@@ -38,15 +38,7 @@ func (s *Service) packagesFor(key string) string {
 			"ca-certificates gnupg lsb-release apt-transport-https rsync"
 
 	case "php":
-		extensions := []string{"fpm", "cli", "common", "mysql", "pgsql", "curl", "mbstring",
-			"xml", "zip", "gd", "bcmath", "intl", "redis"}
-
-		names := make([]string, 0, len(extensions))
-		for _, extension := range extensions {
-			names = append(names, "php"+php+"-"+extension)
-		}
-
-		return strings.Join(names, " ")
+		return PHPPackages(php)
 
 	case "mongodb":
 		return "mongodb-org"
@@ -127,27 +119,7 @@ func (s *Service) preSteps(list *tasks.List, key string) {
 				hostname)).Group(key)
 
 	case "php":
-		// The ondrej PPA does not publish for every Ubuntu release, and a
-		// source that 404s breaks every later `apt-get update`. Prefer the
-		// distro's own packages; add the PPA only when it actually publishes
-		// for this release.
-		list.Add("Choose a PHP source", fmt.Sprintf(
-			"wanted=%s; "+
-				"if apt-cache policy \"php${wanted}-fpm\" 2>/dev/null | grep -q 'Candidate:' && "+
-				"   ! apt-cache policy \"php${wanted}-fpm\" 2>/dev/null | grep -q 'Candidate: (none)'; then "+
-				"  echo \"php${wanted}-fpm is available from the configured repositories; no PPA needed.\"; "+
-				"else "+
-				"  codename=$(lsb_release -cs 2>/dev/null || . /etc/os-release && echo \"$VERSION_CODENAME\"); "+
-				"  if curl -fsI --max-time 15 "+
-				"\"https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/${codename}/Release\" >/dev/null; then "+
-				"    echo 'Adding ppa:ondrej/php.'; sudo add-apt-repository -y ppa:ondrej/php; "+
-				"    sudo DEBIAN_FRONTEND=noninteractive apt-get update -y; "+
-				"  else "+
-				"    echo \"ppa:ondrej/php does not publish for ${codename}; using the distro's own PHP packages.\"; "+
-				"    sudo rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources "+
-				"/etc/apt/sources.list.d/ondrej-ubuntu-php-*.list; "+
-				"  fi; "+
-				"fi", s.Store.PHPVersion())).Group(key)
+		phpSource(list, s.Store.PHPVersion(), key)
 	}
 }
 
@@ -253,68 +225,8 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 		list.Add("Open the web ports", "sudo ufw allow 'Nginx Full'").Optional().Group(key)
 
 	case "php":
-		// imagick has been missing from a new Ubuntu on release day more than
-		// once, and soap is not always built. Neither is worth failing PHP
-		// over — and PHP is a core service, so failing it makes a working
-		// install look broken.
-		list.Add("Install the optional PHP extensions",
-			fmt.Sprintf("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y php%s-imagick php%s-soap || "+
-				"echo \"one or more optional extensions are not packaged for this release; continuing\"",
-				php, php)).Optional().Group(key)
-
-		// memory_limit is a ceiling per request, not an allocation — but on a
-		// 1 GB machine a ceiling of 512M means one runaway page can take the
-		// box with it. 256M is above anything WordPress or Laravel needs.
-		limit := int64(512)
-		if ram > 0 && ram < 2048 {
-			limit = 256
-		}
-
-		restart := fmt.Sprintf("sudo systemctl restart php%s-fpm", php)
-
-		list.Add("Tune PHP and start PHP-FPM",
-			fmt.Sprintf("sudo sed -i \"s/^upload_max_filesize = .*/upload_max_filesize = 128M/; "+
-				"s/^post_max_size = .*/post_max_size = 128M/; "+
-				"s/^memory_limit = .*/memory_limit = %dM/; "+
-				"s/^max_execution_time = .*/max_execution_time = 300/\" /etc/php/%s/fpm/php.ini",
-				limit, php),
-			fmt.Sprintf("sudo systemctl enable --now php%s-fpm", php),
-			restart,
-			fmt.Sprintf("php%s -v", php)).Group(key)
-
-		// Ubuntu ships pm = dynamic with five children that stay resident. At
-		// 40-80 MB each for WordPress that is most of a 1 GB machine held
-		// against requests that are not arriving. `ondemand` spawns per request
-		// and lets workers exit again. Above 2 GB there is room to keep them
-		// warm, so the default stands and only the ceiling is sized.
-		if ram > 0 {
-			children := ram / 150 // ~60 MB a worker, 40% of RAM
-
-			if children < 2 {
-				children = 2
-			}
-			if children > 12 {
-				children = 12
-			}
-
-			pool := fmt.Sprintf(
-				"sudo sed -i \"s/^pm.max_children = .*/pm.max_children = %d/; "+
-					"s/^;*pm.max_requests = .*/pm.max_requests = 500/\" /etc/php/%s/fpm/pool.d/www.conf",
-				children, php)
-
-			if ram < 2048 {
-				pool = fmt.Sprintf(
-					"sudo sed -i \"s/^pm = .*/pm = ondemand/; "+
-						"s/^pm.max_children = .*/pm.max_children = %d/; "+
-						"s/^;*pm.process_idle_timeout = .*/pm.process_idle_timeout = 10s/; "+
-						"s/^;*pm.max_requests = .*/pm.max_requests = 500/\" /etc/php/%s/fpm/pool.d/www.conf",
-					children, php)
-			}
-
-			// Optional and separate: a pool file this cannot match is a PHP-FPM
-			// that keeps its own defaults, not one that fails to start.
-			list.Add("Size the PHP-FPM pool to this machine", pool, restart).Optional().Group(key)
-		}
+		phpOptional(list, php, key)
+		phpTune(list, php, key)
 
 	case "mysql":
 		list.Add("Start and secure MariaDB",

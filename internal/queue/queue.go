@@ -30,6 +30,13 @@ const (
 	// without rebuilding the application to get there.
 	SiteCertificate = "site.certificate"
 
+	// SitePHPVersion moves one site to another PHP-FPM, installing that PHP
+	// first when the machine does not have it. On the queue because that
+	// install is apt, the ondrej PPA and a few minutes — far longer than a
+	// form should wait. Moving to a version already on the box is a file and
+	// an nginx reload, and that happens in the request.
+	SitePHPVersion = "site.php-version"
+
 	// SiteBackup copies a site's files and database; SiteRestore puts one of
 	// those copies back over the top of what is there now. Both are on the
 	// queue rather than in the request because a site of any size takes minutes

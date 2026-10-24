@@ -16,6 +16,11 @@ func (a *App) registerJobs() {
 		Files bool  `json:"files"`
 	}
 
+	type sitePHPPayload struct {
+		Site    int64  `json:"site"`
+		Version string `json:"version"`
+	}
+
 	type databasePayload struct {
 		Database int64 `json:"database"`
 	}
@@ -82,6 +87,16 @@ func (a *App) registerJobs() {
 		}
 
 		return a.Sites.Certificate(ctx, payload.Site)
+	})
+
+	a.Queue.Handle(queue.SitePHPVersion, func(ctx context.Context, job *store.Job) error {
+		var payload sitePHPPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.movePHPVersion(ctx, payload.Site, payload.Version)
 	})
 
 	// Both keyed by the backup's own id rather than the site's: the row was

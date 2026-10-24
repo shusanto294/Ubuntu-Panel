@@ -367,7 +367,11 @@ func (a *App) mcpPanelUpdate() *mcp.Tool {
 		Title:      "Check for and install a panel update",
 		Description: "What version this panel is, what the latest release is, and whether it is " +
 			"behind. With `install` set, it runs the installer in a unit of its own and the panel " +
-			"restarts itself when it finishes — which drops this connection for a few seconds.",
+			"restarts itself when it finishes — which drops this connection for a few seconds.\n\n" +
+			"The installer updates the machine as well as the panel: apt is asked for the newest " +
+			"of everything the panel installed, and the newest PHP the panel knows about is " +
+			"installed if it is not there yet and becomes the default for new sites. Sites " +
+			"already here keep the PHP they were built against — site_php_settings moves one.",
 		Properties: map[string]mcp.Property{
 			"install": {Type: "boolean", Default: false,
 				Description: "Install the update rather than only reporting it."},

@@ -76,6 +76,10 @@ func (l *List) Group(group string) *List {
 // Len is how many steps the list holds.
 func (l *List) Len() int { return len(l.steps) }
 
+// Steps is the list as it was built, for a caller that wants to read a recipe
+// rather than run it.
+func (l *List) Steps() []Step { return l.steps }
+
 // Runner executes a list against one task row.
 type Runner struct {
 	Store  *store.Store

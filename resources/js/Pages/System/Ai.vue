@@ -191,7 +191,7 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
                         <Checkbox v-model:checked="settings.enabled" class="mt-1" />
                         <span>
                             <span class="block font-medium text-slate-800">
-                                Answer assistants
+                                Enable MCP server
                             </span>
                             <span class="block text-sm text-slate-500">
                                 Off, the endpoint refuses every request and the
@@ -200,72 +200,84 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
                         </span>
                     </label>
 
-                    <label class="flex items-start gap-3">
-                        <Checkbox
-                            v-model:checked="settings.confirm_destructive"
-                            class="mt-1"
-                        />
-                        <span>
-                            <span class="block font-medium text-slate-800">
-                                Ask me before anything destructive
-                            </span>
-                            <span class="block text-sm text-slate-500">
-                                Deleting a site, replacing a file, running a
-                                command that is not plainly read-only: the panel
-                                refuses the first attempt and tells the
-                                assistant to put it to you in words and come
-                                back with your answer. It cannot make an
-                                assistant ask honestly — nothing on this side of
-                                the connection can — but it stops the version
-                                where one sentence deletes a site.
-                            </span>
-                        </span>
-                    </label>
-
-                    <div class="rounded-xl ring-1 ring-slate-200">
-                        <label
-                            class="flex items-start gap-3 border-b border-slate-200 px-4 py-3"
-                        >
-                            <Checkbox v-model:checked="settings.allow_all" class="mt-1" />
+                    <!--
+                        Everything below answers the question "what may it do",
+                        which only has a meaning while the server answers at all.
+                        It comes and goes with the switch above rather than with a
+                        save: a page that hides half of its own questions until you
+                        submit it is a page you have to submit twice.
+                    -->
+                    <div
+                        v-if="settings.enabled"
+                        class="space-y-5 border-t border-slate-100 pt-5"
+                    >
+                        <label class="flex items-start gap-3">
+                            <Checkbox
+                                v-model:checked="settings.confirm_destructive"
+                                class="mt-1"
+                            />
                             <span>
                                 <span class="block font-medium text-slate-800">
-                                    Everything
+                                    Ask me before anything destructive
                                 </span>
                                 <span class="block text-sm text-slate-500">
-                                    Every tool the panel has, including the shell.
+                                    Deleting a site, replacing a file, running a
+                                    command that is not plainly read-only: the panel
+                                    refuses the first attempt and tells the
+                                    assistant to put it to you in words and come
+                                    back with your answer. It cannot make an
+                                    assistant ask honestly — nothing on this side of
+                                    the connection can — but it stops the version
+                                    where one sentence deletes a site.
                                 </span>
                             </span>
                         </label>
 
-                        <div class="divide-y divide-slate-100">
+                        <div class="rounded-xl ring-1 ring-slate-200">
                             <label
-                                v-for="capability in capabilities"
-                                :key="capability.key"
-                                class="flex items-start gap-3 px-4 py-3"
-                                :class="settings.allow_all ? 'opacity-60' : ''"
+                                class="flex items-start gap-3 border-b border-slate-200 px-4 py-3"
                             >
-                                <Checkbox
-                                    class="mt-1"
-                                    :checked="settings.permissions.includes(capability.key)"
-                                    @update:checked="toggle(capability.key)"
-                                />
+                                <Checkbox v-model:checked="settings.allow_all" class="mt-1" />
                                 <span>
-                                    <span class="flex items-center gap-2">
-                                        <span class="font-medium text-slate-800">
-                                            {{ capability.label }}
-                                        </span>
-                                        <span
-                                            v-if="capability.destructive"
-                                            class="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-600/20"
-                                        >
-                                            can destroy things
-                                        </span>
+                                    <span class="block font-medium text-slate-800">
+                                        Everything
                                     </span>
                                     <span class="block text-sm text-slate-500">
-                                        {{ capability.help }}
+                                        Every tool the panel has, including the shell.
                                     </span>
                                 </span>
                             </label>
+
+                            <div class="divide-y divide-slate-100">
+                                <label
+                                    v-for="capability in capabilities"
+                                    :key="capability.key"
+                                    class="flex items-start gap-3 px-4 py-3"
+                                    :class="settings.allow_all ? 'opacity-60' : ''"
+                                >
+                                    <Checkbox
+                                        class="mt-1"
+                                        :checked="settings.permissions.includes(capability.key)"
+                                        @update:checked="toggle(capability.key)"
+                                    />
+                                    <span>
+                                        <span class="flex items-center gap-2">
+                                            <span class="font-medium text-slate-800">
+                                                {{ capability.label }}
+                                            </span>
+                                            <span
+                                                v-if="capability.destructive"
+                                                class="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-600/20"
+                                            >
+                                                can destroy things
+                                            </span>
+                                        </span>
+                                        <span class="block text-sm text-slate-500">
+                                            {{ capability.help }}
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>

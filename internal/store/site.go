@@ -314,6 +314,13 @@ func (s *Store) SetSiteAliases(id int64, aliases []string) error {
 	return err
 }
 
+// SetSitePHPVersion moves a site to another PHP-FPM. The vhost names the
+// socket, so this is the row half of the change and never the whole of it.
+func (s *Store) SetSitePHPVersion(id int64, version string) {
+	s.db.Exec(`UPDATE sites SET php_version = ?, updated_at = datetime('now')
+	           WHERE id = ?`, version, id)
+}
+
 // SetSiteWebDirectory moves the document root inside the site directory.
 func (s *Store) SetSiteWebDirectory(id int64, directory string) {
 	s.db.Exec(`UPDATE sites SET web_directory = ?, updated_at = datetime('now')
@@ -608,6 +615,10 @@ func (site *Site) Summary(detailed bool) map[string]any {
 		"repository":    site.Repository,
 		"branch":        site.Branch,
 		"is_proxied":    site.IsProxied(),
+		// Whether PHP-FPM is what serves this site, which is what decides
+		// whether a PHP version is a thing it has. `is_proxied` is not the
+		// opposite of it: a static site is neither.
+		"is_php": site.IsPHP(),
 		// The list needs these to offer a way into the application without
 		// opening the site's own page first: whether this type has a login the
 		// panel knows about, and where that login lives.

@@ -88,6 +88,69 @@ func (s *Service) SetPHPSettings(ctx context.Context, siteID int64, settings map
 	return s.rewriteVhost(ctx, site.ID)
 }
 
+// SetPHPVersion points one site at another PHP-FPM.
+//
+// Per site rather than per machine: the panel's default decides what a new site
+// is built against, and a server hosting eight sites has no reason for all
+// eight to move together. A WordPress install that wants 8.4 and a Laravel app
+// pinned to 8.2 are both ordinary, and both are one vhost apart.
+//
+// The version has to be on the machine already. nginx is perfectly happy to
+// write `fastcgi_pass unix:/run/php/php8.5-fpm.sock` for a socket that is not
+// there, and the site then answers 502 to every request — so this refuses
+// rather than reload a configuration it knows is broken, and the caller is the
+// one that installs a missing version first.
+//
+// Written and reloaded here rather than queued: it is a file and a reload, and
+// a deployment would rebuild the whole application to change a socket path.
+func (s *Service) SetPHPVersion(ctx context.Context, siteID int64, version string) error {
+	site, err := s.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return errors.New("that site no longer exists")
+	}
+
+	if !site.IsPHP() {
+		return errors.New("this site does not run PHP")
+	}
+
+	version = strings.TrimSpace(version)
+
+	if version == "" {
+		return errors.New("choose a PHP version")
+	}
+
+	if version == site.PHPVersion {
+		return nil
+	}
+
+	if !PHPVersionReady(version) {
+		return fmt.Errorf("PHP %s is not running on this machine, so a site pointed at it "+
+			"would answer 502 to every request", version)
+	}
+
+	s.Store.SetSitePHPVersion(site.ID, version)
+
+	if err := s.rewriteVhost(ctx, site.ID); err != nil {
+		// nginx refused it and kept serving the old file, so the row goes back
+		// to matching what is actually on disk.
+		s.Store.SetSitePHPVersion(site.ID, site.PHPVersion)
+
+		return err
+	}
+
+	return nil
+}
+
+// PHPVersionReady reports whether this version's FPM socket is on the machine
+// — which is the only thing a vhost pointed at it depends on.
+func PHPVersionReady(version string) bool {
+	if strings.TrimSpace(version) == "" {
+		return false
+	}
+
+	return proc.Ok("test -S /run/php/php" + version + "-fpm.sock")
+}
+
 // SetWebDirectory moves a site's document root within its own directory.
 //
 // Within it, and nowhere else: the value is a path under the site root, so a

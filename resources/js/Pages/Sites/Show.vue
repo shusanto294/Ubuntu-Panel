@@ -17,6 +17,9 @@ const props = defineProps({
     certbot: Boolean,
     resolution: Object,
     phpDirectives: { type: Array, default: () => [] },
+    phpVersions: { type: Array, default: () => [] },
+    installedPhpVersions: { type: Array, default: () => [] },
+    defaultPhpVersion: { type: String, default: '' },
     cronJobs: { type: Array, default: () => [] },
     accessUsers: { type: Array, default: () => [] },
     database: { type: Object, default: null },
@@ -89,6 +92,41 @@ const saveAliases = () =>
     router.post(
         route('sites.settings', props.site.id),
         { aliases: aliases.value },
+        { preserveScroll: true },
+    );
+
+// ---- PHP: which PHP-FPM this site's requests go to.
+//
+// Per site, not per machine: the panel's default decides what a new site is
+// built against, and a server with eight sites on it has no reason to move all
+// eight together. A version this machine is already running is a vhost and a
+// reload; one it is not is apt first, so the card says which it would be
+// before the button is pressed.
+const phpVersion = ref(props.site.php_version ?? '');
+
+const phpInstalled = (version) => props.installedPhpVersions.includes(version);
+
+// The site's own version first if the panel has stopped offering it — a site
+// built against PHP 8.0 is still on PHP 8.0, and a select with nothing
+// selected says it is on nothing.
+const phpVersionOptions = computed(() => {
+    const current = props.site.php_version;
+
+    return current && !props.phpVersions.includes(current)
+        ? [current, ...props.phpVersions]
+        : props.phpVersions;
+});
+
+const phpVersionChanged = computed(() => phpVersion.value !== props.site.php_version);
+
+const phpVersionNeedsInstall = computed(
+    () => phpVersionChanged.value && !phpInstalled(phpVersion.value),
+);
+
+const savePHPVersion = () =>
+    router.post(
+        route('sites.php', props.site.id),
+        { php_version: phpVersion.value },
         { preserveScroll: true },
     );
 
@@ -1508,9 +1546,78 @@ const destroy = async () => {
             </p>
         </div>
 
+        <!--
+            Which PHP serves this site. The select offers every version the
+            panel installs rather than only the ones on the machine: a site can
+            be moved to one that is not here yet, and the panel installs it
+            first. What it does not do is pretend the two are the same — the
+            option says so, and so does the line under the button.
+        -->
+        <div
+            v-if="!busy && tab === 'php' && site.is_php"
+            class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <h3 class="font-semibold text-slate-800">PHP version</h3>
+            <p class="mt-2 text-sm text-slate-500">
+                The PHP-FPM this site's requests are passed to. Each site has
+                its own, so moving this one leaves every other site on the
+                machine where it is.
+            </p>
+
+            <div class="mt-5 flex flex-wrap items-end gap-3">
+                <div class="min-w-48">
+                    <label class="block text-sm font-medium text-slate-700">
+                        Version
+                    </label>
+                    <select
+                        v-model="phpVersion"
+                        class="mt-1 w-full rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                    >
+                        <option
+                            v-for="version in phpVersionOptions"
+                            :key="version"
+                            :value="version"
+                        >
+                            PHP {{ version }}<span v-if="!phpInstalled(version)">
+                                — not installed yet</span
+                            ><span v-else-if="version === defaultPhpVersion">
+                                — the panel's default</span
+                            >
+                        </option>
+                    </select>
+                </div>
+
+                <button
+                    @click="savePHPVersion"
+                    :disabled="!phpVersionChanged"
+                    class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-40"
+                >
+                    {{ phpVersionNeedsInstall ? 'Install and move' : 'Move' }}
+                </button>
+            </div>
+
+            <p v-if="phpVersionNeedsInstall" class="mt-3 text-xs text-amber-700">
+                PHP {{ phpVersion }} is not on this machine. It is installed
+                first — apt, its extensions and a tuned PHP-FPM, a few minutes
+                — and this site moves to it when that finishes. The console on
+                this page has every step.
+            </p>
+            <p v-else-if="phpVersionChanged" class="mt-3 text-xs text-slate-500">
+                PHP {{ phpVersion }} is already running here, so this is a vhost
+                rewrite and an nginx reload — no downtime, and nginx is given
+                the old file back if it will not take the new one.
+            </p>
+            <p v-else class="mt-3 text-xs text-slate-500">
+                Running on PHP {{ site.php_version }}. New sites on this machine
+                are built against PHP {{ defaultPhpVersion }} — Settings changes
+                that, and a panel update adds the newest PHP it knows about.
+            </p>
+        </div>
+
         <div
             v-if="!busy && tab === 'php'"
             class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+            :class="site.is_php ? 'mt-6' : ''"
         >
             <h3 class="font-semibold text-slate-800">PHP settings</h3>
             <p class="mt-2 text-sm text-slate-500">

@@ -82,6 +82,15 @@ port and the panel's own nginx vhost, and swaps the binary atomically — if the
 new one does not answer on `/up` within thirty seconds it puts the old one back
 and restarts it, so a bad update is a no-op rather than an outage.
 
+It also updates the machine, not only the panel: apt is asked for the newest of
+everything the panel installed — PHP, MariaDB, nginx, Node, Redis, the mail
+server — and the newest PHP the panel knows about is installed if it is not
+there yet, becoming the default for new sites. Only the panel's own packages,
+because `apt-get upgrade` on somebody's server is a larger promise than this
+makes; and only the default moves, because a site that works on PHP 8.3 is not
+something to put on 8.5 while nobody is watching. Each site's PHP tab moves
+that one. `PANEL_UPDATE_APPS=0` leaves the machine exactly as it was.
+
 From a checkout on the server, `sudo ./install.sh` does the same thing without
 going to GitHub.
 
@@ -100,7 +109,9 @@ Everything the C panel does, from the same pages:
   apt transaction, because dpkg takes an exclusive lock
 - **Sites** — WordPress, Laravel, PHP, Node.js, Next.js and static, with git
   deployment, an nginx vhost, a systemd unit for the proxied types, DNS and a
-  Let's Encrypt certificate
+  Let's Encrypt certificate. Each PHP site picks its own PHP version on its PHP
+  tab — a version the machine already runs is a vhost rewrite and a reload, one
+  it does not is installed first, on the queue, with the console on the page
 - **Databases** — MariaDB and MongoDB, with generated credentials
 - **Email** — mail domains and mailboxes in Postfix/Dovecot's SQL tables, DKIM
   keys, the SPF/DKIM/DMARC/MX records to go with them, and webmail per domain

@@ -344,11 +344,92 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 	}
 }
 
+// UpgradeAppsNow brings the apps on this machine up to date, in the
+// foreground, and does not return until it is done.
+//
+// This is what a panel update runs once the new binary is in place. Updating
+// the panel used to leave everything underneath it exactly as it was, which
+// over a year of updates is a server running the PHP, the MariaDB and the
+// nginx it was installed with — and the panel is what put them there.
+//
+// Nothing is installed that is not already on the machine, with one exception:
+// the newest PHP the panel knows about, which becomes the default for new
+// sites. Every site already here keeps the version it was built against; its
+// own PHP tab is where that moves.
+//
+// Same catalogue, same steps, same task row, so the Apps page afterwards has
+// the console to read. progress is given a line per step, because this runs on
+// somebody's terminal and ten silent minutes reads as a hang.
+func (a *App) UpgradeAppsNow(ctx context.Context, progress func(string)) error {
+	if progress == nil {
+		progress = func(string) {}
+	}
+
+	a.Catalog.SyncRows()
+
+	// Probed before anything is read off the rows. The table only learns an
+	// app is there when the panel installed it, and this runs on servers that
+	// have been looked after by hand since — where "nothing to update" read
+	// off the rows would be the update quietly skipping a machine full of
+	// packages. UpgradeInstalled trusts this probe rather than repeating it.
+	a.Catalog.Detect(nil)
+
+	installed := a.Store.InstalledServiceKeys(ctx)
+
+	if len(installed) == 0 {
+		// Nothing was installed through the panel, so there is nothing of the
+		// panel's to update. A machine like that is one somebody set up by
+		// hand, and apt on it is theirs.
+		progress("No apps installed by the panel; nothing to update.")
+
+		return nil
+	}
+
+	progress("Bringing the installed apps up to date. This asks apt for the newest")
+	progress("of everything the panel put on this machine, and installs the newest")
+	progress("PHP it knows about if the machine does not have it yet.")
+
+	done := make(chan error, 1)
+
+	go func() { done <- a.Catalog.UpgradeInstalled(ctx, 0) }()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	seen := map[string]bool{}
+
+	for {
+		select {
+		case err := <-done:
+			a.mirrorUpgradeSteps(ctx, seen, progress)
+
+			for _, line := range a.Catalog.UpgradeSummary(ctx) {
+				progress(line)
+			}
+
+			return err
+
+		case <-ticker.C:
+			a.mirrorUpgradeSteps(ctx, seen, progress)
+		}
+	}
+}
+
 // mirrorSteps prints the steps that have finished since the last look. The task
 // row is the same one the Apps page reads, so this is a view of it rather than a
 // second account of what happened.
 func (a *App) mirrorSteps(ctx context.Context, seen map[string]bool, progress func(string)) {
-	id := a.Store.LatestTaskByAction(ctx, "provision", "services.install", false)
+	a.mirrorAction(ctx, "services.install", seen, progress)
+}
+
+// mirrorUpgradeSteps is the same view of the update's own task.
+func (a *App) mirrorUpgradeSteps(ctx context.Context, seen map[string]bool, progress func(string)) {
+	a.mirrorAction(ctx, "services.upgrade", seen, progress)
+}
+
+func (a *App) mirrorAction(ctx context.Context, action string, seen map[string]bool,
+	progress func(string)) {
+	id := a.Store.LatestTaskByAction(ctx, "provision", action, false)
 	if id <= 0 {
 		return
 	}

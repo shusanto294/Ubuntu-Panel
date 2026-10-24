@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
@@ -22,6 +23,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // siteApps is everything any site type can want, so the create form can offer
@@ -275,22 +277,30 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 
 	backups, backupSettings := a.backupProps(r.Context(), site)
 
+	// What the PHP tab's version card offers: every version the panel installs,
+	// and which of them this machine is actually running. A site can be put on
+	// one that is not there yet — the panel installs it first — but saying
+	// which is which is the difference between a reload and five minutes of
+	// apt, and the card should not make that a surprise.
 	a.Render.Render(w, r, "Sites/Show", inertia.Props{
-		"certbot":       a.Store.ServiceInstalled("certbot"),
-		"database":      database,
-		"backups":       backups,
-		"backup":        backupSettings,
-		"logFiles":      a.siteLogFiles(site, 200),
-		"resolution":    resolution,
-		"phpDirectives": directives,
-		"accessUsers":   a.Sites.AccessUsers(site),
-		"cache":         a.cacheSummary(site),
-		"cronJobs":      a.Sites.CronJobs(site),
-		"certificate":   a.certificateSummary(site),
-		"site":          site.Summary(true),
-		"logs":          logs,
-		"activeTask":    a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
-		"latestTask":    a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
+		"certbot":              a.Store.ServiceInstalled("certbot"),
+		"database":             database,
+		"backups":              backups,
+		"backup":               backupSettings,
+		"logFiles":             a.siteLogFiles(site, 200),
+		"resolution":           resolution,
+		"phpDirectives":        directives,
+		"phpVersions":          config.PHPVersions,
+		"installedPhpVersions": system.InstalledPHPVersions(),
+		"defaultPhpVersion":    a.Store.PHPVersion(),
+		"accessUsers":          a.Sites.AccessUsers(site),
+		"cache":                a.cacheSummary(site),
+		"cronJobs":             a.Sites.CronJobs(site),
+		"certificate":          a.certificateSummary(site),
+		"site":                 site.Summary(true),
+		"logs":                 logs,
+		"activeTask":           a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
+		"latestTask":           a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
 	})
 }
 
@@ -571,12 +581,17 @@ func (a *App) applyAliases(ctx context.Context, siteID int64, aliases []string) 
 	return note, nil
 }
 
-// sitesPHP writes the site's php.ini overrides.
+// sitesPHP writes the site's php.ini overrides, or moves it to another PHP.
+//
+// One endpoint for both because the PHP tab is one tab, and its two cards post
+// separately the way the Settings tab's do: a post carries the version or the
+// directives, and whichever it did not carry is left exactly as it was.
 func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
 	sess := session.FromContext(r.Context())
 	id := routeID(r, "site")
 
-	if _, err := a.Store.FindSite(r.Context(), id); err != nil {
+	site, err := a.Store.FindSite(r.Context(), id)
+	if err != nil {
 		a.notFoundError(w, r, "No such site.")
 		return
 	}
@@ -584,6 +599,12 @@ func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
 		a.badRequest(w, r, err)
+		return
+	}
+
+	if version, sent := input["php_version"]; sent {
+		a.sitesPHPVersion(w, r, site, strings.TrimSpace(version))
+
 		return
 	}
 
@@ -605,6 +626,111 @@ func (a *App) sitesPHP(w http.ResponseWriter, r *http.Request) {
 	sess.Flash("success", "The PHP settings were applied.")
 
 	inertia.Back(w, r, "/sites")
+}
+
+// sitesPHPVersion is the PHP tab's version card.
+//
+// Two ways through it, because the two cases are minutes apart. A version
+// already running on this machine is a vhost and an nginx reload, so it
+// happens in the request and the page comes back saying it is done. One that
+// is not here yet needs apt, possibly the ondrej PPA, and a tuned PHP-FPM
+// afterwards — so it goes on the queue, and the console the site page already
+// carries shows it landing step by step.
+func (a *App) sitesPHPVersion(w http.ResponseWriter, r *http.Request, site *store.Site,
+	version string) {
+	if !site.IsPHP() {
+		a.failBack(w, r, fmt.Sprintf("%s is a %s site, so PHP-FPM is not what serves it and "+
+			"it has no PHP version to set.", site.Domain, strings.ToLower(site.TypeLabel())))
+
+		return
+	}
+
+	if !config.IsPHPVersion(version) {
+		a.failBack(w, r, "That is not a PHP version the panel installs. It offers "+
+			strings.Join(config.PHPVersions, ", ")+".")
+
+		return
+	}
+
+	if version == site.PHPVersion {
+		a.okBack(w, r, "This site is already on PHP "+version+".")
+
+		return
+	}
+
+	if sites.PHPVersionReady(version) {
+		if err := a.Sites.SetPHPVersion(r.Context(), site.ID, version); err != nil {
+			a.failBack(w, r, err.Error())
+
+			return
+		}
+
+		a.okBack(w, r, fmt.Sprintf("%s now runs on PHP %s, and nginx was reloaded.",
+			site.Domain, version))
+
+		return
+	}
+
+	if _, err := a.Queue.Push(queue.SitePHPVersion, map[string]any{
+		"site":    site.ID,
+		"version": version,
+	}); err != nil {
+		a.failBack(w, r, "The move could not be queued: "+err.Error())
+
+		return
+	}
+
+	a.okBack(w, r, fmt.Sprintf("PHP %s is not on this machine yet, so it is being installed "+
+		"first — %s moves to it when that finishes. The console below has the steps.",
+		version, site.Domain))
+}
+
+// movePHPVersion is the queued half: install the version if the machine does
+// not have it, then point the site at it.
+//
+// Safe to run twice, which every queued job here has to be: the install steps
+// are apt and sed over files that are already in the state they want, and the
+// move itself is a no-op when the site is already on that version.
+func (a *App) movePHPVersion(ctx context.Context, siteID int64, version string) error {
+	site, err := a.Store.FindSite(ctx, siteID)
+	if err != nil {
+		return errors.New("that site no longer exists")
+	}
+
+	if !config.IsPHPVersion(version) {
+		return errors.New("that is not a PHP version the panel installs")
+	}
+
+	taskID, err := a.Store.CreateTask(ctx, "site", "site.php-version", site.UserID, site.ID,
+		fmt.Sprintf("%s → PHP %s", site.Domain, version))
+	if err != nil {
+		return err
+	}
+
+	list := &tasks.List{}
+
+	if !sites.PHPVersionReady(version) {
+		// Ungrouped: the group is what ties a step to an app on the Apps page,
+		// and this is a site's task. The steps themselves are the same recipe
+		// the Apps page runs for the default version.
+		catalog.PHPVersionSteps(list, version, "")
+	}
+
+	list.AddFn(fmt.Sprintf("Point %s at PHP %s", site.Domain, version),
+		func(runner *tasks.Runner) (string, error) {
+			if err := a.Sites.SetPHPVersion(ctx, site.ID, version); err != nil {
+				return "", err
+			}
+
+			return fmt.Sprintf("This site's PHP now goes to /run/php/php%s-fpm.sock.",
+				version), nil
+		})
+
+	if !tasks.New(a.Store, taskID).Run(list) {
+		return fmt.Errorf("%s was not moved to PHP %s", site.Domain, version)
+	}
+
+	return nil
 }
 
 // cacheSummary is what the Cache tab reads: what is set, what the panel will
