@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
 	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
-	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
@@ -368,8 +366,8 @@ func (a *App) mcpPanelUpdate() *mcp.Tool {
 		Description: "What version this panel is, what the latest release is, and whether it is " +
 			"behind. With `install` set, it runs the installer in a unit of its own and the panel " +
 			"restarts itself when it finishes — which drops this connection for a few seconds.\n\n" +
-			"The installer updates the machine as well as the panel: apt is asked for the newest " +
-			"of everything the panel installed, and the newest PHP the panel knows about is " +
+			"The update brings the machine up to date as well as the panel: once the new version " +
+			"is running, apt is asked for the newest of everything the panel installed, and the newest PHP the panel knows about is " +
 			"installed if it is not there yet and becomes the default for new sites. Sites " +
 			"already here keep the PHP they were built against — site_php_settings moves one.",
 		Properties: map[string]mcp.Property{
@@ -390,12 +388,8 @@ func (a *App) mcpPanelUpdate() *mcp.Tool {
 				return nil, err
 			}
 
-			command := fmt.Sprintf(
-				"sudo systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1; sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect "+
-					"/bin/bash -c %s", proc.Quote(a.updateCommand()))
-
-			if result := proc.Run(command, time.Minute); !result.OK() {
-				return nil, errors.New("the update could not be started: " + result.Output)
+			if err := a.startPanelUpdate(ctx, 0, false); err != nil {
+				return nil, err
 			}
 
 			status["installing"] = true

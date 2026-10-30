@@ -171,7 +171,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 
 	a.Render.Render(w, r, "System/Settings", inertia.Props{
 		"system": a.systemSummary(r.Context()),
-		"update": a.updateStatus(r.Context(), false),
+		"update": a.updateProps(r.Context(), false),
 		"panel": map[string]any{
 			"domain": nullable(domain),
 			"url":    a.panelURL(),
@@ -1109,12 +1109,15 @@ func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
 // updateCommand is the exact line to paste. Built here rather than written into
 // the page because the panel knows which repository it came from.
 func (a *App) updateCommand() string {
+	return fmt.Sprintf("curl -fsSL %s | sudo bash", a.updateScriptURL())
+}
+
+// updateScriptURL is where get.sh is fetched from.
+func (a *App) updateScriptURL() string {
 	repository := strings.TrimSuffix(strings.TrimSuffix(a.Config.Repository, "/"), ".git")
 	repository = strings.TrimPrefix(repository, "https://github.com/")
 
-	return fmt.Sprintf(
-		"curl -fsSL https://raw.githubusercontent.com/%s/%s/get.sh | sudo bash",
-		repository, a.Config.UpdateBranch)
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/get.sh", repository, a.Config.UpdateBranch)
 }
 
 // latestRelease is the newest published release, falling back to the tip of the
@@ -1242,27 +1245,4 @@ func fetchJSON(url string, into any) (int, error) {
 	json.Unmarshal(raw, into)
 
 	return response.StatusCode, nil
-}
-
-func (a *App) checkUpdates(w http.ResponseWriter, r *http.Request) {
-	a.writeJSON(w, http.StatusOK, a.updateStatus(r.Context(), true))
-}
-
-// updatePanel runs the installer again, in a transient unit of its own so that
-// replacing this binary and restarting this service does not kill the process
-// doing it.
-func (a *App) updatePanel(w http.ResponseWriter, r *http.Request) {
-	// The same line the card offers to copy, in a transient unit of its own —
-	// replacing this binary and restarting this service would otherwise kill
-	// the process doing it.
-	command := fmt.Sprintf(
-		"sudo systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1; sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect "+
-			"/bin/bash -c %s", proc.Quote(a.updateCommand()))
-
-	if result := proc.Run(command, time.Minute); !result.OK() {
-		a.failBack(w, r, "Could not start the update: "+result.Output)
-		return
-	}
-
-	a.okBack(w, r, "The update is running. The panel will restart on its own when it finishes.")
 }

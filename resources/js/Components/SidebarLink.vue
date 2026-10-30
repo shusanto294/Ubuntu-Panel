@@ -8,6 +8,8 @@ const props = defineProps({
     label: { type: String, required: true },
     active: { type: Boolean, default: false },
     collapsed: { type: Boolean, default: false },
+    // A count beside the label, such as updates waiting. Nothing when zero.
+    badge: { type: Number, default: 0 },
 });
 
 // The current row is a tinted pill rather than a filled bar: it reads as
@@ -23,7 +25,7 @@ const classes = computed(() =>
     <Link
         :href="href"
         :title="collapsed ? label : null"
-        class="flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition"
+        class="relative flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition"
         :class="[classes, collapsed ? 'justify-center' : 'px-3']"
     >
         <svg
@@ -40,5 +42,16 @@ const classes = computed(() =>
         </svg>
 
         <span v-if="!collapsed" class="truncate">{{ label }}</span>
+        <span
+            v-if="badge && !collapsed"
+            class="ml-auto rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+        >
+            {{ badge }}
+        </span>
+        <span
+            v-else-if="badge"
+            class="absolute ms-5 -mt-5 h-2 w-2 rounded-full bg-brand-600"
+            aria-hidden="true"
+        />
     </Link>
 </template>

@@ -196,6 +196,16 @@ func (a *App) registerJobs() {
 		return a.Catalog.InstallQueued(ctx, payload.User)
 	})
 
+	a.Queue.Handle(queue.ServicesUpgrade, func(ctx context.Context, job *store.Job) error {
+		var payload userPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Catalog.UpgradeInstalled(ctx, payload.User)
+	})
+
 	a.Queue.Handle(queue.ServicesUninstall, func(ctx context.Context, job *store.Job) error {
 		var payload struct {
 			Key  string `json:"key"`

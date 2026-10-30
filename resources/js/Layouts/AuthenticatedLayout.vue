@@ -143,6 +143,7 @@ const sections = [
                             :label="link.name"
                             :active="route().current(link.pattern)"
                             :collapsed="collapsed"
+                            :badge="link.route === 'settings' && $page.props.panelUpdate?.available ? 1 : 0"
                         />
                     </div>
                 </div>

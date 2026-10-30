@@ -372,3 +372,19 @@ func nullID(id int64) any {
 
 	return id
 }
+
+// WorkInProgress is whether anything is running or waiting to: a task the
+// panel has started, or a job on the queue. An automatic panel update waits
+// for a moment when this is false, because restarting the panel under a
+// deploy or a backup is what turns a routine update into a broken site.
+func (s *Store) WorkInProgress(ctx context.Context) bool {
+	var one int
+
+	err := s.db.QueryRowContext(ctxOrBackground(ctx),
+		`SELECT 1 FROM activity_logs WHERE status = 'running' AND action != 'panel.update'
+		 UNION ALL
+		 SELECT 1 FROM jobs WHERE status IN ('queued', 'running')
+		 LIMIT 1`).Scan(&one)
+
+	return err == nil
+}

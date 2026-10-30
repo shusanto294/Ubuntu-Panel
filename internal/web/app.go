@@ -129,6 +129,13 @@ func (a *App) Start(ctx context.Context) {
 	go a.runSecurityAlerts(ctx)
 	go a.warmSecurity(ctx)
 
+	// Panel updates: how the last one went, if this is the panel it installed,
+	// then the check for a newer one, and the automatic update when that is on.
+	go func() {
+		a.reconcilePanelUpdate(ctx)
+		a.runPanelUpdates(ctx)
+	}()
+
 	// The sites that back themselves up. Its own goroutine rather than part of
 	// the queue, because it is a clock rather than a piece of work: it does
 	// nothing but look at the time every minute and push jobs onto the queue
@@ -186,6 +193,10 @@ func (a *App) sharedProps(r *http.Request) inertia.Props {
 
 	if user := userFrom(r.Context()); user != nil {
 		props["auth"] = map[string]any{"user": user}
+
+		// Whether a newer panel is out, for the badge beside Settings. From
+		// memory: the hourly check is what asks GitHub, never a page.
+		props["panelUpdate"] = a.updateBadge()
 	} else {
 		props["auth"] = map[string]any{"user": nil}
 	}

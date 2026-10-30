@@ -59,6 +59,12 @@ const (
 	ServicesInstall   = "services.install"
 	ServicesUninstall = "services.uninstall"
 
+	// ServicesUpgrade brings the installed apps up to date. A panel update
+	// started from the panel queues it once the new version is running, rather
+	// than have the installer do it with the panel stopped: apt can take
+	// minutes, and the panel being down for all of them was the update.
+	ServicesUpgrade = "services.upgrade"
+
 	MailDomainCreate  = "mail.domain.create"
 	MailDomainDelete  = "mail.domain.delete"
 	MailAccountCreate = "mail.account.create"
