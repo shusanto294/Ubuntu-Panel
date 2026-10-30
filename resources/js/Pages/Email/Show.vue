@@ -1,9 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { usePagination } from '@/Composables/usePagination';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
@@ -23,6 +25,10 @@ const busy = computed(
 );
 
 useLiveRefresh(busy, ['domain', 'activeTask']);
+
+const { page, pages, total, perPage, visible: visibleAccounts } = usePagination(
+    () => props.domain.accounts,
+);
 
 const retry = () =>
     router.post(
@@ -136,7 +142,7 @@ const deleteDomain = async () => {
 
             <ul class="divide-y divide-slate-100">
                 <li
-                    v-for="account in domain.accounts"
+                    v-for="account in visibleAccounts"
                     :key="account.id"
                     class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                 >
@@ -203,6 +209,7 @@ const deleteDomain = async () => {
                     >.
                 </li>
             </ul>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
 
         <!--

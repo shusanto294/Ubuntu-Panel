@@ -2,10 +2,12 @@
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import EmailTabs from '@/Components/EmailTabs.vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import RequiredApps from '@/Components/RequiredApps.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { usePagination } from '@/Composables/usePagination';
 import { Head, Link } from '@inertiajs/vue3';
 
 // Every address on the server, with the domain it belongs to — the question
@@ -28,6 +30,10 @@ const busy = computed(
 );
 
 useLiveRefresh(busy, ['mailboxes', 'counts', 'activeTask']);
+
+const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination(
+    () => props.mailboxes,
+);
 </script>
 
 <template>
@@ -93,7 +99,7 @@ useLiveRefresh(busy, ['mailboxes', 'counts', 'activeTask']);
                         </thead>
                         <tbody class="divide-y divide-slate-100 text-sm">
                             <template
-                                v-for="mailbox in mailboxes"
+                                v-for="mailbox in visibleMailboxes"
                                 :key="mailbox.id"
                             >
                                 <tr>
@@ -164,6 +170,7 @@ useLiveRefresh(busy, ['mailboxes', 'counts', 'activeTask']);
                         </tbody>
                     </table>
                 </div>
+                <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
             </div>
         </template>
     </AuthenticatedLayout>

@@ -13,7 +13,6 @@ const props = defineProps({
     metrics: Object,
     history: Object,
     historyRanges: Array,
-    update: Object,
     counts: Object,
     sites: Array,
     activeTask: Object,

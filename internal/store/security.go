@@ -506,3 +506,51 @@ func boolInt(value bool) int {
 	}
 	return 0
 }
+
+// IPCountries are the countries already known for these addresses, as
+// two-letter codes. An address missing from the result has not been looked up
+// in the last month; one mapped to "" was, and could not be placed.
+func (s *Store) IPCountries(ctx context.Context, ips []string) map[string]string {
+	known := map[string]string{}
+	if len(ips) == 0 {
+		return known
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ips)), ",")
+	args := make([]any, 0, len(ips)+1)
+
+	for _, ip := range ips {
+		args = append(args, ip)
+	}
+
+	args = append(args, time.Now().Add(-30*24*time.Hour).Unix())
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ip, country FROM ip_countries WHERE ip IN (`+placeholders+`) AND checked_at >= ?`, args...)
+	if err != nil {
+		return known
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ip, country string
+
+		if rows.Scan(&ip, &country) == nil {
+			known[ip] = country
+		}
+	}
+
+	return known
+}
+
+// SaveIPCountries remembers what a lookup found.
+func (s *Store) SaveIPCountries(ctx context.Context, countries map[string]string) {
+	now := time.Now().Unix()
+
+	for ip, country := range countries {
+		s.db.ExecContext(ctx,
+			`INSERT INTO ip_countries (ip, country, checked_at) VALUES (?, ?, ?)
+			 ON CONFLICT(ip) DO UPDATE SET country = excluded.country, checked_at = excluded.checked_at`,
+			ip, country, now)
+	}
+}

@@ -116,19 +116,35 @@ func parseLogTime(line string, now time.Time) time.Time {
 func ReadEvents(since time.Duration, limit int) []Event {
 	window := int(since.Seconds())
 
+	// Newest first, and stopped at the 5,000th match: `head` closing the pipe
+	// is what ends journalctl, so a week of a machine being guessed at all day
+	// is read as far as the page needs and no further — rather than all of it
+	// to keep the last 5,000, which is what `tail` did.
 	command := fmt.Sprintf(
-		"sudo journalctl -t sshd -t sshd-session --since '-%ds' -o short-iso --no-pager -q 2>/dev/null "+
-			"| grep -E 'Accepted |Failed |Invalid user ' | tail -n 5000", window)
+		"sudo journalctl -r -t sshd -t sshd-session --since '-%ds' -o short-iso --no-pager -q 2>/dev/null "+
+			"| grep -E 'Accepted |Failed |Invalid user ' | head -n 5000", window)
 
 	output := proc.Run(command, time.Minute).Output
 
 	if strings.TrimSpace(output) == "" {
-		output = proc.Run("sudo cat /var/log/auth.log.1 /var/log/auth.log 2>/dev/null "+
-			"| grep -E 'sshd(-session)?\\[' | grep -E 'Accepted |Failed |Invalid user ' | tail -n 5000",
+		output = proc.Run("sudo tac /var/log/auth.log /var/log/auth.log.1 2>/dev/null "+
+			"| grep -E 'sshd(-session)?\\[' | grep -E 'Accepted |Failed |Invalid user ' | head -n 5000",
 			time.Minute).Output
 	}
 
-	return parseEvents(output, time.Now(), since, limit)
+	return parseEvents(oldestFirst(output), time.Now(), since, limit)
+}
+
+// oldestFirst turns the newest-first lines above back into log order, which
+// is the order parseEvents pairs an "Invalid user" line with the one after it.
+func oldestFirst(output string) string {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func parseEvents(output string, now time.Time, since time.Duration, limit int) []Event {

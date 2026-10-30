@@ -246,8 +246,6 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 	// can be right while the domain resolves to nothing — which is what the
 	// browser calls DNS_PROBE_FINISHED_NXDOMAIN and the operator calls a broken
 	// panel.
-	resolution := a.siteResolution(r.Context(), site)
-
 	// What the PHP tab offers, with the site's own value against each and the
 	// value PHP would use where the site has none. Sent together so the form is
 	// one loop and the panel decides what is settable, not the page.
@@ -282,28 +280,35 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 	// one that is not there yet — the panel installs it first — but saying
 	// which is which is the difference between a reload and five minutes of
 	// apt, and the card should not make that a surprise.
-	a.Render.Render(w, r, "Sites/Show", inertia.Props{
-		"certbot":              a.Store.ServiceInstalled("certbot"),
-		"database":             database,
-		"backups":              backups,
-		"backup":               backupSettings,
-		"logFiles":             a.siteLogFiles(site, 200),
-		"resolution":           resolution,
-		"phpDirectives":        directives,
-		"phpVersions":          config.PHPVersions,
-		"installedPhpVersions": system.InstalledPHPVersions(),
-		"defaultPhpVersion":    a.Store.PHPVersion(),
-		"accessUsers":          a.Sites.AccessUsers(site),
-		"cache":                a.cacheSummary(site),
-		"staging":              a.stagingProps(r.Context(), site),
-		"git":                  a.gitProps(r.Context(), site),
-		"cronJobs":             a.Sites.CronJobs(site),
-		"certificate":          a.certificateSummary(site),
-		"site":                 site.Summary(true),
-		"logs":                 logs,
-		"activeTask":           a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
-		"latestTask":           a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
-	})
+	props := inertia.Props{
+		"certbot":           a.Store.ServiceInstalled("certbot"),
+		"database":          database,
+		"backups":           backups,
+		"backup":            backupSettings,
+		"phpDirectives":     directives,
+		"phpVersions":       config.PHPVersions,
+		"defaultPhpVersion": a.Store.PHPVersion(),
+		"cache":             a.cacheSummary(site),
+		"site":              site.Summary(true),
+		"logs":              logs,
+		"activeTask":        a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
+		"latestTask":        a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
+	}
+
+	// The parts that ask the machine or the internet: log tails, the
+	// certificate, cron, the site's users, DNS. Lazy, so they are asked at once
+	// rather than one after another, and not at all by the reload the page
+	// does every few seconds while something is running, which never shows them.
+	props["logFiles"] = inertia.Lazy(func() any { return a.siteLogFiles(site, 200) })
+	props["resolution"] = inertia.Lazy(func() any { return a.siteResolution(r.Context(), site) })
+	props["installedPhpVersions"] = inertia.Lazy(func() any { return system.InstalledPHPVersions() })
+	props["accessUsers"] = inertia.Lazy(func() any { return a.Sites.AccessUsers(site) })
+	props["staging"] = inertia.Lazy(func() any { return a.stagingProps(r.Context(), site) })
+	props["git"] = inertia.Lazy(func() any { return a.gitProps(r.Context(), site) })
+	props["cronJobs"] = inertia.Lazy(func() any { return a.Sites.CronJobs(site) })
+	props["certificate"] = inertia.Lazy(func() any { return a.certificateSummary(site) })
+
+	a.Render.Render(w, r, "Sites/Show", props)
 }
 
 func (a *App) sitesDestroy(w http.ResponseWriter, r *http.Request) {

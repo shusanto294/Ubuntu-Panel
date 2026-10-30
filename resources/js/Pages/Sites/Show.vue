@@ -1,12 +1,14 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import FileIcon from '@/Components/FileIcon.vue';
 import FolderTree from '@/Components/FolderTree.vue';
 import TaskProgress from '@/Components/TaskProgress.vue';
 import SiteStaging from '@/Components/SiteStaging.vue';
 import SiteGit from '@/Components/SiteGit.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { formatRelative } from '@/time';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
@@ -323,6 +325,19 @@ const loadFiles = async (where = '/') => {
         filesLoading.value = false;
     }
 };
+
+const {
+    page: filePage,
+    pages: filePages,
+    total: fileTotal,
+    perPage: filePerPage,
+    visible: visibleEntries,
+} = usePagination(() => files.value.entries, 50);
+
+watch(
+    () => files.value.path,
+    () => (filePage.value = 1),
+);
 
 // ---- The folder tree.
 //
@@ -717,6 +732,14 @@ const shownLog = computed(() =>
     props.logFiles.find((file) => file.key === logView.value),
 );
 
+const {
+    page: logPage,
+    pages: logPages,
+    total: logTotal,
+    perPage: logPerPage,
+    visible: visibleLogs,
+} = usePagination(() => props.logs);
+
 watch(tab, (value) => {
     if (value === 'files' && !files.value.entries.length) loadFiles('/');
 });
@@ -880,6 +903,14 @@ const backupContents = (entry) => {
 
     return parts.length ? parts.join(' + ') : 'nothing';
 };
+
+const {
+    page: backupPage,
+    pages: backupPages,
+    total: backupTotal,
+    perPage: backupPerPage,
+    visible: visibleBackups,
+} = usePagination(() => props.backups, 10);
 
 onMounted(() => {
     refetch();
@@ -2318,7 +2349,7 @@ const destroy = async () => {
                 <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
                     <ul class="divide-y divide-slate-100">
                         <li
-                            v-for="entry in backups"
+                            v-for="entry in visibleBackups"
                             :key="entry.id"
                             class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                         >
@@ -2371,6 +2402,12 @@ const destroy = async () => {
                             queue — you can leave this page.
                         </li>
                     </ul>
+                    <Pagination
+                        v-model="backupPage"
+                        :pages="backupPages"
+                        :total="backupTotal"
+                        :per-page="backupPerPage"
+                    />
                 </div>
             </div>
 
@@ -2739,7 +2776,7 @@ const destroy = async () => {
                             </td>
                         </tr>
                         <tr
-                            v-for="(entry, index) in files.entries"
+                            v-for="(entry, index) in visibleEntries"
                             :key="entry.path"
                             @click="selectEntry(entry, $event)"
                             @dblclick="openEntry(entry)"
@@ -2793,6 +2830,13 @@ const destroy = async () => {
                         </tr>
                     </tbody>
                     </table>
+                    <Pagination
+                        v-if="!filesLoading"
+                        v-model="filePage"
+                        :pages="filePages"
+                        :total="fileTotal"
+                        :per-page="filePerPage"
+                    />
                 </div>
             </div>
 
@@ -2928,7 +2972,7 @@ const destroy = async () => {
                     <h3 class="font-semibold text-slate-800">Activity log</h3>
                 </div>
                 <ul class="divide-y divide-slate-100">
-                    <li v-for="log in logs" :key="log.id">
+                    <li v-for="log in visibleLogs" :key="log.id">
                         <!-- The output itself is on the log's own page now, so this
                              stays a list of what happened rather than a place a
                              thousand lines of npm can unfold in. -->
@@ -2959,6 +3003,12 @@ const destroy = async () => {
                         Nothing logged yet.
                     </li>
                 </ul>
+                <Pagination
+                    v-model="logPage"
+                    :pages="logPages"
+                    :total="logTotal"
+                    :per-page="logPerPage"
+                />
             </div>
         </div>
 

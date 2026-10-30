@@ -1,6 +1,9 @@
 <script setup>
 import InputError from '@/Components/InputError.vue';
+import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { confirmAction, confirmDanger } from '@/dialog';
 import { card, field, smallButton } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
@@ -11,6 +14,8 @@ const props = defineProps({
     panelPort: Number,
     myIp: String,
 });
+
+const { page, pages, total, perPage, visible: visibleRules } = usePagination(() => props.firewall.rules, 25);
 
 const enable = async () => {
     const ports = (props.sshPorts?.length ? props.sshPorts : ['22']).join(', ');
@@ -117,7 +122,7 @@ const actionStyle = {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <tr v-for="rule in firewall.rules" :key="rule.number">
+                        <tr v-for="rule in visibleRules" :key="rule.number">
                             <td class="px-6 py-2 text-slate-400">{{ rule.number }}</td>
                             <td class="px-2 py-2 font-mono">{{ rule.to }}</td>
                             <td class="px-2 py-2">
@@ -125,7 +130,7 @@ const actionStyle = {
                                     {{ rule.action }} {{ rule.direction }}
                                 </span>
                             </td>
-                            <td class="px-2 py-2 font-mono text-slate-600">{{ rule.from }}</td>
+                            <td class="px-2 py-2 text-slate-600"><IpAddress :ip="rule.from" /></td>
                             <td class="hidden px-2 py-2 text-slate-500 sm:table-cell">{{ rule.comment }}</td>
                             <td class="px-4 py-2 text-right">
                                 <button type="button" :class="smallButton" class="text-rose-600" @click="removeRule(rule)">Remove</button>
@@ -136,6 +141,7 @@ const actionStyle = {
                         </tr>
                     </tbody>
                 </table>
+                <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
             </div>
 
             <div class="space-y-6">

@@ -28,9 +28,16 @@ type SSHUser struct {
 	Password bool     `json:"has_password"`
 	Keys     []SSHKey `json:"keys"`
 
-	// Protected accounts are shown but not changed from the panel: root, and
-	// the account the panel itself runs as. Locking either is a way to lose
-	// the machine or the panel.
+	// Why it is locked, when it is: a locked password still lets a key in,
+	// which is how Ubuntu ships root; an expired account lets nothing in,
+	// which is how the panel locks one.
+	PasswordLocked bool `json:"password_locked"`
+	Expired        bool `json:"expired"`
+
+	// Protected accounts are shown but not deleted, locked or demoted from the
+	// panel: root, and the account the panel and its terminal run as. Losing
+	// either is a way to lose the machine or the panel. Root can still be
+	// given a password and unlocked, which only ever opens a way back in.
 	Protected bool   `json:"protected"`
 	Reason    string `json:"protected_reason"`
 }
@@ -56,12 +63,18 @@ var (
 // is safe on a command line unquoted.
 func ValidUsername(name string) bool { return usernamePattern.MatchString(name) }
 
-// ReadUsers lists the accounts that have a login shell: root and every user
-// from uid 1000 up. One sudo for all of it, because a machine can have dozens.
+// ReadUsers lists the accounts that have a login shell: root, every user from
+// uid 1000 up, and the panel's own account — a system account below 1000, but
+// the one the built-in terminal opens as, so the one people go looking for.
+// One sudo for all of it, because a machine can have dozens.
 func ReadUsers(panelUser string) []SSHUser {
+	if !ValidUsername(panelUser) {
+		panelUser = ""
+	}
+
 	script := `getent passwd | while IFS=: read -r name _ uid _ _ home shell; do
   case "$shell" in */nologin|*/false|"") continue;; esac
-  if [ "$uid" -ne 0 ] && [ "$uid" -lt 1000 ]; then continue; fi
+  if [ "$uid" -ne 0 ] && [ "$uid" -lt 1000 ] && [ "$name" != "` + panelUser + `" ]; then continue; fi
   [ "$uid" -ge 65534 ] && continue
   echo "@@user $name $uid $home $shell"
   echo "@@groups $(id -nG "$name" 2>/dev/null)"
@@ -98,9 +111,11 @@ func parseUsers(output, panelUser string) []SSHUser {
 
 			switch {
 			case current.UID == 0:
-				current.Protected, current.Reason = true, "root is managed from SSH settings, not here."
+				current.Protected, current.Reason = true, "root cannot be locked or deleted from here. "+
+					"Whether it may log in over SSH is under SSH settings."
 			case current.Name == panelUser:
-				current.Protected, current.Reason = true, "The panel runs as this account."
+				current.Protected, current.Reason = true, "The panel and its built-in terminal run as "+
+					"this account, so it cannot be locked or deleted from here."
 			}
 
 		case "@@groups":
@@ -128,16 +143,18 @@ func parseUsers(output, panelUser string) []SSHUser {
 			if len(fields) > 0 {
 				// passwd -S: P has a password, L is locked, NP has none.
 				current.Password = fields[0] == "P"
-				current.Locked = fields[0] == "L"
+				current.PasswordLocked = fields[0] == "L"
 			}
 
 			// An account expired in the past is refused even with a key,
 			// which is how the panel locks one.
 			if len(fields) > 1 && fields[1] != "never" {
 				if expires, err := time.Parse("Jan_02,_2006", fields[1]); err == nil && expires.Before(time.Now()) {
-					current.Locked = true
+					current.Expired = true
 				}
 			}
+
+			current.Locked = current.PasswordLocked || current.Expired
 
 		case "@@key":
 			if current == nil {
@@ -214,6 +231,21 @@ func findUser(name, panelUser string) (SSHUser, error) {
 	}
 
 	return SSHUser{}, errors.New("there is no such login account")
+}
+
+// unlockable is editable, and root as well: setting root's password or
+// unlocking it adds a way in rather than taking one away.
+func unlockable(name, panelUser string) (SSHUser, error) {
+	user, err := findUser(name, panelUser)
+	if err != nil {
+		return user, err
+	}
+
+	if user.Protected && user.UID != 0 {
+		return user, errors.New(user.Reason)
+	}
+
+	return user, nil
 }
 
 func editable(name, panelUser string) (SSHUser, error) {
@@ -300,7 +332,7 @@ func CreateUser(user NewUser) error {
 // line where `ps` would show it.
 func SetPassword(name, password, panelUser string) error {
 	if panelUser != "" {
-		if _, err := editable(name, panelUser); err != nil {
+		if _, err := unlockable(name, panelUser); err != nil {
 			return err
 		}
 	}
@@ -352,6 +384,10 @@ func SetSudo(name string, enabled bool, panelUser string) error {
 // lets it back in. A locked password alone would still let a key through, so
 // the account is also expired, which sshd refuses whatever the method.
 func SetLocked(name string, locked bool, panelUser string) error {
+	if !locked {
+		return unlock(name, panelUser)
+	}
+
 	if _, err := editable(name, panelUser); err != nil {
 		return err
 	}
@@ -359,12 +395,38 @@ func SetLocked(name string, locked bool, panelUser string) error {
 	command := "sudo usermod -L " + name + " && sudo chage -E 0 " + name +
 		" && sudo pkill -KILL -u " + name + " 2>/dev/null; true"
 
-	if !locked {
-		command = "sudo chage -E -1 " + name + " && (sudo usermod -U " + name + " 2>/dev/null || true)"
-	}
-
 	if result := proc.Run(command, time.Minute); !result.OK() {
 		return fmt.Errorf("could not change the account: %s", lastLines(result.Output, 3))
+	}
+
+	return nil
+}
+
+// unlock lifts the expiry and the password lock. usermod will not unlock a
+// password that is only the lock — that would leave an account anybody can
+// log in to without one — so for an account with no password underneath,
+// which is root on a fresh Ubuntu, the way to unlock it is to give it one.
+func unlock(name, panelUser string) error {
+	user, err := unlockable(name, panelUser)
+	if err != nil {
+		return err
+	}
+
+	if result := proc.Run("sudo chage -E -1 "+name+" && (sudo usermod -U "+name+" 2>/dev/null || true)",
+		time.Minute); !result.OK() {
+		return fmt.Errorf("could not change the account: %s", lastLines(result.Output, 3))
+	}
+
+	// Anybody else locked by the panel was locked by expiry, which is lifted
+	// now, so their keys work whatever the password says.
+	if user.UID != 0 {
+		return nil
+	}
+
+	status := strings.Fields(proc.Run("sudo passwd -S root", 30*time.Second).Output)
+	if len(status) > 1 && status[1] == "L" {
+		return errors.New("root has no password underneath the lock, so there is nothing to " +
+			"unlock. Set a password for it below — that unlocks it.")
 	}
 
 	return nil

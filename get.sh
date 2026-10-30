@@ -86,6 +86,42 @@ die()  { printf '\n%s!! %s%s\n' "$RED" "$*" "$RESET" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || die "curl is required and is not installed."
 command -v tar  >/dev/null 2>&1 || die "tar is required and is not installed."
 
+# ------------------------------------------------- not from inside the panel
+
+# The panel's own terminal is a process of the panel's service, and so is
+# everything typed into it — this script included. The installer stops that
+# service to swap the binary, systemd stops every process in it, and the
+# update dies with the panel it had just stopped and never starts it again.
+# So from in there, start again in a unit of its own, which is what the
+# panel's Update button does, and follow its log until the panel goes away.
+if grep -qE '/ubuntu-panel\.service(/|$)' /proc/self/cgroup 2>/dev/null; then
+    command -v systemd-run >/dev/null 2>&1 \
+        || die "This is the panel's own terminal, which the update would kill. Run it over SSH instead."
+
+    passed=(--setenv=PANEL_VERSION="$PANEL_VERSION" --setenv=PANEL_FROM_SOURCE="$PANEL_FROM_SOURCE"
+        --setenv=PANEL_KEEP_DOWNLOAD="$PANEL_KEEP_DOWNLOAD" --setenv=PANEL_REPO="$REPO")
+    while IFS= read -r variable; do
+        case "$variable" in
+            PANEL_VERSION=*|PANEL_FROM_SOURCE=*|PANEL_KEEP_DOWNLOAD=*|PANEL_REPO=*) ;;
+            PANEL_*=*|NO_COLOR=*) passed+=(--setenv="$variable") ;;
+        esac
+    done < <(env)
+
+    systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1 || true
+    systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect \
+        "${passed[@]}" /bin/bash -c "curl -fsSL https://raw.githubusercontent.com/$REPO/main/get.sh | bash" \
+        >/dev/null || die "Could not start the update outside the panel. Run it over SSH instead."
+
+    printf '\n%s==> Updating outside the panel%s\n\n' "$BOLD" "$RESET"
+    info "This terminal is part of the panel, and the update restarts the panel."
+    info "It is running in its own service instead; this terminal will disconnect"
+    info "when the panel restarts. Reload the page in a minute or two."
+    info "Progress: journalctl -u ubuntu-panel-update   Log: /var/log/ubuntu-panel/install.log"
+    printf '\n'
+
+    exec journalctl -u ubuntu-panel-update -f -n 50 --no-hostname -o cat
+fi
+
 printf '\n%s==> Ubuntu Panel%s\n\n' "$BOLD" "$RESET"
 
 # ------------------------------------------------------------ architecture

@@ -164,57 +164,128 @@ func (a *App) EnsureSSHProtection(ctx context.Context) {
 
 // ---------------------------------------------------------------- snapshot
 
-// securitySnapshot is everything the dashboard tile and the checks need, kept
-// for a minute: reading it is a dozen sudo commands and a journal query, and
-// the dashboard is the page people leave open.
+// securitySnapshot is everything the dashboard tile and the checks need. Reading
+// it is half a dozen sudo commands and a journal query — seconds, on a machine
+// that is being guessed at all day — so no page waits for it once there is one:
+// a page gets the copy there is, and a copy older than a minute is replaced in
+// the background for the page after.
 type securitySnapshot struct {
 	Jail     security.JailStatus
 	SSH      security.SSHState
 	Firewall security.Firewall
 	Updates  security.Updates
 	Events   []security.Event
+	Users    []security.SSHUser
 	Taken    time.Time
 }
 
 type snapshotCache struct {
 	sync.Mutex
 	value *securitySnapshot
+
+	// generation moves on every forget, so a background read that started
+	// before something changed cannot put its out-of-date answer back.
+	generation int
+	refreshing bool
+
+	// reading serialises the reads themselves: two pages arriving at a cold
+	// cache share one read rather than running two.
+	reading sync.Mutex
 }
 
 var securityCache snapshotCache
 
 // forget drops the cached snapshot, after anything that changes what it says.
+// The next page reads afresh and waits for it, because it is the page that
+// should show the change.
 func (c *snapshotCache) forget() {
 	c.Lock()
 	c.value = nil
+	c.generation++
 	c.Unlock()
 }
 
 func (a *App) snapshot(fresh bool) *securitySnapshot {
 	securityCache.Lock()
-	defer securityCache.Unlock()
+	current, generation := securityCache.value, securityCache.generation
 
-	if !fresh && securityCache.value != nil && time.Since(securityCache.value.Taken) < time.Minute {
-		return securityCache.value
+	if !fresh && current != nil {
+		if time.Since(current.Taken) >= time.Minute && !securityCache.refreshing {
+			securityCache.refreshing = true
+
+			go func() {
+				snapshot := a.readSnapshot()
+
+				securityCache.Lock()
+				if securityCache.generation == generation {
+					securityCache.value = snapshot
+				}
+				securityCache.refreshing = false
+				securityCache.Unlock()
+			}()
+		}
+
+		securityCache.Unlock()
+
+		return current
 	}
 
+	securityCache.Unlock()
+
+	securityCache.reading.Lock()
+	defer securityCache.reading.Unlock()
+
+	// Somebody else may have finished a read while this one waited for it.
+	started := time.Now()
+
+	securityCache.Lock()
+	if !fresh && securityCache.value != nil {
+		current := securityCache.value
+		securityCache.Unlock()
+
+		return current
+	}
+	securityCache.Unlock()
+
+	snapshot := a.readSnapshot()
+
+	securityCache.Lock()
+	if securityCache.value == nil || securityCache.value.Taken.Before(started) {
+		securityCache.value = snapshot
+	}
+	securityCache.Unlock()
+
+	return snapshot
+}
+
+// readSnapshot asks the machine. The parts are independent and each a few
+// hundred milliseconds of sudo, so they are asked at once.
+func (a *App) readSnapshot() *securitySnapshot {
 	var (
 		wait     sync.WaitGroup
 		snapshot = &securitySnapshot{Taken: time.Now()}
 	)
 
-	// Independent and each a few hundred milliseconds of sudo, so at once.
-	wait.Add(5)
+	wait.Add(6)
 	go func() { defer wait.Done(); snapshot.Jail = security.Status() }()
 	go func() { defer wait.Done(); snapshot.SSH = security.ReadSSH() }()
 	go func() { defer wait.Done(); snapshot.Firewall = security.ReadFirewall() }()
 	go func() { defer wait.Done(); snapshot.Updates = security.ReadUpdates() }()
 	go func() { defer wait.Done(); snapshot.Events = security.ReadEvents(7*24*time.Hour, 1000) }()
+	go func() { defer wait.Done(); snapshot.Users = security.ReadUsers(a.Config.SystemUser) }()
 	wait.Wait()
 
-	securityCache.value = snapshot
-
 	return snapshot
+}
+
+// warmSecurity reads the snapshot once shortly after start, so the first
+// dashboard after a restart or an update does not pay for it.
+func (a *App) warmSecurity(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(20 * time.Second):
+		a.snapshot(false)
+	}
 }
 
 // check is one line of the security checklist.
@@ -392,6 +463,46 @@ func eventsSince(events []security.Event, window time.Duration) []security.Event
 	return recent
 }
 
+// sshEventsSetting is when sshd's log was last copied into the panel.
+const sshEventsSetting = "ssh_events_recorded_at"
+
+// recordSSHEvents copies the SSH logins and attempts since the last copy out of
+// sshd's log and into the panel's own table, which the Logs page reads and
+// which outlives the journal's rotation. A week back the first time — as far
+// as the Security page ever reads — and then only the minutes since, with two
+// minutes of overlap so a line written as the last copy ran is not missed. The
+// table ignores what it already has.
+func (a *App) recordSSHEvents(ctx context.Context) {
+	defer func() {
+		if problem := recover(); problem != nil {
+			a.Log.Error("copying the SSH log panicked", "panic", problem)
+		}
+	}()
+
+	now := time.Now()
+	window := 7 * 24 * time.Hour
+
+	if last, err := strconv.ParseInt(a.Store.Setting(sshEventsSetting, ""), 10, 64); err == nil && last > 0 {
+		if since := now.Sub(time.Unix(last, 0)) + 2*time.Minute; since < window {
+			window = since
+		}
+	}
+
+	events := security.ReadEvents(window, 0)
+	kept := make([]store.SSHEvent, 0, len(events))
+
+	for _, event := range events {
+		kept = append(kept, store.SSHEvent{
+			Kind: event.Kind, User: event.User, IP: event.IP, Method: event.Method,
+			CreatedAt: event.Time.Unix(),
+		})
+	}
+
+	a.Store.RecordSSHEvents(ctx, kept)
+	a.Store.PruneSSHEvents(ctx, loginHistory)
+	a.Store.SetSetting(sshEventsSetting, strconv.FormatInt(now.Unix(), 10))
+}
+
 // ------------------------------------------------------------------- page
 
 func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
@@ -443,7 +554,7 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		},
 		"hardening":  snap.SSH,
 		"sshService": a.sshServiceProps(snap.SSH.Service),
-		"users":      a.sshUsers(snap.Events),
+		"users":      a.sshUsers(snap),
 		"firewall":   snap.Firewall,
 		"panelPort":  a.panelPort(),
 		"updates":    snap.Updates,
@@ -464,6 +575,59 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		"latestTask": a.Store.TaskConsole(r.Context(),
 			a.Store.RecentTaskID(r.Context(), "security", securityTaskActions, store.RecentTaskWindow), 0),
 	})
+}
+
+// countryLookup keeps two pages from asking the lookup service about the same
+// addresses at once, which would spend its rate limit twice for one answer.
+var countryLookup sync.Mutex
+
+// securityCountries is where the addresses on the Security page are, for the
+// flags beside them. Asked for by the browser after the page is up rather than
+// worked out while rendering it, so a slow lookup costs a flag, not the page.
+func (a *App) securityCountries(w http.ResponseWriter, r *http.Request) {
+	asked := []string{}
+	seen := map[string]bool{}
+
+	for _, address := range strings.Split(r.URL.Query().Get("ips"), ",") {
+		address = strings.TrimSpace(address)
+		if security.ValidIP(address) && !seen[address] && len(asked) < 200 {
+			seen[address] = true
+			asked = append(asked, address)
+		}
+	}
+
+	countryLookup.Lock()
+	defer countryLookup.Unlock()
+
+	countries := a.Store.IPCountries(r.Context(), asked)
+
+	missing := []string{}
+	for _, address := range asked {
+		if _, known := countries[address]; known {
+			continue
+		}
+
+		if security.Placeable(address) {
+			missing = append(missing, address)
+		} else {
+			countries[address] = ""
+		}
+	}
+
+	if len(missing) > 0 {
+		found, err := security.LookupCountries(missing)
+		if err != nil {
+			a.Log.Warn("could not look up where addresses are", "error", err)
+		} else {
+			a.Store.SaveIPCountries(r.Context(), found)
+
+			for address, country := range found {
+				countries[address] = country
+			}
+		}
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"countries": countries})
 }
 
 // securityBack returns to the Security page with the cache dropped, so what

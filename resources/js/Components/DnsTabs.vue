@@ -12,9 +12,11 @@ defineProps({
     counts: { type: Object, default: () => ({ providers: 0, zones: 0 }) },
 });
 
+// This server first: hosting a domain's records here is the panel's default,
+// and a provider is the alternative for anybody who would rather.
 const tabs = [
-    { key: 'providers', name: 'Providers', route: 'dns.index' },
     { key: 'nameserver', name: 'This server', route: 'dns.nameserver' },
+    { key: 'providers', name: 'Providers', route: 'dns.index' },
 ];
 </script>
 

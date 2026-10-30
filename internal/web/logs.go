@@ -7,7 +7,9 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 )
 
-// logsIndex is every task the panel has run, newest first.
+// logsIndex is everything that has happened to the panel and the machine,
+// newest first: the tasks the panel ran, every sign-in to the panel, and every
+// SSH login — with failed SSH attempts under their own filter.
 func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 	const perPage = 25
 
@@ -18,57 +20,31 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 
-	// Read one page's worth plus everything before it, then slice: the table
-	// is small — one row per deployment — and paging it in SQL would be a
-	// second query for the count.
-	all, err := a.Store.RecentTasks(r.Context(), 1000)
+	entries, total, err := a.Store.Timeline(r.Context(), kind, perPage, (page-1)*perPage)
 	if err != nil {
 		a.serverError(w, r, "could not read the logs", err)
 		return
 	}
 
-	filtered := make([]map[string]any, 0, len(all))
-
-	for _, task := range all {
-		if kind != "" && task.Type != kind {
-			continue
-		}
-
-		filtered = append(filtered, map[string]any{
-			"id":          task.ID,
-			"type":        task.Type,
-			"action":      task.Action,
-			"status":      task.Status,
-			"message":     task.Message,
-			"progress":    task.Progress,
-			"started_at":  task.StartedAt,
-			"finished_at": task.FinishedAt,
-			"created_at":  task.CreatedAt,
-		})
-	}
-
-	total := len(filtered)
 	pages := (total + perPage - 1) / perPage
-
 	if pages < 1 {
 		pages = 1
 	}
+
+	// Past the end — a filter that has fewer pages than the one being read —
+	// shows the last page rather than an empty one.
 	if page > pages {
 		page = pages
-	}
 
-	start := (page - 1) * perPage
-	end := start + perPage
-
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
+		entries, _, err = a.Store.Timeline(r.Context(), kind, perPage, (page-1)*perPage)
+		if err != nil {
+			a.serverError(w, r, "could not read the logs", err)
+			return
+		}
 	}
 
 	a.Render.Render(w, r, "Logs/Index", inertia.Props{
-		"logs": filtered[start:end],
+		"logs": entries,
 		"pagination": map[string]any{
 			"page":  page,
 			"pages": pages,

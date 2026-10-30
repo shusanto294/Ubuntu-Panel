@@ -3,6 +3,7 @@ package databases
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,89 @@ const (
 	MongoSecret = "mongo_root_password"
 	MongoPort   = 27017
 )
+
+// The server-wide account people connect with — Compass on a desktop, a backup
+// tool — and where its name and password are kept.
+//
+// Kept apart from MongoAdmin on purpose. The panel logs in as MongoAdmin to do
+// everything it does to MongoDB, so renaming that account or changing its
+// password from a form is one failed step away from a panel that can no longer
+// create a database. This one can be renamed and changed freely: nothing the
+// panel does depends on it. Until somebody sets it, Compass is given
+// MongoAdmin, which is how it always worked.
+const (
+	MongoAccountSetting = "mongo_compass_user"
+	MongoAccountSecret  = "mongo_compass_password"
+)
+
+var mongoAccountPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{2,63}$`)
+
+// ValidMongoAccountName is a name safe to put in a mongosh script unquoted,
+// and not the panel's own account, which this form must never touch.
+func ValidMongoAccountName(name string) bool {
+	return mongoAccountPattern.MatchString(name) && !strings.EqualFold(name, MongoAdmin)
+}
+
+// MongoAccount is the server-wide account and its password: the one set from
+// the Databases page, or the panel's own when none has been. `own` says which.
+func MongoAccount(st *store.Store) (username, password string, own bool) {
+	if name := st.Setting(MongoAccountSetting, ""); name != "" {
+		if secret := st.SecretSetting(MongoAccountSecret); secret != "" {
+			return name, secret, true
+		}
+	}
+
+	return MongoAdmin, st.SecretSetting(MongoSecret), false
+}
+
+// SetMongoAccount creates the server-wide account, or renames it or changes
+// its password. It is a root account in admin, so it sees every database.
+//
+// The order matters: the new account is made and works before the panel
+// remembers it, and the old one is only dropped after that — so a step that
+// fails leaves the previous string working rather than none.
+func SetMongoAccount(st *store.Store, username, password string) error {
+	if !ValidMongoAccountName(username) {
+		return errors.New("use 3 to 64 letters, digits, dots, dashes or underscores, " +
+			"starting with a letter — and not " + MongoAdmin + ", which is the panel's own")
+	}
+
+	prelude := mongoPrelude(st)
+	if prelude == "" {
+		return errors.New("the panel has not set up MongoDB's administrator yet; " +
+			"that happens the first time a MongoDB database is created")
+	}
+
+	script := prelude + fmt.Sprintf(`const admin = db.getSiblingDB("admin");
+const roles = [{role: "root", db: "admin"}];
+if (admin.getUser("%[1]s")) {
+  admin.updateUser("%[1]s", {pwd: %[2]s, roles: roles});
+} else {
+  admin.createUser({user: "%[1]s", pwd: %[2]s, roles: roles});
+}
+`, username, jsQuote(password))
+
+	if result := mongoRun(script, time.Minute); !result.OK() {
+		return fmt.Errorf("MongoDB refused the account: %s", strings.TrimSpace(result.Output))
+	}
+
+	previous := st.Setting(MongoAccountSetting, "")
+
+	if err := st.SetSecretSetting(MongoAccountSecret, password); err != nil {
+		return errors.New("MongoDB has the account, but the panel could not store its password")
+	}
+
+	if err := st.SetSetting(MongoAccountSetting, username); err != nil {
+		return errors.New("MongoDB has the account, but the panel could not store its name")
+	}
+
+	if previous != "" && previous != username && ValidMongoAccountName(previous) {
+		mongoRun(prelude+fmt.Sprintf(`db.getSiblingDB("admin").dropUser("%s");`+"\n", previous),
+			time.Minute)
+	}
+
+	return nil
+}
 
 // mongoConf is the config file the packages ship.
 const mongoConf = "/etc/mongod.conf"

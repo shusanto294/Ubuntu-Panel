@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import IpAddress from '@/Components/IpAddress.vue';
+import { browser } from '@/Components/Security/ui';
 import { useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { formatDuration, formatRelative, formatStamp } from '@/time';
 import { Head, Link } from '@inertiajs/vue3';
@@ -18,9 +20,29 @@ const FILTERS = [
     { key: 'database', label: 'Databases' },
     { key: 'mail', label: 'Email' },
     { key: 'mcp', label: 'AI' },
+    { key: 'panel-login', label: 'Panel sign-ins' },
+    { key: 'ssh', label: 'SSH' },
 ];
 
-const anyRunning = computed(() => props.logs.some((log) => log.status === 'running'));
+const reasonLabel = {
+    password: 'password',
+    two_factor: 'two-factor code',
+    recovery: 'recovery code',
+    locked: 'locked out',
+};
+
+// Tasks carry a UTC text stamp; sign-ins and SSH events carry Unix seconds.
+const stampOf = (entry) =>
+    entry.task?.created_at ?? entry.login?.created_at ?? entry.ssh?.created_at;
+
+const sshTitle = (event) =>
+    ({
+        accepted: 'SSH login',
+        failed: 'SSH: wrong password or key',
+        invalid: 'SSH: unknown user',
+    })[event.kind] ?? 'SSH attempt';
+
+const anyRunning = computed(() => props.logs.some((entry) => entry.task?.status === 'running'));
 
 useLiveRefresh(anyRunning, ['logs', 'pagination']);
 
@@ -63,7 +85,7 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
             <div>
                 <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
                 <p class="text-sm text-slate-500">
-                    Everything the panel has run, newest first
+                    What the panel ran, every sign-in to it, and every SSH login, newest first
                     <span v-if="pagination.total">· {{ pagination.total }} in total</span>
                 </p>
             </div>
@@ -86,9 +108,15 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
             </Link>
         </div>
 
+        <p v-if="!type" class="-mt-3 mb-4 text-xs text-slate-500">
+            Failed SSH attempts are left out of this view, because there can be thousands
+            a day. They are all under
+            <Link :href="filterHref('ssh')" class="font-medium text-brand-600 hover:underline">SSH</Link>.
+        </p>
+
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div v-if="!logs.length" class="px-5 py-12 text-center text-sm text-slate-500">
-                Nothing has run yet.
+                Nothing recorded here yet.
             </div>
 
             <div v-else class="overflow-x-auto">
@@ -100,54 +128,121 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
                             <th class="px-5 py-3">When</th>
                             <th class="px-5 py-3">What</th>
                             <th class="px-5 py-3">Result</th>
-                            <th class="px-5 py-3">Took</th>
+                            <th class="px-5 py-3">Details</th>
                             <th class="px-5 py-3"></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr
-                            v-for="log in logs"
-                            :key="log.id"
+                            v-for="entry in logs"
+                            :key="`${entry.source}-${(entry.task ?? entry.login ?? entry.ssh).id}`"
                             class="text-sm transition hover:bg-slate-50"
                         >
                             <td class="whitespace-nowrap px-5 py-3 align-top">
-                                <p class="text-slate-900">{{ formatStamp(log.created_at) }}</p>
+                                <p class="text-slate-900">{{ formatStamp(stampOf(entry)) }}</p>
                                 <p class="text-xs text-slate-400">
-                                    {{ formatRelative(log.created_at) }}
+                                    {{ formatRelative(stampOf(entry)) }}
                                 </p>
                             </td>
-                            <td class="px-5 py-3 align-top">
-                                <p class="font-medium text-slate-900">{{ log.action }}</p>
-                                <p class="max-w-md truncate text-xs text-slate-500">
-                                    {{ log.message }}
-                                </p>
-                            </td>
-                            <td class="whitespace-nowrap px-5 py-3 align-top">
-                                <span
-                                    class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
-                                    :class="statusClass(log.status)"
-                                >
-                                    {{ log.status }}
-                                </span>
-                                <span
-                                    v-if="log.status === 'running'"
-                                    class="ml-2 text-xs text-slate-500"
-                                    >{{ log.progress }}%</span
-                                >
-                            </td>
-                            <td
-                                class="whitespace-nowrap px-5 py-3 align-top text-xs text-slate-500"
-                            >
-                                {{ formatDuration(log.started_at, log.finished_at) || '—' }}
-                            </td>
-                            <td class="whitespace-nowrap px-5 py-3 text-right align-top">
-                                <Link
-                                    :href="route('logs.show', log.id)"
-                                    class="text-xs font-medium text-brand-600 hover:underline"
-                                >
-                                    Open
-                                </Link>
-                            </td>
+
+                            <!-- A task the panel ran. -->
+                            <template v-if="entry.task">
+                                <td class="px-5 py-3 align-top">
+                                    <p class="font-medium text-slate-900">{{ entry.task.action }}</p>
+                                    <p class="max-w-md truncate text-xs text-slate-500">
+                                        {{ entry.task.message }}
+                                    </p>
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 align-top">
+                                    <span
+                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
+                                        :class="statusClass(entry.task.status)"
+                                    >
+                                        {{ entry.task.status }}
+                                    </span>
+                                    <span
+                                        v-if="entry.task.status === 'running'"
+                                        class="ml-2 text-xs text-slate-500"
+                                        >{{ entry.task.progress }}%</span
+                                    >
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 align-top text-xs text-slate-500">
+                                    {{
+                                        formatDuration(entry.task.started_at, entry.task.finished_at)
+                                            ? `Took ${formatDuration(entry.task.started_at, entry.task.finished_at)}`
+                                            : '—'
+                                    }}
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
+                                    <Link
+                                        :href="route('logs.show', entry.task.id)"
+                                        class="text-xs font-medium text-brand-600 hover:underline"
+                                    >
+                                        Open
+                                    </Link>
+                                </td>
+                            </template>
+
+                            <!-- A sign-in to this panel, right or wrong. -->
+                            <template v-else-if="entry.login">
+                                <td class="px-5 py-3 align-top">
+                                    <p class="font-medium text-slate-900">Panel sign-in</p>
+                                    <p class="max-w-md truncate text-xs text-slate-500">
+                                        {{ entry.login.email || 'no email typed' }} ·
+                                        {{ reasonLabel[entry.login.reason] ?? entry.login.reason }}
+                                    </p>
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 align-top">
+                                    <span
+                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
+                                        :class="statusClass(entry.login.success ? 'success' : 'failed')"
+                                    >
+                                        {{ entry.login.success ? 'signed in' : 'refused' }}
+                                    </span>
+                                </td>
+                                <td class="px-5 py-3 align-top text-xs text-slate-500">
+                                    <IpAddress :ip="entry.login.ip" class="text-slate-700" />
+                                    <p :title="entry.login.user_agent">{{ browser(entry.login.user_agent) }}</p>
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
+                                    <Link
+                                        :href="`${route('security.index')}?tab=logins`"
+                                        class="text-xs font-medium text-brand-600 hover:underline"
+                                    >
+                                        Security
+                                    </Link>
+                                </td>
+                            </template>
+
+                            <!-- An SSH login, or an attempt at one. -->
+                            <template v-else-if="entry.ssh">
+                                <td class="px-5 py-3 align-top">
+                                    <p class="font-medium text-slate-900">{{ sshTitle(entry.ssh) }}</p>
+                                    <p class="text-xs text-slate-500">
+                                        as <span class="font-mono">{{ entry.ssh.user || '—' }}</span>
+                                        · {{ entry.ssh.method }}
+                                    </p>
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 align-top">
+                                    <span
+                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
+                                        :class="statusClass(entry.ssh.kind === 'accepted' ? 'success' : 'failed')"
+                                    >
+                                        {{ entry.ssh.kind === 'accepted' ? 'logged in' : 'refused' }}
+                                    </span>
+                                </td>
+                                <td class="px-5 py-3 align-top text-xs">
+                                    <IpAddress :ip="entry.ssh.ip" class="text-slate-700" />
+                                </td>
+                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
+                                    <Link
+                                        :href="`${route('security.index')}?tab=ssh`"
+                                        class="text-xs font-medium text-brand-600 hover:underline"
+                                    >
+                                        Security
+                                    </Link>
+                                </td>
+                            </template>
                         </tr>
                     </tbody>
                 </table>

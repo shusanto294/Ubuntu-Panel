@@ -232,12 +232,15 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
+	a.recordSSHEvents(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			a.closeSSHWhenDue(ctx)
+			a.recordSSHEvents(ctx)
 			a.checkAlerts(ctx)
 		}
 	}

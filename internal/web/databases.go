@@ -282,9 +282,7 @@ func (a *App) databasesMongoConnection(w http.ResponseWriter, r *http.Request) {
 	// has none — and hand over a password MongoDB has never been told about,
 	// which is a worse answer than saying there is nothing to give yet. The
 	// account is created the first time a MongoDB database is.
-	password := a.Store.SecretSetting(databases.MongoSecret)
-
-	if password == "" {
+	if a.Store.SecretSetting(databases.MongoSecret) == "" {
 		a.writeJSON(w, http.StatusOK, map[string]any{
 			"error": "MongoDB is installed, but the panel has not set up its administrator " +
 				"account yet — that happens the first time a MongoDB database is created. " +
@@ -294,20 +292,80 @@ func (a *App) databasesMongoConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.writeJSON(w, http.StatusOK, mongoConnection(a.Store))
+}
+
+// mongoConnection is the server-wide string and its parts, for whichever
+// account Compass is currently given.
+//
+// authSource=admin, not the database being browsed: the account was created in
+// admin, and Compass authenticating against anything else fails with
+// "Authentication failed" on a password that is perfectly correct.
+func mongoConnection(st *store.Store) map[string]any {
+	username, password, own := databases.MongoAccount(st)
 	host := mongoHost()
 
-	// authSource=admin, not the database being browsed: the panel's account was
-	// created in admin, and Compass authenticating against anything else fails
-	// with "Authentication failed" on a password that is perfectly correct.
-	a.writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"host":     host,
 		"port":     databases.MongoPort,
-		"username": databases.MongoAdmin,
+		"username": username,
 		"password": password,
 		"auth_db":  "admin",
+		"own":      own,
 		"uri": fmt.Sprintf("mongodb://%s@%s:%d/?authSource=admin",
-			url.UserPassword(databases.MongoAdmin, password).String(), host, databases.MongoPort),
-	})
+			url.UserPassword(username, password).String(), host, databases.MongoPort),
+	}
+}
+
+// databasesMongoAccount sets the server-wide account's name and password, from
+// the Compass dialog. JSON both ways, because the dialog is not a page: it
+// answers with the new string, or with what was wrong with the form.
+func (a *App) databasesMongoAccount(w http.ResponseWriter, r *http.Request) {
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	username := strings.TrimSpace(input["username"])
+	password := input["password"]
+
+	// Generated when left blank, as on a database's own page. Anything typed is
+	// held to more than a site's password: this one opens every database.
+	if strings.TrimSpace(password) == "" {
+		password = crypto.Password(28)
+	} else if len(password) < 12 {
+		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"errors": map[string]string{
+				"password": "Use at least 12 characters, or leave it blank to have one generated.",
+			},
+		})
+
+		return
+	}
+
+	if !databases.ValidMongoAccountName(username) {
+		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"errors": map[string]string{
+				"username": "Use 3 to 64 letters, digits, dots, dashes or underscores, starting " +
+					"with a letter. " + databases.MongoAdmin + " is the panel's own and cannot be used.",
+			},
+		})
+
+		return
+	}
+
+	if err := databases.SetMongoAccount(a.Store, username, password); err != nil {
+		a.Log.Error("could not set the MongoDB account", "username", username, "error", err)
+		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"errors": map[string]string{"username": err.Error()},
+		})
+
+		return
+	}
+
+	a.Log.Info("MongoDB server-wide account set", "username", username)
+	a.writeJSON(w, http.StatusOK, mongoConnection(a.Store))
 }
 
 // mongoHost is the address every MongoDB string the panel hands out is built

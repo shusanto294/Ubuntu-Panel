@@ -74,7 +74,7 @@ const sections = [
         links: [
             { name: 'Security', route: 'security.index', pattern: 'security.*', icon: icons.security },
             { name: 'Apps', route: 'services.index', pattern: 'services.index', icon: icons.services },
-            { name: 'DNS', route: 'dns.index', pattern: 'dns.index', icon: icons.dns },
+            { name: 'DNS', route: 'dns.nameserver', pattern: 'dns.*', icon: icons.dns },
             { name: 'Logs', route: 'logs.index', pattern: 'logs.*', icon: icons.logs },
             { name: 'AI access', route: 'ai.index', pattern: 'ai.*', icon: icons.ai },
             { name: 'Settings', route: 'settings', pattern: 'settings', icon: icons.settings },

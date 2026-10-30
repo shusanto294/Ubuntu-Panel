@@ -104,11 +104,12 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 
 	a.Render.Render(w, r, "System/Overview", inertia.Props{
 		"system":  a.systemSummary(r.Context()),
-		"update":  a.updateStatus(r.Context(), false),
 		"metrics": metrics.Summary(),
 		// The graphs open on the shortest range, so ship that one with the page
 		// and let the browser fetch the others only if it asks.
-		"history":       a.Store.MetricHistory(r.Context(), store.DefaultMetricRange),
+		"history": inertia.Lazy(func() any {
+			return a.Store.MetricHistory(r.Context(), store.DefaultMetricRange)
+		}),
 		"historyRanges": store.MetricRanges,
 		"counts": map[string]any{
 			"sites":              a.Store.SiteCount(r.Context()),
@@ -119,7 +120,9 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 		"sites":          recent,
 		"activeTask":     a.firstActiveTask(r, "provision", "site", "database", "mail"),
 		"recentActivity": recentActivity,
-		"security":       a.securitySummary(r.Context(), userFrom(r.Context())),
+		"security": inertia.Lazy(func() any {
+			return a.securitySummary(r.Context(), userFrom(r.Context()))
+		}),
 	})
 }
 
@@ -1068,6 +1071,20 @@ func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
 		return refreshed
 	}
 
+	// A page never waits on GitHub: fifteen seconds of timeout on a slow or
+	// rate-limited day was the whole page. It renders saying it is checking,
+	// and the version card asks the update endpoint — which is the `fresh`
+	// path below — once it is on screen.
+	if !fresh {
+		return map[string]any{
+			"current":   current,
+			"latest":    map[string]any{"version": nil, "commit": nil, "committed_at": nil, "url": nil},
+			"available": false,
+			"command":   a.updateCommand(),
+			"pending":   true,
+		}
+	}
+
 	latest := a.latestRelease()
 
 	status := map[string]any{
@@ -1078,8 +1095,8 @@ func (a *App) updateStatus(ctx context.Context, fresh bool) map[string]any {
 		"checked_at": time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// A failed check is not cached: the next page view should try again rather
-	// than repeat an error for six hours.
+	// A failed check is not cached: the next look should try again rather than
+	// repeat an error for six hours.
 	if latest["error"] == nil {
 		updateCache.Lock()
 		updateCache.value, updateCache.fetched = status, time.Now()
@@ -1239,7 +1256,7 @@ func (a *App) updatePanel(w http.ResponseWriter, r *http.Request) {
 	// replacing this binary and restarting this service would otherwise kill
 	// the process doing it.
 	command := fmt.Sprintf(
-		"sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' "+
+		"sudo systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1; sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect "+
 			"/bin/bash -c %s", proc.Quote(a.updateCommand()))
 
 	if result := proc.Run(command, time.Minute); !result.OK() {

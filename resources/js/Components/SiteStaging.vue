@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { Link, router, useForm } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
@@ -20,6 +22,10 @@ const props = defineProps({
 const form = useForm({
     domain: props.staging.suggested_domain ?? '',
 });
+
+const { page, pages, total, perPage, visible: visibleCopies } = usePagination(
+    () => props.staging.copies,
+);
 
 const create = () =>
     form.post(route('sites.staging.store', props.site.id), { preserveScroll: true });
@@ -278,7 +284,7 @@ const rewrites = computed(() => props.staging.rewrites_database);
                     </div>
                     <ul class="divide-y divide-slate-100">
                         <li
-                            v-for="copy in staging.copies"
+                            v-for="copy in visibleCopies"
                             :key="copy.id"
                             class="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
                         >
@@ -323,6 +329,7 @@ const rewrites = computed(() => props.staging.rewrites_database);
                             </div>
                         </li>
                     </ul>
+                    <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
                 </div>
             </template>
         </div>

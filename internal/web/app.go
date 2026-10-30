@@ -119,10 +119,15 @@ func (a *App) Start(ctx context.Context) {
 		// Last, so a first run's install is already queued and fail2ban goes
 		// in with it rather than racing it for the dpkg lock.
 		a.EnsureSSHProtection(ctx)
+
+		// After SSH protection, which may have just queued an install of its
+		// own: this one waits for a quiet moment rather than racing it.
+		a.EnsureDNSServer(ctx)
 	}()
 
 	// Security alerts: the clock that emails sign-ins, lockouts and bans.
 	go a.runSecurityAlerts(ctx)
+	go a.warmSecurity(ctx)
 
 	// The sites that back themselves up. Its own goroutine rather than part of
 	// the queue, because it is a clock rather than a piece of work: it does

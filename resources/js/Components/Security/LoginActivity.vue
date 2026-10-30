@@ -1,7 +1,10 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import InputError from '@/Components/InputError.vue';
+import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { ago, browser, card, field, smallButton, when } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
 
@@ -25,6 +28,10 @@ const attempts = computed(() =>
         (a) => filter.value === 'all' || (filter.value === 'failed' ? !a.success : a.success),
     ),
 );
+
+const { page, pages, total, perPage, visible: visibleAttempts } = usePagination(attempts, 25);
+
+watch(filter, () => (page.value = 1));
 
 const reasonLabel = {
     password: 'Password',
@@ -75,7 +82,7 @@ const reasonLabel = {
                 <ul class="mt-3 divide-y divide-slate-100">
                     <li v-for="entry in logins.locked" :key="entry.ip" class="flex items-center justify-between py-2">
                         <span>
-                            <span class="font-mono text-sm">{{ entry.ip }}</span>
+                            <IpAddress :ip="entry.ip" class="text-sm" />
                             <span class="block text-xs text-slate-500">until {{ when(entry.until) }}</span>
                         </span>
                         <button type="button" :class="smallButton" class="text-slate-700" @click="unlock(entry.ip)">Unlock</button>
@@ -97,9 +104,9 @@ const reasonLabel = {
                     <option value="success">Successful</option>
                 </select>
             </div>
-            <div class="max-h-[32rem] overflow-y-auto">
+            <div>
                 <table class="w-full text-sm">
-                    <thead class="sticky top-0 bg-white text-left text-xs uppercase text-slate-400">
+                    <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
                             <th class="px-6 py-2">Time</th>
                             <th class="px-2 py-2">Result</th>
@@ -109,7 +116,7 @@ const reasonLabel = {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <tr v-for="attempt in attempts" :key="attempt.id">
+                        <tr v-for="attempt in visibleAttempts" :key="attempt.id">
                             <td class="whitespace-nowrap px-6 py-2 text-slate-500" :title="when(attempt.created_at)">{{ ago(attempt.created_at) }}</td>
                             <td class="px-2 py-2">
                                 <span
@@ -121,7 +128,7 @@ const reasonLabel = {
                                 <span class="ml-1 text-xs text-slate-400">{{ reasonLabel[attempt.reason] ?? attempt.reason }}</span>
                             </td>
                             <td class="px-2 py-2">{{ attempt.email || '—' }}</td>
-                            <td class="px-2 py-2 font-mono">{{ attempt.ip }}</td>
+                            <td class="px-2 py-2"><IpAddress :ip="attempt.ip" /></td>
                             <td class="hidden px-2 py-2 text-slate-500 md:table-cell" :title="attempt.user_agent">{{ browser(attempt.user_agent) }}</td>
                         </tr>
                         <tr v-if="!attempts.length">
@@ -130,6 +137,7 @@ const reasonLabel = {
                     </tbody>
                 </table>
             </div>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
     </div>
 </template>

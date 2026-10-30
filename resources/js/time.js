@@ -9,7 +9,9 @@
 const parse = (stamp) => {
     if (!stamp) return null;
 
-    const date = new Date(stamp.replace(' ', 'T') + 'Z');
+    // Sign-ins and SSH events are kept as Unix seconds instead.
+    const date =
+        typeof stamp === 'number' ? new Date(stamp * 1000) : new Date(stamp.replace(' ', 'T') + 'Z');
 
     return Number.isNaN(date.getTime()) ? null : date;
 };

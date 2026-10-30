@@ -319,6 +319,33 @@ var schema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts(ip_address, created_at)`,
 	`CREATE INDEX IF NOT EXISTS login_attempts_created ON login_attempts(created_at)`,
+
+	// The country each address the Security page has shown belongs to, looked
+	// up once and kept, so a flag beside an address costs nothing the second
+	// time. An empty country is an address the lookup could not place — a
+	// private range, or one the service did not know — and is not asked again.
+	// Every SSH login and attempt, copied out of sshd's log once a minute. The
+	// journal is the machine's to rotate and often keeps days, not months; this
+	// keeps them as long as the panel keeps its own sign-ins, so the Logs page
+	// can say who got in, or tried to, long after the journal has forgotten.
+	// The unique index is what makes copying an overlapping window harmless.
+	`CREATE TABLE IF NOT EXISTS ssh_events (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind       TEXT NOT NULL,
+		username   TEXT NOT NULL,
+		ip_address TEXT NOT NULL,
+		method     TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ssh_events_unique
+		ON ssh_events(created_at, ip_address, username, kind, method)`,
+	`CREATE INDEX IF NOT EXISTS ssh_events_kind ON ssh_events(kind, created_at)`,
+
+	`CREATE TABLE IF NOT EXISTS ip_countries (
+		ip         TEXT PRIMARY KEY,
+		country    TEXT NOT NULL,
+		checked_at INTEGER NOT NULL
+	)`,
 }
 
 // migrations are ALTER TABLE statements for databases created by an older

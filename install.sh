@@ -196,6 +196,35 @@ rollback_if_staged() {
 
 [ "$(id -u)" -eq 0 ] || die "Run this with sudo:  sudo ./install.sh"
 
+# From the panel's own terminal this process belongs to the panel's service,
+# and stopping that service for the binary swap below would kill it halfway —
+# the panel stopped, never started again. Start over in a unit of its own.
+# get.sh does the same before it gets here; this is for ./install.sh typed in
+# that terminal directly.
+if grep -qE '/ubuntu-panel\.service(/|$)' /proc/self/cgroup 2>/dev/null; then
+    command -v systemd-run >/dev/null 2>&1 \
+        || die "This is the panel's own terminal, which the update would kill. Run it over SSH instead."
+
+    passed=()
+    while IFS= read -r variable; do
+        case "$variable" in
+            PANEL_*=*|NO_COLOR=*) passed+=(--setenv="$variable") ;;
+        esac
+    done < <(env)
+
+    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+    systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1 || true
+    systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect \
+        "${passed[@]}" /bin/bash "$self" >/dev/null \
+        || die "Could not start the update outside the panel. Run it over SSH instead."
+
+    printf '\nRunning in its own service, because this terminal is part of the panel and\n'
+    printf 'the update restarts the panel. This terminal disconnects when it does.\n\n'
+
+    exec journalctl -u ubuntu-panel-update -f -n 50 --no-hostname -o cat
+fi
+
 mkdir -p "$LOG_DIR"
 : >"$INSTALL_LOG"
 chmod 640 "$INSTALL_LOG"

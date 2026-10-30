@@ -2,9 +2,11 @@
 import { computed, ref, watch } from 'vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
 import Checkbox from '@/Components/Checkbox.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { router, useForm } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
@@ -88,7 +90,12 @@ const loadRecords = async () => {
     }
 };
 
-watch(zone, loadRecords);
+const { page, pages, total, perPage, visible: visibleRecords } = usePagination(records);
+
+watch(zone, () => {
+    page.value = 1;
+    loadRecords();
+});
 
 const submit = () => {
     if (!selectedZone.value) return;
@@ -296,7 +303,7 @@ loadZones().then(loadRecords);
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-sm">
-                    <tr v-for="record in records" :key="record.id">
+                    <tr v-for="record in visibleRecords" :key="record.id">
                         <td class="whitespace-nowrap px-5 py-3">
                             <span class="font-medium text-slate-800">
                                 {{ record.type }}
@@ -345,5 +352,6 @@ loadZones().then(loadRecords);
                 </tbody>
             </table>
         </div>
+        <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
     </div>
 </template>

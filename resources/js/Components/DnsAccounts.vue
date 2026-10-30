@@ -1,7 +1,9 @@
 <script setup>
 import { ref } from 'vue';
 import DangerButton from '@/Components/DangerButton.vue';
+import Pagination from '@/Components/Pagination.vue';
 import SecondaryButton from '@/Components/SecondaryButton.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { Link, router } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
@@ -12,13 +14,17 @@ import { confirmDanger } from '@/dialog';
  * the same thing from you, but it needs a token pasted in and checked, which is
  * not something to do in a corner of a list.
  */
-defineProps({
+const props = defineProps({
     accounts: { type: Array, default: () => [] },
     nameserver: {
         type: Object,
         default: () => ({ installed: false, ready: false, zones: 0 }),
     },
 });
+
+const { page, pages, total, perPage, visible: visibleAccounts } = usePagination(
+    () => props.accounts,
+);
 
 const verifying = ref(null);
 
@@ -59,7 +65,7 @@ const remove = async (account) => {
 
             <ul class="divide-y divide-slate-100">
                 <li
-                    v-for="account in accounts"
+                    v-for="account in visibleAccounts"
                     :key="account.id"
                     class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                 >
@@ -137,6 +143,7 @@ const remove = async (account) => {
                     this server by hand.
                 </li>
             </ul>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
 
         <div class="grid gap-4 lg:grid-cols-2">

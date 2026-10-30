@@ -2,16 +2,21 @@
 import { ref } from 'vue';
 import Checkbox from '@/Components/Checkbox.vue';
 import InputError from '@/Components/InputError.vue';
+import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import { usePagination } from '@/Composables/usePagination';
 import Swal, { confirmAction, confirmDanger } from '@/dialog';
 import { ago, card, field, smallButton } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
 
-defineProps({
+const props = defineProps({
     users: Array,
     hardening: Object,
     service: Object,
 });
+
+const { page, pages, total, perPage, visible: visibleUsers } = usePagination(() => props.users, 10);
 
 const showCreate = ref(false);
 
@@ -161,7 +166,7 @@ const remove = async (user) => {
 
         <div :class="card" class="!p-0">
             <ul class="divide-y divide-slate-100">
-                <li v-for="user in users" :key="user.name" class="px-6 py-4">
+                <li v-for="user in visibleUsers" :key="user.name" class="px-6 py-4">
                     <div class="flex flex-wrap items-center gap-3">
                         <span
                             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold uppercase"
@@ -173,8 +178,16 @@ const remove = async (user) => {
                             <p class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">
                                 <span class="font-mono">{{ user.name }}</span>
                                 <span v-if="user.sudo" class="rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700">sudo</span>
-                                <span v-if="user.locked" class="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700">locked</span>
-                                <span v-if="user.protected" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">system</span>
+                                <span v-if="user.expired" class="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700">locked</span>
+                                <span
+                                    v-else-if="user.password_locked"
+                                    class="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                                    title="Its password is locked, so it cannot log in with one. SSH keys still log in."
+                                >
+                                    password locked
+                                </span>
+                                <span v-if="user.protected && user.uid !== 0" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">panel &amp; terminal</span>
+                                <span v-else-if="user.protected" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">system</span>
                             </p>
                             <p class="text-xs text-slate-500">
                                 uid {{ user.uid }} · {{ user.home }} ·
@@ -182,7 +195,7 @@ const remove = async (user) => {
                                 {{ user.has_password ? 'password set' : 'no password' }} ·
                                 <template v-if="user.last_login">
                                     last SSH login {{ ago(user.last_login.time) }} from
-                                    <span class="font-mono">{{ user.last_login.ip }}</span>
+                                    <IpAddress :ip="user.last_login.ip" />
                                 </template>
                                 <template v-else>no SSH login in the last 7 days</template>
                             </p>
@@ -233,7 +246,14 @@ const remove = async (user) => {
                             <InputError class="mt-1" :message="keyForm.errors.public_key" />
                         </div>
 
-                        <template v-if="!user.protected">
+                        <template v-if="!user.protected || user.uid === 0">
+                            <p v-if="user.uid === 0 && user.password_locked" class="text-xs text-slate-600">
+                                root's password is locked, which is how Ubuntu ships it: it can log in
+                                with a key, never with a password. Setting a password below unlocks it.
+                                To log in over SSH with that password, also allow root and passwords
+                                under SSH settings.
+                            </p>
+
                             <!-- Password -->
                             <form class="grid gap-2 sm:grid-cols-3" @submit.prevent="setPassword(user.name)">
                                 <div>
@@ -252,8 +272,19 @@ const remove = async (user) => {
                                 <InputError class="sm:col-span-3" :message="passwordForm.errors.password_confirmation || passwordForm.errors.password" />
                             </form>
 
-                            <!-- Actions -->
-                            <div class="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+                            <!-- Actions. Root can only be unlocked from here, never locked or removed. -->
+                            <div v-if="user.uid === 0" class="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+                                <button
+                                    v-if="user.locked"
+                                    type="button"
+                                    :class="smallButton"
+                                    class="bg-white text-emerald-600"
+                                    @click="setLocked(user, false)"
+                                >
+                                    Unlock
+                                </button>
+                            </div>
+                            <div v-else class="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
                                 <button type="button" :class="smallButton" class="bg-white text-slate-700" @click="setSudo(user, !user.sudo)">
                                     {{ user.sudo ? 'Remove sudo' : 'Give sudo' }}
                                 </button>
@@ -271,6 +302,7 @@ const remove = async (user) => {
                     Could not read the accounts on this machine.
                 </li>
             </ul>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
     </div>
 </template>

@@ -11,11 +11,11 @@ import (
 
 // sshUsers is the Security page's list of login accounts, each with the last
 // time it logged in over SSH as far as the log goes back.
-func (a *App) sshUsers(events []security.Event) []map[string]any {
+func (a *App) sshUsers(snap *securitySnapshot) []map[string]any {
 	lastLogin := map[string]security.Event{}
 
 	// Newest first, so the first accepted login seen per user is the latest.
-	for _, event := range events {
+	for _, event := range snap.Events {
 		if event.Kind != security.EventAccepted {
 			continue
 		}
@@ -27,7 +27,7 @@ func (a *App) sshUsers(events []security.Event) []map[string]any {
 
 	list := []map[string]any{}
 
-	for _, user := range security.ReadUsers(a.Config.SystemUser) {
+	for _, user := range snap.Users {
 		entry := map[string]any{
 			"name":             user.Name,
 			"uid":              user.UID,
@@ -36,6 +36,8 @@ func (a *App) sshUsers(events []security.Event) []map[string]any {
 			"groups":           user.Groups,
 			"sudo":             user.Sudo,
 			"locked":           user.Locked,
+			"password_locked":  user.PasswordLocked,
+			"expired":          user.Expired,
 			"has_password":     user.Password,
 			"keys":             user.Keys,
 			"protected":        user.Protected,

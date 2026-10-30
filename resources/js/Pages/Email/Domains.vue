@@ -2,10 +2,12 @@
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import EmailTabs from '@/Components/EmailTabs.vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import RequiredApps from '@/Components/RequiredApps.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { usePagination } from '@/Composables/usePagination';
 import { Head, Link } from '@inertiajs/vue3';
 
 // A domain is a thing you set up once — records, DKIM, a certificate — and a
@@ -32,6 +34,10 @@ const busy = computed(
 );
 
 useLiveRefresh(busy, ['domains', 'counts', 'activeTask']);
+
+const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
+    () => props.domains,
+);
 </script>
 
 <template>
@@ -101,7 +107,7 @@ useLiveRefresh(busy, ['domains', 'counts', 'activeTask']);
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100 text-sm">
-                            <template v-for="domain in domains" :key="domain.id">
+                            <template v-for="domain in visibleDomains" :key="domain.id">
                                 <tr>
                                     <td class="px-5 py-3">
                                         <Link
@@ -163,6 +169,7 @@ useLiveRefresh(busy, ['domains', 'counts', 'activeTask']);
                         </tbody>
                     </table>
                 </div>
+                <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
             </div>
         </template>
     </AuthenticatedLayout>

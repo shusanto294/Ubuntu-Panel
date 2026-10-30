@@ -2,8 +2,10 @@
 import { ref } from 'vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { router, useForm } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
 
@@ -20,6 +22,10 @@ const props = defineProps({
     nameservers: { type: Array, default: () => [] },
     ready: { type: Boolean, default: false },
 });
+
+const { page, pages, total, perPage, visible: visibleZones } = usePagination(
+    () => props.zones,
+);
 
 const form = useForm({ name: '' });
 
@@ -114,7 +120,7 @@ const check = async (zone) => {
 
         <!-- List -->
         <ul class="divide-y divide-slate-100">
-            <li v-for="zone in zones" :key="zone.id" class="px-5 py-4">
+            <li v-for="zone in visibleZones" :key="zone.id" class="px-5 py-4">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="min-w-0">
                         <p class="font-medium text-slate-800">
@@ -185,5 +191,6 @@ const check = async (zone) => {
                 it is the one that has to be here for any of the others to work.
             </li>
         </ul>
+        <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
     </div>
 </template>

@@ -1,4 +1,5 @@
 <script setup>
+import IpAddress from '@/Components/IpAddress.vue';
 import { confirmDanger } from '@/dialog';
 import { ago, browser, card, smallButton } from './ui';
 import { router } from '@inertiajs/vue3';
@@ -40,7 +41,7 @@ const revokeOthers = async () => {
                         <span v-if="entry.current" class="ml-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">this browser</span>
                     </p>
                     <p class="text-xs text-slate-500">
-                        <span class="font-mono">{{ entry.ip || 'unknown address' }}</span> · active {{ ago(entry.last_activity) }}
+                        <IpAddress v-if="entry.ip" :ip="entry.ip" /><span v-else>unknown address</span> · active {{ ago(entry.last_activity) }}
                     </p>
                 </div>
                 <button v-if="!entry.current" type="button" :class="smallButton" class="text-rose-600" @click="revoke(entry.key)">

@@ -53,7 +53,8 @@ func TestParseUsers(t *testing.T) {
 	}
 
 	deploy := users[2]
-	if !deploy.Sudo || !deploy.Locked || !deploy.Password || len(deploy.Keys) != 1 {
+	if !deploy.Sudo || !deploy.Locked || !deploy.Expired || deploy.PasswordLocked ||
+		!deploy.Password || len(deploy.Keys) != 1 {
 		t.Fatalf("deploy: %+v", deploy)
 	}
 }

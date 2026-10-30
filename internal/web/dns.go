@@ -118,7 +118,7 @@ func (a *App) dnsStore(w http.ResponseWriter, r *http.Request) {
 
 	sess.Flash("success", dns.ProviderLabel(provider)+" connected.")
 
-	inertia.Redirect(w, r, "/dns")
+	inertia.Redirect(w, r, "/dns/providers")
 }
 
 func (a *App) dnsUpdate(w http.ResponseWriter, r *http.Request) {

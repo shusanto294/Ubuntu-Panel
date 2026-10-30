@@ -127,25 +127,10 @@ const areaPath = computed(() =>
         .join(' '),
 );
 
-// The highest second of each point, drawn faintly above the average. Only
-// where it differs: on a flat series it would sit on top of the line.
+// Whether any point's highest second stands clear of its average. Not drawn —
+// one line per graph reads better — but said in the summary and the tooltip.
 const hasPeaks = computed(() =>
     known.value.some((p) => p.p !== null && p.p !== undefined && p.p - p.v >= 1),
-);
-
-const peakPath = computed(() =>
-    hasPeaks.value
-        ? runs.value
-              .map((run) =>
-                  run
-                      .map(
-                          (p, i) =>
-                              `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.p ?? p.v).toFixed(1)}`,
-                      )
-                      .join(' '),
-              )
-              .join(' ')
-        : '',
 );
 
 const gridlines = [0, 25, 50, 75, 100];
@@ -310,15 +295,6 @@ const tone = computed(() => {
 
                 <path v-if="areaPath" :d="areaPath" :fill="`url(#fill-${label})`" />
                 <path
-                    v-if="peakPath"
-                    :d="peakPath"
-                    fill="none"
-                    :stroke="color"
-                    stroke-opacity="0.35"
-                    stroke-width="1"
-                    stroke-linejoin="round"
-                />
-                <path
                     v-if="linePath"
                     :d="linePath"
                     fill="none"
@@ -393,8 +369,8 @@ const tone = computed(() => {
 
         <p v-if="summary" class="mt-1 text-[11px] text-slate-400 tabular-nums">
             low {{ summary.min.toFixed(0) }}% · average
-            {{ summary.average.toFixed(0) }}% · high {{ summary.max.toFixed(0) }}%
-            <span v-if="hasPeaks" class="text-slate-300">· faint line: peak second</span>
+            {{ summary.average.toFixed(0) }}% · {{ hasPeaks ? 'peak second' : 'high' }}
+            {{ summary.max.toFixed(0) }}%
         </p>
     </div>
 </template>

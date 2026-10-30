@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import { confirmAction } from '@/dialog';
 
@@ -55,6 +55,12 @@ const check = async () => {
         checking.value = false;
     }
 };
+
+// The page is rendered without asking GitHub, so the answer is fetched here
+// once the card is on screen, unless the panel already had one to hand.
+onMounted(() => {
+    if (state.value.pending) check();
+});
 
 // The panel builds this: it knows where it is installed and which user owns
 // it, and neither is guaranteed to be the default.

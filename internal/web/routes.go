@@ -137,6 +137,8 @@ func (a *App) routes() *router {
 		a.databasesCredentials)
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
 		a.databasesMongoConnection)
+	rt.post("/databases-mongo-connection", "databases.mongo-account", authenticated,
+		a.databasesMongoAccount)
 
 	// nginx asks this before it serves anything under /phpmyadmin. Public in
 	// the route table because it answers for itself: signed in is 204, and
@@ -181,8 +183,13 @@ func (a *App) routes() *router {
 	rt.delete("/email/accounts/{account}", "email.accounts.destroy", authenticated,
 		a.emailDestroyAccount)
 
+	// DNS. This machine's own nameserver is what /dns opens on — the panel's
+	// answer to "where do my records live" — and a provider is the
+	// alternative, a tab along.
+	rt.get("/dns", "dns.nameserver", authenticated, a.nameserverIndex)
+
 	// DNS credentials
-	rt.get("/dns", "dns.index", authenticated, a.dnsIndex)
+	rt.get("/dns/providers", "dns.index", authenticated, a.dnsIndex)
 	rt.get("/dns/create", "dns.create", authenticated, a.dnsCreate)
 	rt.post("/dns-accounts", "dns.store", authenticated, a.dnsStore)
 	rt.patch("/dns-accounts/{account}", "dns.update", authenticated, a.dnsUpdate)
@@ -196,9 +203,10 @@ func (a *App) routes() *router {
 
 	// The panel's own nameserver: the zones this machine answers for itself,
 	// and the setup that has to happen at a registrar before it answers for
-	// anything. A page of its own rather than a section of /dns, because
-	// connecting a provider and becoming one are different jobs.
-	rt.get("/dns/nameserver", "dns.nameserver", authenticated, a.nameserverIndex)
+	// anything. Its page moved to /dns itself; the old address still lands.
+	rt.get("/dns/nameserver", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
+		inertia.Redirect(w, r, "/dns")
+	})
 	rt.post("/dns/nameserver", "dns.nameserver.settings", authenticated, a.nameserverSettings)
 	rt.post("/dns/nameserver/resync", "dns.nameserver.resync", authenticated, a.nameserverResync)
 	rt.post("/dns/zones", "dns.zones.store", authenticated, a.nameserverZoneStore)
@@ -215,6 +223,7 @@ func (a *App) routes() *router {
 
 	// Security: who is trying to get in, and what stops them.
 	rt.get("/security", "security.index", authenticated, a.securityIndex)
+	rt.get("/security/countries", "security.countries", authenticated, a.securityCountries)
 	rt.post("/security/ssh-protection", "security.ssh-protection", authenticated, a.securitySSHProtection)
 	rt.post("/security/ssh-protection/install", "security.ssh-protection.install", authenticated,
 		a.securityInstallFail2ban)

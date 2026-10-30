@@ -97,6 +97,8 @@ func (rn *Renderer) Render(w http.ResponseWriter, r *http.Request, component str
 		}
 	}
 
+	resolveLazy(merged)
+
 	url := r.URL.Path
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
@@ -312,4 +314,42 @@ func (rn *Renderer) readManifest() {
 	}
 
 	rn.tags = tags.String()
+}
+
+// Lazy is a prop worth computing only when it is sent: one that asks the
+// machine or the network. A partial reload that does not name it never runs
+// it, and the ones a page does need are run at the same time rather than one
+// after another, so the page waits for the slowest instead of the sum.
+type Lazy func() any
+
+func resolveLazy(props Props) {
+	// Gathered first: the map cannot be ranged over while the reads write to it.
+	lazies := map[string]Lazy{}
+
+	for key, value := range props {
+		if read, lazy := value.(Lazy); lazy {
+			lazies[key] = read
+		}
+	}
+
+	var (
+		wait    sync.WaitGroup
+		writing sync.Mutex
+	)
+
+	for key, read := range lazies {
+		wait.Add(1)
+
+		go func(key string, read Lazy) {
+			defer wait.Done()
+
+			value := read()
+
+			writing.Lock()
+			props[key] = value
+			writing.Unlock()
+		}(key, read)
+	}
+
+	wait.Wait()
 }

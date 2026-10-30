@@ -11,6 +11,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/nameserver"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
@@ -152,7 +153,7 @@ func (a *App) nameserverSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sess.HasErrors() {
-		inertia.Back(w, r, "/dns/nameserver")
+		inertia.Back(w, r, "/dns")
 		return
 	}
 
@@ -206,7 +207,7 @@ func (a *App) nameserverZoneStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sess.HasErrors() {
-		inertia.Back(w, r, "/dns/nameserver")
+		inertia.Back(w, r, "/dns")
 		return
 	}
 
@@ -471,4 +472,44 @@ func invalidHostname(name string) string {
 	}
 
 	return ""
+}
+
+// dnsOfferedSetting records that the DNS server was put on this machine once.
+const dnsOfferedSetting = "dns_server_offered"
+
+// EnsureDNSServer installs the DNS server on a machine set up before it was a
+// default, the way a fresh install now gets it.
+//
+// Once. Somebody who removes it from Apps has decided they want their records
+// somewhere else, and a restart is not a reason to put it back. If another
+// install is already queued or running, it waits for the next start rather
+// than squeezing in beside it.
+func (a *App) EnsureDNSServer(ctx context.Context) {
+	if a.Config.InstallApps == "none" || a.Store.SettingBool(dnsOfferedSetting, false) {
+		return
+	}
+
+	a.Catalog.Detect([]string{"dns"})
+
+	if a.Store.ServiceInstalled("dns") {
+		a.Store.SetSetting(dnsOfferedSetting, "1")
+		return
+	}
+
+	if a.Store.ServicesPending() {
+		return
+	}
+
+	a.Store.SetSetting(dnsOfferedSetting, "1")
+
+	if a.Catalog.Queue([]string{"dns"}, false) == 0 {
+		return
+	}
+
+	if _, err := a.Queue.PushID(queue.ServicesInstall, "user", 0); err != nil {
+		a.Log.Error("could not queue the DNS server install", "error", err)
+		return
+	}
+
+	a.Log.Info("installing the DNS server, which hosting a domain's records on this machine needs")
 }

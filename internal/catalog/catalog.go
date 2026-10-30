@@ -187,12 +187,15 @@ var Entries = []Entry{
 	},
 	{
 		Key: "dns", Label: "DNS server", Group: "dns",
-		OnlyWhenAsked: true,
 		Description: "BIND, so this machine can host zones itself. Point a domain's " +
 			"nameservers here and manage its records in the panel instead of at a " +
 			"registrar or Cloudflare.",
-		Requires: []string{"base"},
-		Detect:   "command -v named", Version: "named -v 2>/dev/null | head -1",
+		// Installed by default: hosting a domain's records here is the panel's
+		// own answer to DNS, with a provider as the alternative. It answers
+		// only for the zones the panel gives it — recursion is off — so it is
+		// not a resolver anybody else can use.
+		Default: true, Requires: []string{"base"},
+		Detect: "command -v named", Version: "named -v 2>/dev/null | head -1",
 		Packages:       "bind9 bind9-utils bind9-dnsutils",
 		RemovePackages: "bind9 bind9-utils bind9-dnsutils bind9-libs",
 		Removable:      true,
@@ -356,6 +359,11 @@ func (s *Service) detect(keys []string, maxAge time.Duration) {
 		wanted[key] = true
 	}
 
+	// The probes are independent, and a page waits for the slowest of them,
+	// so they run a few at a time rather than one after another.
+	var wait sync.WaitGroup
+	slots := make(chan struct{}, 4)
+
 	for _, entry := range Entries {
 		if len(keys) > 0 && !wanted[entry.Key] {
 			continue
@@ -371,28 +379,41 @@ func (s *Service) detect(keys []string, maxAge time.Duration) {
 
 		s.detected.Store(entry.Key, time.Now())
 
-		if !proc.Ok(entry.Detect) {
-			// Only ever downgrade a row that claims to be installed. A queued
-			// or installing row is mid-flight, and overwriting it here would
-			// make the page flip back to "not installed" while the install is
-			// running.
-			if s.Store.ServiceInstalled(entry.Key) {
-				s.Store.SetServiceStatus(entry.Key, store.ServiceNotInstalled, "", "")
-			}
+		wait.Add(1)
+		slots <- struct{}{}
 
-			continue
-		}
+		go func(entry Entry) {
+			defer func() { <-slots; wait.Done() }()
 
-		version := ""
-
-		if entry.Version != "" {
-			if result := proc.Run(entry.Version, 30*time.Second); result.OK() {
-				version = strings.TrimSpace(result.Output)
-			}
-		}
-
-		s.Store.SetServiceStatus(entry.Key, store.ServiceInstalled, version, "")
+			s.probe(entry)
+		}(entry)
 	}
+
+	wait.Wait()
+}
+
+// probe asks the machine about one app and writes down the answer.
+func (s *Service) probe(entry Entry) {
+	if !proc.Ok(entry.Detect) {
+		// Only ever downgrade a row that claims to be installed. A queued or
+		// installing row is mid-flight, and overwriting it here would make the
+		// page flip back to "not installed" while the install is running.
+		if s.Store.ServiceInstalled(entry.Key) {
+			s.Store.SetServiceStatus(entry.Key, store.ServiceNotInstalled, "", "")
+		}
+
+		return
+	}
+
+	version := ""
+
+	if entry.Version != "" {
+		if result := proc.Run(entry.Version, 30*time.Second); result.OK() {
+			version = strings.TrimSpace(result.Output)
+		}
+	}
+
+	s.Store.SetServiceStatus(entry.Key, store.ServiceInstalled, version, "")
 }
 
 // Queue marks apps (with their dependencies) for installation and returns how

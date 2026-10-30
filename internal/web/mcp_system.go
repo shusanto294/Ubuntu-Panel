@@ -391,7 +391,7 @@ func (a *App) mcpPanelUpdate() *mcp.Tool {
 			}
 
 			command := fmt.Sprintf(
-				"sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' "+
+				"sudo systemctl reset-failed ubuntu-panel-update >/dev/null 2>&1; sudo systemd-run --unit=ubuntu-panel-update --description='Ubuntu Panel update' --collect "+
 					"/bin/bash -c %s", proc.Quote(a.updateCommand()))
 
 			if result := proc.Run(command, time.Minute); !result.OK() {

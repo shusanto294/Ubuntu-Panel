@@ -2,8 +2,10 @@
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
+import Pagination from '@/Components/Pagination.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { usePagination } from '@/Composables/usePagination';
 import { Head, Link } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -21,6 +23,8 @@ const busy = computed(
 // itself belongs to the site's own page, which is where the button that
 // started it sent you.
 useLiveRefresh(busy, ['sites', 'activeTask']);
+
+const { page, pages, total, perPage, visible: visibleSites } = usePagination(() => props.sites);
 </script>
 
 <template>
@@ -64,7 +68,7 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-sm">
-                    <tr v-for="site in sites" :key="site.id">
+                    <tr v-for="site in visibleSites" :key="site.id">
                         <td class="px-5 py-3">
                             <!--
                                 The domain goes to the site's own page, not to
@@ -162,6 +166,7 @@ useLiveRefresh(busy, ['sites', 'activeTask']);
                     </tr>
                 </tbody>
             </table>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
     </AuthenticatedLayout>
 </template>

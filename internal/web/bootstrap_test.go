@@ -61,9 +61,6 @@ func TestAFreshPanelQueuesEveryAppItIsAllowedTo(t *testing.T) {
 	for _, entry := range catalog.Entries {
 		switch {
 		case entry.OnlyWhenAsked && queued[entry.Key]:
-			// The nameserver is the one of these today. Installing it puts a
-			// service on port 53 of a public address, which is not something
-			// the catalogue growing should decide on somebody's behalf.
 			t.Errorf("%s installs itself on a fresh panel, and should wait to be asked",
 				entry.Key)
 

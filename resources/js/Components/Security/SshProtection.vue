@@ -1,7 +1,10 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import InputError from '@/Components/InputError.vue';
+import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { confirmAction, confirmDanger } from '@/dialog';
 import { ago, card, field, smallButton, when } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
@@ -77,6 +80,18 @@ const events = computed(() =>
             (!search.value || e.ip.includes(search.value) || e.user.includes(search.value)),
     ),
 );
+
+const { page, pages, total, perPage, visible: visibleEvents } = usePagination(events, 25);
+
+watch([filter, search], () => (page.value = 1));
+
+const {
+    page: bannedPage,
+    pages: bannedPages,
+    total: bannedTotal,
+    perPage: bannedPerPage,
+    visible: visibleBanned,
+} = usePagination(() => props.ssh.status.banned, 10);
 
 const kindStyle = {
     accepted: 'bg-emerald-50 text-emerald-700',
@@ -198,9 +213,9 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                     </button>
                 </form>
 
-                <ul class="mt-4 max-h-80 divide-y divide-slate-100 overflow-y-auto">
-                    <li v-for="ip in ssh.status.banned" :key="ip" class="flex items-center justify-between py-2">
-                        <span class="font-mono text-sm text-slate-700">{{ ip }}</span>
+                <ul class="mt-4 divide-y divide-slate-100">
+                    <li v-for="ip in visibleBanned" :key="ip" class="flex items-center justify-between py-2">
+                        <IpAddress :ip="ip" class="text-sm text-slate-700" />
                         <button type="button" :class="smallButton" class="text-slate-700" @click="unban(ip)">
                             Unban
                         </button>
@@ -209,6 +224,13 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                         Nobody is banned right now.
                     </li>
                 </ul>
+                <Pagination
+                    v-model="bannedPage"
+                    :pages="bannedPages"
+                    :total="bannedTotal"
+                    :per-page="bannedPerPage"
+                    class="-mx-6 -mb-6 mt-2"
+                />
             </div>
         </div>
 
@@ -245,7 +267,7 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="attacker in ssh.summary_7d.top_attackers" :key="attacker.ip">
-                            <td class="py-2 font-mono">{{ attacker.ip }}</td>
+                            <td class="py-2"><IpAddress :ip="attacker.ip" /></td>
                             <td class="py-2">{{ attacker.attempts }}</td>
                             <td class="hidden py-2 text-slate-500 sm:table-cell">{{ (attacker.users ?? []).join(', ') }}</td>
                             <td class="py-2 text-slate-500">{{ ago(attacker.last_seen) }}</td>
@@ -279,9 +301,9 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                     </select>
                 </div>
             </div>
-            <div class="max-h-[32rem] overflow-y-auto">
+            <div>
                 <table class="w-full text-sm">
-                    <thead class="sticky top-0 bg-white text-left text-xs uppercase text-slate-400">
+                    <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
                             <th class="px-6 py-2">Time</th>
                             <th class="px-2 py-2">Result</th>
@@ -291,7 +313,7 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <tr v-for="(event, index) in events" :key="index">
+                        <tr v-for="(event, index) in visibleEvents" :key="`${page}-${index}`">
                             <td class="whitespace-nowrap px-6 py-2 text-slate-500">{{ when(event.time) }}</td>
                             <td class="px-2 py-2">
                                 <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="kindStyle[event.kind]">
@@ -299,8 +321,8 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                                 </span>
                             </td>
                             <td class="px-2 py-2 font-mono">{{ event.user || '—' }}</td>
-                            <td class="px-2 py-2 font-mono">
-                                {{ event.ip }}
+                            <td class="px-2 py-2">
+                                <IpAddress :ip="event.ip" />
                                 <span v-if="banned.has(event.ip)" class="ml-1 text-xs text-rose-600">banned</span>
                             </td>
                             <td class="hidden px-2 py-2 text-slate-500 sm:table-cell">{{ event.method }}</td>
@@ -311,6 +333,7 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                     </tbody>
                 </table>
             </div>
+            <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
     </div>
 </template>
