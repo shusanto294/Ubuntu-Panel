@@ -161,11 +161,13 @@ func (a *App) EnsureSSHProtection(ctx context.Context) {
 
 // ---------------------------------------------------------------- snapshot
 
-// securitySnapshot is everything the dashboard tile and the checks need. Reading
-// it is half a dozen sudo commands and a journal query — seconds, on a machine
-// that is being guessed at all day — so no page waits for it once there is one:
-// a page gets the copy there is, and a copy older than a minute is replaced in
-// the background for the page after.
+// securitySnapshot is everything the Security page's checks need. Reading
+// it is half a dozen sudo commands and a journal query — seconds of CPU, on a
+// machine that is being guessed at all day — so only the Security page reads
+// it. That page gets the copy there is, and a copy older than a minute is
+// replaced in the background for the page after. The dashboard used to carry
+// a tile built from it, and opening the dashboard after a break ran apt, ufw
+// and fail2ban-client all at once — which the CPU graph then showed.
 type securitySnapshot struct {
 	Jail     security.JailStatus
 	SSH      security.SSHState
@@ -192,6 +194,12 @@ type snapshotCache struct {
 
 var securityCache snapshotCache
 
+// securityStaleAfter is how old a copy can be before the Security page waits
+// for a new one rather than showing it. Nothing else reads it, so a copy can
+// sit for hours between visits, and checks that old are not worth showing as
+// current.
+const securityStaleAfter = 15 * time.Minute
+
 // forget drops the cached snapshot, after anything that changes what it says.
 // The next page reads afresh and waits for it, because it is the page that
 // should show the change.
@@ -206,7 +214,7 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 	securityCache.Lock()
 	current, generation := securityCache.value, securityCache.generation
 
-	if !fresh && current != nil {
+	if !fresh && current != nil && time.Since(current.Taken) < securityStaleAfter {
 		if time.Since(current.Taken) >= time.Minute && !securityCache.refreshing {
 			securityCache.refreshing = true
 
@@ -236,7 +244,7 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 	started := time.Now()
 
 	securityCache.Lock()
-	if !fresh && securityCache.value != nil {
+	if !fresh && securityCache.value != nil && time.Since(securityCache.value.Taken) < securityStaleAfter {
 		current := securityCache.value
 		securityCache.Unlock()
 
@@ -273,16 +281,6 @@ func (a *App) readSnapshot() *securitySnapshot {
 	wait.Wait()
 
 	return snapshot
-}
-
-// warmSecurity reads the snapshot once shortly after start, so the first
-// dashboard after a restart or an update does not pay for it.
-func (a *App) warmSecurity(ctx context.Context) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(20 * time.Second):
-		a.snapshot(false)
-	}
 }
 
 // check is one line of the security checklist.
@@ -416,35 +414,6 @@ func score(list []check) int {
 	}
 
 	return earned * 100 / total
-}
-
-// securitySummary is the dashboard's tile.
-func (a *App) securitySummary(ctx context.Context, user *store.User) map[string]any {
-	snap := a.snapshot(false)
-	list := a.checks(ctx, user, snap)
-
-	failing := 0
-	for _, item := range list {
-		if !item.OK && item.Level != "info" {
-			failing++
-		}
-	}
-
-	_, failedLogins := a.Store.LoginCounts(ctx, time.Now().Add(-24*time.Hour))
-	summary := security.Summarise(eventsSince(snap.Events, 24*time.Hour), 3)
-
-	return map[string]any{
-		"score":            score(list),
-		"failing":          failing,
-		"ssh_failed":       summary.Failed,
-		"ssh_attackers":    summary.UniqueIPs,
-		"banned":           snap.Jail.CurrentlyBanned,
-		"protected":        snap.Jail.Running && snap.Jail.Managed,
-		"firewall":         snap.Firewall.Active,
-		"panel_failed":     failedLogins,
-		"two_factor":       user != nil && a.Store.TwoFactorEnabled(ctx, user.ID),
-		"security_updates": snap.Updates.Security,
-	}
 }
 
 func eventsSince(events []security.Event, window time.Duration) []security.Event {

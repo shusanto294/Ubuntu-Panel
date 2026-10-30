@@ -120,9 +120,6 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 		"sites":          recent,
 		"activeTask":     a.firstActiveTask(r, "provision", "site", "database", "mail"),
 		"recentActivity": recentActivity,
-		"security": inertia.Lazy(func() any {
-			return a.securitySummary(r.Context(), userFrom(r.Context()))
-		}),
 	})
 }
 

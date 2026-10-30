@@ -49,12 +49,24 @@ type Metrics struct {
 // a shared one would make every reader's figure the time since whichever of
 // them asked last — the dashboard polling once a second would leave the
 // minute's recording measuring only the last second of it.
+//
+// A reader asking again within minCPUWindow is given the figure it was last
+// given rather than a new one. A window that short is mostly the asking: the
+// dashboard is read as the page renders and again as it mounts, a fraction of
+// a second apart, and the second reading measured little but the panel
+// serving that page — 100% on a small machine that was otherwise idle.
 type CPUMeter struct {
 	sync.Mutex
 	idle  uint64
 	total uint64
+	at    time.Time
 	seen  bool
+
+	last float64 // -1 until there has been a figure
 }
+
+// minCPUWindow is the shortest time a CPU figure is measured over.
+const minCPUWindow = 500 * time.Millisecond
 
 // live is the meter the dashboard's live figure reads.
 var live CPUMeter
@@ -272,11 +284,24 @@ func (m *CPUMeter) Read() float64 {
 	m.Lock()
 	defer m.Unlock()
 
-	previousIdle, previousTotal, seen := m.idle, m.total, m.seen
+	now := time.Now()
 
-	m.idle, m.total, m.seen = idle, total, true
+	if !m.seen {
+		m.idle, m.total, m.at, m.seen, m.last = idle, total, now, true, -1
+		return -1
+	}
 
-	if !seen || total <= previousTotal {
+	// Too soon to say anything new: keep the baseline, so the next reading
+	// still covers the whole time since it.
+	if now.Sub(m.at) < minCPUWindow {
+		return m.last
+	}
+
+	previousIdle, previousTotal := m.idle, m.total
+
+	m.idle, m.total, m.at = idle, total, now
+
+	if total <= previousTotal {
 		return -1
 	}
 
@@ -285,13 +310,8 @@ func (m *CPUMeter) Read() float64 {
 
 	percent := (deltaTotal - deltaIdle) / deltaTotal * 100
 
-	if percent < 0 {
-		return 0
-	}
-
-	if percent > 100 {
-		return 100
-	}
+	percent = max(0, min(100, percent))
+	m.last = percent
 
 	return percent
 }

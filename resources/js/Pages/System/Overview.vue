@@ -17,17 +17,7 @@ const props = defineProps({
     sites: Array,
     activeTask: Object,
     recentActivity: Array,
-    security: Object,
 });
-
-const securityTone = computed(() => {
-    const score = props.security?.score ?? 0;
-    if (score >= 80) return { text: 'text-emerald-600', ring: '#059669' };
-    if (score >= 50) return { text: 'text-amber-600', ring: '#d97706' };
-    return { text: 'text-rose-600', ring: '#e11d48' };
-});
-
-const securityLink = (tab) => route('security.index') + `?tab=${tab}`;
 
 const busy = computed(
     () =>
@@ -231,72 +221,6 @@ useLiveRefresh(busy, [
             :ranges="historyRanges"
             class="mt-6"
         />
-
-        <!--
-            Security, between the machine's load and its contents: the score
-            and the four numbers that say whether anybody is trying to get in,
-            each a link to the tab that explains it.
-        -->
-        <div
-            v-if="security"
-            class="mt-6 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
-        >
-            <div class="flex flex-wrap items-center gap-6">
-                <Link :href="route('security.index')" class="flex items-center gap-4">
-                    <svg viewBox="0 0 36 36" class="h-16 w-16 shrink-0 -rotate-90">
-                        <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e2e8f0" stroke-width="3.5" />
-                        <circle
-                            cx="18"
-                            cy="18"
-                            r="15.9"
-                            fill="none"
-                            :stroke="securityTone.ring"
-                            stroke-width="3.5"
-                            stroke-linecap="round"
-                            :stroke-dasharray="`${security.score} 100`"
-                        />
-                    </svg>
-                    <div>
-                        <p class="text-sm text-slate-500">Security</p>
-                        <p class="text-2xl font-semibold" :class="securityTone.text">
-                            {{ security.score }}<span class="text-sm text-slate-400">/100</span>
-                        </p>
-                        <p class="text-xs text-slate-500">
-                            {{ security.failing ? `${security.failing} issue(s) to fix` : 'All important checks pass' }}
-                        </p>
-                    </div>
-                </Link>
-
-                <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Link :href="securityLink('ssh')" class="rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100">
-                        <p class="text-xs text-slate-500">Failed SSH logins, 24 h</p>
-                        <p class="text-lg font-semibold text-slate-900">{{ security.ssh_failed }}</p>
-                        <p class="text-xs text-slate-400">{{ security.ssh_attackers }} addresses</p>
-                    </Link>
-                    <Link :href="securityLink('ssh')" class="rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100">
-                        <p class="text-xs text-slate-500">Banned from SSH</p>
-                        <p class="text-lg font-semibold text-slate-900">{{ security.banned }}</p>
-                        <p class="text-xs" :class="security.protected ? 'text-emerald-600' : 'text-rose-600'">
-                            {{ security.protected ? 'protected' : 'not protected' }}
-                        </p>
-                    </Link>
-                    <Link :href="securityLink('logins')" class="rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100">
-                        <p class="text-xs text-slate-500">Failed panel logins, 24 h</p>
-                        <p class="text-lg font-semibold text-slate-900">{{ security.panel_failed }}</p>
-                        <p class="text-xs" :class="security.two_factor ? 'text-emerald-600' : 'text-amber-600'">
-                            2FA {{ security.two_factor ? 'on' : 'off' }}
-                        </p>
-                    </Link>
-                    <Link :href="securityLink('firewall')" class="rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100">
-                        <p class="text-xs text-slate-500">Firewall</p>
-                        <p class="text-lg font-semibold" :class="security.firewall ? 'text-emerald-600' : 'text-rose-600'">
-                            {{ security.firewall ? 'On' : 'Off' }}
-                        </p>
-                        <p class="text-xs text-slate-400">{{ security.security_updates }} security updates waiting</p>
-                    </Link>
-                </div>
-            </div>
-        </div>
 
         <div class="mt-6 grid gap-6 lg:grid-cols-2">
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">

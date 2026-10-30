@@ -123,8 +123,9 @@ onMounted(() => {
         failed.value = false;
     });
 
-    // Something on screen immediately, whichever way the data ends up arriving.
-    readLive();
+    // The page arrived with a reading; the socket sends the next within a
+    // second. Asking again now would only measure the page being served.
+    if (!metrics.value) readLive();
 
     // The page arrived with the default range already in it; only go and get
     // one if it did not.
