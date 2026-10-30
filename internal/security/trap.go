@@ -10,16 +10,16 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 )
 
-// The SSH trap: with SSH turned off, an address that tries to connect to the
-// SSH port anyway is banned from the whole machine on its first try.
+// The SSH trap: an address that connects to the SSH port without being on the
+// never-ban list is banned from the whole machine on its first try, whether
+// SSH is on or off. With SSH on, that makes the never-ban list the only
+// addresses SSH and SFTP will take a connection from.
 //
-// With SSH off nothing listens on the port, so sshd never sees the attempt and
-// there is no log line for fail2ban's sshd jail to read. A firewall rule makes
-// one instead: every new connection to the SSH port is logged by the kernel
-// with trapPrefix, and the ssh-trap jail bans the address it names after one
-// match. The rule exists only while SSH is off — with SSH on, connecting is
-// what the operator does, and the trap would ban them for it — while the jail
-// stays up either way, because it is what holds the bans.
+// sshd's own log is no use for this: with SSH off nothing listens and there is
+// no line, and with it on a line comes only once the client has spoken. A
+// firewall rule logs every new connection to the SSH port with trapPrefix
+// instead, and the ssh-trap jail bans the address it names after one match.
+// The jail's ignore list is what lets the operator in.
 const (
 	// TrapJail is the jail the trap's bans live in.
 	TrapJail = "ssh-trap"

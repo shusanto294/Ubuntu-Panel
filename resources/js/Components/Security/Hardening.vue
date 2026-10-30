@@ -43,8 +43,8 @@ const turnOff = async () => {
 
 const turnOn = () => setService({ action: 'on' });
 
-// The trap: while SSH is off, an address that tries to connect is banned from
-// the whole server on its first try.
+// The trap: any address not on the never-ban list that connects to SSH is
+// banned from the whole server on its first try, whether SSH is on or off.
 const trapped = computed(() => props.trap.status?.banned ?? []);
 
 // An exact entry only — a range covering the address counts too, but working
@@ -56,16 +56,17 @@ const setTrap = async (enabled) => {
         enabled &&
         !(await confirmDanger(
             'Turn the SSH trap on?',
-            'While SSH is off, any address that tries to connect to it is banned from the whole server — the sites and this panel too — permanently, on its first try. ' +
+            'Any address that connects to SSH or SFTP — whether SSH is on or off — is banned from the whole server, sites and this panel included, permanently, on its first try. ' +
+                'Only addresses on the never-ban list can connect, so add every address you and your site SFTP users connect from. ' +
                 (myIpTrusted.value
-                    ? 'Your address is on the never-ban list, so you are safe.'
-                    : `Your address (${props.myIp}) is not on the never-ban list: if you try SSH out of habit, you lose the panel too. Trust it on the SSH protection tab first.`),
-            'Turn trap on',
+                    ? 'Your address is already on the list.'
+                    : `Your address (${props.myIp}) is added to the never-ban list now, so you are not caught.`),
+            myIpTrusted.value ? 'Turn trap on' : 'Trust my address and turn on',
         ))
     )
         return;
 
-    router.post(route('security.ssh-trap'), { enabled }, {
+    router.post(route('security.ssh-trap'), { enabled, trust_me: enabled && !myIpTrusted.value }, {
         preserveScroll: true,
         onStart: () => (switching.value = true),
         onFinish: () => (switching.value = false),
@@ -141,25 +142,26 @@ const save = async () => {
             <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                     <h4 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                        Ban anyone who tries SSH while it is off
+                        SSH trap
                         <span
                             class="rounded-full px-2 py-0.5 text-xs font-medium"
                             :class="trap.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
                         >
-                            {{ trap.enabled ? (service.running ? 'waiting for SSH off' : 'armed') : 'off' }}
+                            {{ trap.enabled ? 'on' : 'off' }}
                         </span>
                     </h4>
                     <p class="mt-1 max-w-2xl text-sm text-slate-500">
-                        With SSH off, nobody has a reason to connect to it. An address that tries is
-                        banned from the whole server — sites and panel included — permanently, on its
-                        first try. Addresses on the never-ban list are exempt.
+                        Any address that connects to SSH or SFTP is banned from the whole server —
+                        sites and panel included — permanently, on its first try, whether SSH is on
+                        or off. Only addresses on the never-ban list (SSH protection tab) can
+                        connect.
                     </p>
                     <p
                         v-if="trap.enabled && !myIpTrusted && myIp"
                         class="mt-2 text-xs text-amber-700"
                     >
-                        Your address ({{ myIp }}) is not on the never-ban list. Trying SSH from it
-                        while SSH is off would lock you out of the panel too.
+                        Your address ({{ myIp }}) is not on the never-ban list. Connecting to SSH
+                        from it would ban it from the server, the panel included.
                     </p>
                 </div>
 

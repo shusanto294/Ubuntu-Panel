@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -9,44 +10,38 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 )
 
-// sshTrapSetting is whether an address trying SSH while it is off is banned
-// from the machine. Off unless somebody turns it on.
+// sshTrapSetting is whether an address that connects to SSH without being on
+// the never-ban list is banned from the machine. Off unless somebody turns it
+// on.
 const sshTrapSetting = "security_ssh_trap"
 
 func (a *App) sshTrapEnabled() bool {
 	return a.Store.SettingBool(sshTrapSetting, false)
 }
 
-// syncSSHTrap makes the firewall agree with SSH: the rule that springs the
-// trap is there only while SSH is off. Called when SSH changes, at start, and
-// every minute — a firewall reload can flush the rule, and a check that finds
-// it in place costs one iptables call. Nothing at all while the trap is off.
+// syncSSHTrap puts the rule that springs the trap in place while the trap is
+// on, whatever SSH is doing. Called at start and when the trap is turned on;
+// a firewall reload can flush the rule, which checkSSHTrap is for.
 func (a *App) syncSSHTrap() {
 	if !a.sshTrapEnabled() {
 		return
 	}
 
-	a.setSSHTrapRule(!security.SSHRunning())
+	a.setSSHTrapRule()
 }
 
-// checkSSHTrap is the every-minute version: a rule already in place while SSH
-// is off is left as it is, without reading sshd's ports again.
+// checkSSHTrap is the every-minute check: a rule already in place is left as
+// it is, at the cost of one iptables call and without reading sshd's ports.
 func (a *App) checkSSHTrap() {
-	if !a.sshTrapEnabled() {
+	if !a.sshTrapEnabled() || security.TrapRulePresent() {
 		return
 	}
 
-	off := !security.SSHRunning()
-
-	if off == security.TrapRulePresent() {
-		return
-	}
-
-	a.setSSHTrapRule(off)
+	a.setSSHTrapRule()
 }
 
-func (a *App) setSSHTrapRule(on bool) {
-	if err := security.SetTrapRule(on, security.SSHPorts()); err != nil {
+func (a *App) setSSHTrapRule() {
+	if err := security.SetTrapRule(true, security.SSHPorts()); err != nil {
 		a.Log.Error("could not set the SSH trap's firewall rule", "error", err)
 	}
 }
@@ -71,7 +66,10 @@ func (a *App) EnsureSSHTrap(ctx context.Context) {
 	a.syncSSHTrap()
 }
 
-// securitySSHTrap turns the trap on or off.
+// securitySSHTrap turns the trap on or off. Turned on with trust_me, the
+// address doing it goes on the never-ban list first: with SSH on, the trap
+// bans every address not on that list, and the operator's own is the one
+// most likely to connect next.
 func (a *App) securitySSHTrap(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
@@ -80,13 +78,27 @@ func (a *App) securitySSHTrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enabled := boolInput(input, "enabled", false)
+	trusted := ""
 
-	if err := security.ApplyTrap(enabled, a.jailConfig().IgnoreIPs); err != nil {
-		a.securityBack(w, r, err.Error(), true)
-		return
+	if enabled && boolInput(input, "trust_me", false) {
+		trusted = a.trustAddress(session.ClientIP(r))
 	}
 
 	a.Store.SetSetting(sshTrapSetting, strconv.FormatBool(enabled))
+
+	// The SSH jail is rewritten too when the never-ban list grew, and that
+	// writes the trap along with it.
+	if trusted != "" {
+		err = a.applySSHProtection(nil)
+	} else {
+		err = security.ApplyTrap(enabled, a.jailConfig().IgnoreIPs)
+	}
+
+	if err != nil {
+		a.Store.SetSetting(sshTrapSetting, strconv.FormatBool(!enabled))
+		a.securityBack(w, r, err.Error(), true)
+		return
+	}
 
 	if enabled {
 		a.syncSSHTrap()
@@ -102,13 +114,40 @@ func (a *App) securitySSHTrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message := "The SSH trap is on. While SSH is off, an address that tries to connect is " +
-		"banned from the whole server on its first try."
-	if security.SSHRunning() {
-		message += " SSH is on right now, so it waits until you turn SSH off."
+	message := "The SSH trap is on. Any address not on the never-ban list that connects to SSH " +
+		"is banned from the whole server on its first try."
+	if trusted != "" {
+		message += " " + trusted + " was added to the never-ban list."
 	}
 
 	a.securityBack(w, r, message, false)
+}
+
+// trustAddress puts an address on the never-ban list and lets it out of both
+// jails. It returns the address when it was added, and "" when it was not an
+// address or was already there.
+func (a *App) trustAddress(address string) string {
+	if !security.ValidAddress(address) {
+		return ""
+	}
+
+	config := a.jailConfig()
+
+	for _, existing := range config.IgnoreIPs {
+		if existing == address {
+			return ""
+		}
+	}
+
+	config.IgnoreIPs = append(config.IgnoreIPs, address)
+
+	encoded, _ := json.Marshal(config)
+	a.Store.SetSetting(jailSetting, string(encoded))
+
+	security.Unban(address)
+	security.UnbanTrap(address)
+
+	return address
 }
 
 // securitySSHTrapUnban lets an address the trap caught back in.

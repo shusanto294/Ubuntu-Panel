@@ -55,25 +55,12 @@ func (a *App) securitySSHService(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// SSH is off, so the trap, if it is on, is set from now.
-		a.syncSSHTrap()
-
 		a.Log.Info("SSH turned off", "ip", session.ClientIP(r))
 		a.securityBack(w, r, "SSH is off and everyone connected was disconnected. It stays "+
 			"off, through reboots, until you turn it on here.", false)
 
 	case "on":
-		// The trap comes down first: with SSH on, connecting is the point, and
-		// the first connection would otherwise be banned for it.
-		if a.sshTrapEnabled() {
-			if err := security.SetTrapRule(false, nil); err != nil {
-				a.securityBack(w, r, err.Error(), true)
-				return
-			}
-		}
-
 		if err := a.startSSH(); err != nil {
-			a.syncSSHTrap()
 			a.securityBack(w, r, err.Error(), true)
 			return
 		}
