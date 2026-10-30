@@ -29,7 +29,7 @@ const turnOff = async () => {
     if (
         !(await confirmDanger(
             'Turn SSH off?',
-            'Nobody will be able to connect over SSH or SFTP — including site SFTP accounts — until it is turned back on from this page. ' +
+            'SSH stays off, through reboots, until you turn it back on from this page. Nobody will be able to connect over SSH or SFTP — including site SFTP accounts — in the meantime. ' +
                 'If the panel itself ever stops, your server provider\'s web console is the only way in.',
             'Turn SSH off',
         ))
@@ -88,9 +88,9 @@ const save = async () => {
                         attack — until you turn it back on here.
                     </template>
                     <template v-else>
-                        Nothing is listening for SSH; the port is closed and stays closed after a
-                        reboot. Open it for a while when you need a terminal, and it closes again
-                        by itself.
+                        SSH stays off — through reboots and upgrades — until you turn it on here.
+                        Nothing is listening; the port is closed. Need a terminal once? Turn it on
+                        for a set time and it switches itself off again afterwards.
                     </template>
                 </p>
             </div>
@@ -130,9 +130,9 @@ const save = async () => {
                     <option :value="1440">24 hours</option>
                 </select>
                 <button type="button" :class="smallButton" class="py-2 text-slate-700" :disabled="switching" @click="openFor">
-                    Open for a while
+                    Turn on for this long
                 </button>
-                <PrimaryButton type="button" :disabled="switching" @click="turnOn">Turn SSH on</PrimaryButton>
+                <PrimaryButton type="button" :disabled="switching" @click="turnOn">Turn SSH on for good</PrimaryButton>
             </div>
         </div>
     </div>

@@ -126,6 +126,12 @@ die() {
     if [ -f "${INSTALL_LOG:-/nonexistent}" ]; then
         printf '   Full log: %s\n' "$INSTALL_LOG" >&2
     fi
+
+    # A deliberate stop is as much a failure as a crash, and leaves the same
+    # things behind: nginx files it never accepted, and a panel stopped for a
+    # binary swap that did not finish.
+    restore_nginx_if_pending
+    rollback_if_staged
     exit 1
 }
 
@@ -142,6 +148,7 @@ on_error() {
         tail -n 30 "$INSTALL_LOG" | sed 's/^/   | /' >&2
     fi
 
+    restore_nginx_if_pending
     rollback_if_staged
     exit "$rc"
 }
@@ -190,6 +197,52 @@ rollback_if_staged() {
             systemctl start ubuntu-panel >/dev/null 2>&1 || true
         fi
     fi
+}
+
+# The nginx files the installer writes or removes. They are copied before the
+# nginx step touches any of them and put back if nginx does not accept the
+# result: a configuration nginx rejects does nothing while nginx runs on the
+# one it loaded, and takes every site on the machine down at the next reload
+# or reboot — the panel's own, or the machine's.
+NGINX_TOUCHED=(
+    /etc/nginx/sites-available/ubuntu-panel
+    /etc/nginx/sites-enabled/ubuntu-panel
+    /etc/nginx/sites-enabled/default
+    /etc/nginx/conf.d/000-panel-default.conf
+)
+NGINX_SAVED=""
+
+save_nginx() {
+    NGINX_SAVED="$(mktemp -d)"
+
+    local i
+    for i in "${!NGINX_TOUCHED[@]}"; do
+        if [ -e "${NGINX_TOUCHED[$i]}" ] || [ -L "${NGINX_TOUCHED[$i]}" ]; then
+            cp -a "${NGINX_TOUCHED[$i]}" "$NGINX_SAVED/$i"
+        fi
+    done
+}
+
+restore_nginx_if_pending() {
+    [ -n "$NGINX_SAVED" ] && [ -d "$NGINX_SAVED" ] || return 0
+
+    local i
+    for i in "${!NGINX_TOUCHED[@]}"; do
+        rm -f "${NGINX_TOUCHED[$i]}"
+        if [ -e "$NGINX_SAVED/$i" ] || [ -L "$NGINX_SAVED/$i" ]; then
+            cp -a "$NGINX_SAVED/$i" "${NGINX_TOUCHED[$i]}"
+        fi
+    done
+
+    rm -rf "$NGINX_SAVED"
+    NGINX_SAVED=""
+
+    printf '%s   Put the nginx files back as they were; the sites are untouched.%s\n' "$YELLOW" "$RESET" >&2
+}
+
+forget_saved_nginx() {
+    [ -n "$NGINX_SAVED" ] && rm -rf "$NGINX_SAVED"
+    NGINX_SAVED=""
 }
 
 # =========================================================== 1. preflight
@@ -1042,6 +1095,8 @@ fi
 
 step "Configuring nginx"
 
+save_nginx
+
 install -d -m 0755 /var/www/letsencrypt/.well-known/acme-challenge
 chown -R www-data:www-data /var/www/letsencrypt 2>/dev/null || true
 
@@ -1197,9 +1252,10 @@ fi
 
 if logged nginx -t; then
     ok "nginx accepted the configuration"
+    forget_saved_nginx
 else
     tail -n 20 "$INSTALL_LOG" | sed 's/^/        /' >&2 || true
-    die "nginx rejected the configuration — nothing was reloaded."
+    die "nginx rejected the configuration — nothing was reloaded, and its files were put back."
 fi
 
 if systemctl is-enabled --quiet nginx 2>/dev/null; then

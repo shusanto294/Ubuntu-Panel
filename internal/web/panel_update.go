@@ -85,6 +85,14 @@ func (a *App) startPanelUpdate(ctx context.Context, userID int64, auto bool) err
 		return errors.New("an update is already running")
 	}
 
+	// The panel stops for the swap, and its work stops with it: a restore, a
+	// deploy or a clone cut off halfway is a site left broken. The clock
+	// already waits for these; a click waits too.
+	if a.Store.WorkInProgress(ctx) {
+		return errors.New("a task is running — a backup, a restore, a deploy or an install. " +
+			"Update once it has finished, so it is not cut off halfway; the Logs page shows it")
+	}
+
 	target := ""
 	if status := a.updateStatus(ctx, false); status != nil {
 		if latest, ok := status["latest"].(map[string]any); ok {

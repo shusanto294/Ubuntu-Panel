@@ -55,7 +55,7 @@ type SSHState struct {
 func ReadSSH() SSHState {
 	state := SSHState{Ports: []string{}, AuthorizedKeys: []string{}, Service: ReadSSHService()}
 
-	result := proc.Run("sudo sshd -T 2>/dev/null", 30*time.Second)
+	result := sshd("-T 2>/dev/null")
 	if !result.OK() {
 		return state
 	}
@@ -178,7 +178,7 @@ func ApplySSH(config SSHConfig) error {
 		return err
 	}
 
-	if check := proc.Run("sudo sshd -t 2>&1", 30*time.Second); !check.OK() {
+	if check := sshd("-t 2>&1"); !check.OK() {
 		if previous != "" {
 			proc.PutFile(sshdDropIn, previous, true)
 		} else {
@@ -293,7 +293,7 @@ func StartSSH(units []string) error {
 
 	// A configuration sshd cannot parse would not start, and would say so
 	// only in the journal.
-	if check := proc.Run("sudo sshd -t 2>&1", 30*time.Second); !check.OK() {
+	if check := sshd("-t 2>&1"); !check.OK() {
 		return fmt.Errorf("sshd's configuration is broken, so it cannot start: %s", lastLines(check.Output, 4))
 	}
 
@@ -312,6 +312,19 @@ func StartSSH(units []string) error {
 	}
 
 	return nil
+}
+
+// sshd runs sshd itself, to test or print its configuration.
+//
+// sshd will not do even that without its privilege separation directory,
+// /run/sshd, which systemd creates when ssh.service starts and removes when it
+// stops. With SSH turned off, `sshd -t` failed with "Missing privilege
+// separation directory" — nothing to do with the configuration — and turning
+// SSH back on refused to go further. The directory is made first, as the unit
+// itself would make it.
+func sshd(arguments string) proc.Result {
+	return proc.Run("sudo install -d -m 0755 -o root -g root /run/sshd && sudo sshd "+arguments,
+		30*time.Second)
 }
 
 func validUnit(unit string) bool {

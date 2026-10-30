@@ -93,6 +93,7 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/redeploy", "sites.redeploy", authenticated, a.sitesRedeploy)
 	rt.post("/sites/{site}/pull", "sites.pull", authenticated, a.sitesPull)
 	rt.post("/sites/{site}/restart", "sites.restart", authenticated, a.sitesRestart)
+	rt.post("/sites/{site}/logs/clear", "sites.logs.clear", authenticated, a.sitesLogsClear)
 
 	// Databases
 	rt.get("/databases", "databases.index", authenticated, a.databasesIndex)

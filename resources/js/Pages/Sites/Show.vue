@@ -748,6 +748,37 @@ const shownLog = computed(() =>
     props.logFiles.find((file) => file.key === logView.value),
 );
 
+const clearingLog = ref(false);
+
+// `log` is a file's key, 'activity' or 'all'. A file is emptied rather than
+// deleted, so nginx goes on writing to it; the copies logrotate kept go too.
+const clearLog = async (log) => {
+    const what =
+        log === 'all'
+            ? 'every log for this site'
+            : log === 'activity'
+              ? "the panel's activity history for this site"
+              : `the ${props.logFiles.find((file) => file.key === log)?.label.toLowerCase() ?? 'log'}`;
+
+    const go = await confirmDanger(
+        'Clear logs?',
+        `This empties ${what}, including the older rotated copies. It cannot be undone; the site itself is not touched.`,
+        'Clear',
+    );
+
+    if (!go) return;
+
+    router.post(
+        route('sites.logs.clear', props.site.id),
+        { log },
+        {
+            preserveScroll: true,
+            onStart: () => (clearingLog.value = true),
+            onFinish: () => (clearingLog.value = false),
+        },
+    );
+};
+
 const {
     page: logPage,
     pages: logPages,
@@ -2975,15 +3006,32 @@ const destroy = async () => {
                 >
                     Panel activity
                 </button>
+                <button
+                    @click="clearLog('all')"
+                    :disabled="clearingLog"
+                    class="ml-auto rounded-xl bg-white px-3 py-2 text-sm font-medium text-rose-600 ring-1 ring-slate-900/10 transition hover:bg-rose-50 disabled:opacity-50"
+                >
+                    Clear all logs
+                </button>
             </div>
 
             <div
                 v-if="shownLog"
                 class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
             >
-                <p class="break-all font-mono text-xs text-slate-500">
-                    {{ shownLog.path }} · last 200 lines
-                </p>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class="break-all font-mono text-xs text-slate-500">
+                        {{ shownLog.path }} · last 200 lines
+                    </p>
+                    <button
+                        v-if="shownLog.lines"
+                        @click="clearLog(shownLog.key)"
+                        :disabled="clearingLog"
+                        class="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-600 ring-1 ring-slate-900/10 transition hover:bg-rose-50 disabled:opacity-50"
+                    >
+                        Clear this log
+                    </button>
+                </div>
                 <pre
                     v-if="shownLog.lines"
                     class="mt-3 max-h-[60vh] overflow-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
@@ -2998,8 +3046,16 @@ const destroy = async () => {
                 v-if="logView === 'activity'"
                 class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
             >
-                <div class="border-b border-slate-200 px-5 py-4">
+                <div class="flex items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
                     <h3 class="font-semibold text-slate-800">Activity log</h3>
+                    <button
+                        v-if="logs.length"
+                        @click="clearLog('activity')"
+                        :disabled="clearingLog"
+                        class="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-600 ring-1 ring-slate-900/10 transition hover:bg-rose-50 disabled:opacity-50"
+                    >
+                        Clear activity
+                    </button>
                 </div>
                 <ul class="divide-y divide-slate-100">
                     <li v-for="log in visibleLogs" :key="log.id">

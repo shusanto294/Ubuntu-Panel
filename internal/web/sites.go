@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -895,20 +896,7 @@ func (a *App) sitesCron(w http.ResponseWriter, r *http.Request) {
 // The tail, not the file. An error log on a busy site is megabytes, and the
 // question being asked of it is always about the last few minutes.
 func (a *App) siteLogFiles(site *store.Site, lines int) []map[string]any {
-	files := []struct {
-		key, label, path string
-	}{
-		{"access", "Access log", "/var/log/nginx/" + site.Domain + "-access.log"},
-		{"error", "Error log", "/var/log/nginx/" + site.Domain + "-error.log"},
-	}
-
-	// A proxied site's application writes its own, which is where the reason
-	// for a 502 actually is — nginx only knows it could not connect.
-	if site.IsProxied() {
-		files = append(files, struct{ key, label, path string }{
-			"app", site.TypeLabel() + " log", "/var/log/" + site.ServiceName() + ".log",
-		})
-	}
+	files := siteLogPaths(site)
 
 	summaries := make([]map[string]any, 0, len(files))
 
@@ -925,6 +913,101 @@ func (a *App) siteLogFiles(site *store.Site, lines int) []map[string]any {
 	}
 
 	return summaries
+}
+
+// siteLogFile is one of the files a site's Logs tab shows.
+type siteLogFile struct {
+	key, label, path string
+}
+
+// siteLogPaths are the files nginx writes for this site, and the one its
+// application writes when it is proxied.
+func siteLogPaths(site *store.Site) []siteLogFile {
+	files := []siteLogFile{
+		{"access", "Access log", "/var/log/nginx/" + site.Domain + "-access.log"},
+		{"error", "Error log", "/var/log/nginx/" + site.Domain + "-error.log"},
+	}
+
+	// A proxied site's application writes its own, which is where the reason
+	// for a 502 actually is — nginx only knows it could not connect.
+	if site.IsProxied() {
+		files = append(files, siteLogFile{
+			"app", site.TypeLabel() + " log", "/var/log/" + site.ServiceName() + ".log",
+		})
+	}
+
+	return files
+}
+
+// clearLogFile empties a log and deletes the copies logrotate kept of it.
+//
+// Emptied rather than deleted: nginx, and a service writing with append:,
+// hold the file open, and a deleted file goes on being written where nobody
+// can read it — and keeps its disk space — until they reopen it. Truncated,
+// the next line lands at the top of the same file.
+func clearLogFile(path string) error {
+	dir, base := filepath.Dir(path), filepath.Base(path)
+
+	result := proc.Run(fmt.Sprintf(
+		"sudo truncate -c -s 0 %s && sudo find %s -maxdepth 1 -type f -name %s -delete",
+		proc.Quote(path), proc.Quote(dir), proc.Quote(base+".[0-9]*")), time.Minute)
+	if !result.OK() {
+		return fmt.Errorf("could not clear %s: %s", path, strings.TrimSpace(result.Output))
+	}
+
+	return nil
+}
+
+// sitesLogsClear clears one of a site's logs, or all of them.
+func (a *App) sitesLogsClear(w http.ResponseWriter, r *http.Request) {
+	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
+	if err != nil {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	which := input["log"]
+	cleared := []string{}
+
+	for _, file := range siteLogPaths(site) {
+		if which != "all" && which != file.key {
+			continue
+		}
+
+		if err := clearLogFile(file.path); err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		cleared = append(cleared, strings.ToLower(file.label))
+	}
+
+	if which == "all" || which == "activity" {
+		removed := a.Store.ClearSiteTasks(r.Context(), site.ID)
+		cleared = append(cleared, "panel activity")
+
+		a.Log.Info("site activity cleared", "site", site.Domain, "rows", removed)
+	}
+
+	if len(cleared) == 0 {
+		a.failBack(w, r, "Choose which log to clear.")
+		return
+	}
+
+	a.Log.Info("site logs cleared", "site", site.Domain, "log", which)
+
+	message := "Cleared the " + cleared[0] + "."
+	if len(cleared) > 1 {
+		message = "Cleared every log for " + site.Domain + "."
+	}
+
+	a.okBack(w, r, message)
 }
 
 // ------------------------------------------------------------ file manager

@@ -299,6 +299,20 @@ func (s *Store) ClearLogs(ctx context.Context, kinds []string, before time.Time)
 	return removed
 }
 
+// ClearSiteTasks deletes one site's history of what the panel did to it, and
+// says how many went. A task still running is kept, as in ClearLogs.
+func (s *Store) ClearSiteTasks(ctx context.Context, siteID int64) int64 {
+	result, err := s.db.ExecContext(ctxOrBackground(ctx),
+		`DELETE FROM activity_logs WHERE site_id = ? AND status != 'running'`, siteID)
+	if err != nil {
+		return 0
+	}
+
+	count, _ := result.RowsAffected()
+
+	return count
+}
+
 // Compact gives the space deleted rows held back to the disk. SQLite keeps it
 // for reuse otherwise, so clearing a year of logs would not make the file any
 // smaller. It rewrites the whole database, so only after a clear somebody

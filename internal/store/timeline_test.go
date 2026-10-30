@@ -96,3 +96,30 @@ func TestClearLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Clearing one site's activity leaves every other site's, and a task still
+// running on the site being cleared.
+func TestClearSiteTasks(t *testing.T) {
+	st := taskStore(t)
+	ctx := context.Background()
+
+	st.db.Exec(`PRAGMA foreign_keys = OFF`)
+
+	running, _ := st.CreateTask(ctx, "site", "site.deploy", 0, 1, "")
+	done, _ := st.CreateTask(ctx, "site", "site.create", 0, 1, "")
+	st.FinishTask(done, "success", "", 100)
+	other, _ := st.CreateTask(ctx, "site", "site.create", 0, 2, "")
+	st.FinishTask(other, "success", "", 100)
+
+	if removed := st.ClearSiteTasks(ctx, 1); removed != 1 {
+		t.Fatalf("removed %d, want the one finished task of site 1", removed)
+	}
+
+	if task, _ := st.FindTask(ctx, running); task == nil {
+		t.Fatal("a running task was removed")
+	}
+
+	if task, _ := st.FindTask(ctx, other); task == nil {
+		t.Fatal("another site's task was removed")
+	}
+}

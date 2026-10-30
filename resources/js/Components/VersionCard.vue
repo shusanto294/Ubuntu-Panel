@@ -149,9 +149,10 @@ const follow = () => {
 const update = async () => {
     const go = await confirmAction(
         'Update the panel now?',
-        'The newest release is downloaded and installed, and the panel restarts — this ' +
-            'page reloads by itself when it is back, usually within a minute. The database ' +
-            'is backed up first, and if the new version does not start the old one is put back.',
+        'The newest release is downloaded and installed on the server, and the panel ' +
+            'restarts — usually within a minute. It runs by itself: you do not need to keep ' +
+            'this page open. Your sites keep serving throughout; only the panel restarts. The ' +
+            'database is backed up first, and if the new version does not start the old one is put back.',
         'Update',
     );
 
@@ -254,7 +255,9 @@ const copy = async () => {
                 <template v-else>Updated. Reloading…</template>
             </p>
             <p v-if="phase !== 'done'" class="mt-1 text-xs text-brand-700">
-                Keep this page open — it reloads by itself when the new version answers.
+                This runs on the server by itself — you can leave this page or close it. If
+                you stay, it reloads onto the new version when that answers; if you leave, the
+                result is here and on the Logs page next time.
             </p>
         </div>
 
