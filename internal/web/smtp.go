@@ -239,7 +239,7 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.closeSSHWhenDue(ctx)
+			a.checkSSHTrap()
 			a.recordSSHEvents(ctx)
 			a.checkAlerts(ctx)
 		}

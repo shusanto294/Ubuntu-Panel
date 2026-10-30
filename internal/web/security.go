@@ -94,6 +94,13 @@ func (a *App) applySSHProtection(runner *tasks.Runner) error {
 		return err
 	}
 
+	// The trap shares the never-ban list, so it is rewritten with it.
+	if a.sshTrapEnabled() {
+		if err := security.ApplyTrap(true, a.jailConfig().IgnoreIPs); err != nil {
+			return err
+		}
+	}
+
 	if runner != nil {
 		config := a.jailConfig()
 		runner.Writef("SSH is protected: %d failed attempts within %s and an address is %s.\n",
@@ -175,6 +182,7 @@ type securitySnapshot struct {
 	Updates  security.Updates
 	Events   []security.Event
 	Users    []security.SSHUser
+	Trap     *security.JailStatus
 	Taken    time.Time
 }
 
@@ -278,6 +286,13 @@ func (a *App) readSnapshot() *securitySnapshot {
 	go func() { defer wait.Done(); snapshot.Updates = security.ReadUpdates() }()
 	go func() { defer wait.Done(); snapshot.Events = security.ReadEvents(7*24*time.Hour, 1000) }()
 	go func() { defer wait.Done(); snapshot.Users = security.ReadUsers(a.Config.SystemUser) }()
+
+	// Only when the trap is on: asking fail2ban is a Python start-up.
+	if a.sshTrapEnabled() {
+		wait.Add(1)
+		go func() { defer wait.Done(); status := security.TrapStatus(); snapshot.Trap = &status }()
+	}
+
 	wait.Wait()
 
 	return snapshot
@@ -519,10 +534,14 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		},
 		"hardening":  snap.SSH,
 		"sshService": a.sshServiceProps(snap.SSH.Service),
-		"users":      a.sshUsers(snap),
-		"firewall":   snap.Firewall,
-		"panelPort":  a.panelPort(),
-		"updates":    snap.Updates,
+		"sshTrap": map[string]any{
+			"enabled": a.sshTrapEnabled(),
+			"status":  snap.Trap,
+		},
+		"users":     a.sshUsers(snap),
+		"firewall":  snap.Firewall,
+		"panelPort": a.panelPort(),
+		"updates":   snap.Updates,
 		"logins": map[string]any{
 			"attempts":        attempts,
 			"succeeded_24h":   succeeded,

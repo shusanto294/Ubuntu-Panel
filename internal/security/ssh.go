@@ -239,9 +239,16 @@ func ReadSSHService() SSHService {
 	return service
 }
 
-// SSHRunning is whether a reload has anything to reload.
+// SSHRunning is whether anything is listening for SSH: what ReadSSHService
+// says of it, without asking what starts at boot.
 func SSHRunning() bool {
-	return ReadSSHService().Running
+	for _, unit := range sshUnits {
+		if proc.Ok("systemctl is-active --quiet " + unit) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // StopSSH turns SSH off: nothing listens on the port, and nothing will start

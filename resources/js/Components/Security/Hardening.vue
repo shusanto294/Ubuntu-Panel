@@ -1,21 +1,23 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import Checkbox from '@/Components/Checkbox.vue';
 import InputError from '@/Components/InputError.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import { confirmAction, confirmDanger } from '@/dialog';
-import { ago, card, field, smallButton, when } from './ui';
+import { card, field } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     hardening: Object,
     service: Object,
+    trap: { type: Object, default: () => ({ enabled: false, status: null }) },
+    neverBan: { type: Array, default: () => [] },
+    myIp: { type: String, default: '' },
 });
 
-// SSH itself, on or off. Off stops and masks sshd: the port closes and stays
-// closed through reboots and package upgrades.
-const endSessions = ref(false);
-const openMinutes = ref(60);
+// SSH itself, on or off — either lasts until it is changed here. Off stops
+// and masks sshd, so the port closes and stays closed through reboots and
+// package upgrades, and disconnects everybody logged in.
 const switching = ref(false);
 
 const setService = (data) =>
@@ -29,18 +31,49 @@ const turnOff = async () => {
     if (
         !(await confirmDanger(
             'Turn SSH off?',
-            'SSH stays off, through reboots, until you turn it back on from this page. Nobody will be able to connect over SSH or SFTP — including site SFTP accounts — in the meantime. ' +
-                'If the panel itself ever stops, your server provider\'s web console is the only way in.',
+            'Everyone connected over SSH or SFTP is disconnected now, and nobody — including site SFTP accounts — can connect until you turn it back on here. ' +
+                'It stays off through reboots. If the panel itself ever stops, your server provider\'s web console is the only way in.',
             'Turn SSH off',
         ))
     )
         return;
 
-    setService({ action: 'off', end_sessions: endSessions.value });
+    setService({ action: 'off' });
 };
 
 const turnOn = () => setService({ action: 'on' });
-const openFor = () => setService({ action: 'open', minutes: openMinutes.value });
+
+// The trap: while SSH is off, an address that tries to connect is banned from
+// the whole server on its first try.
+const trapped = computed(() => props.trap.status?.banned ?? []);
+
+// An exact entry only — a range covering the address counts too, but working
+// that out here is not worth a false "you are safe".
+const myIpTrusted = computed(() => props.neverBan.includes(props.myIp));
+
+const setTrap = async (enabled) => {
+    if (
+        enabled &&
+        !(await confirmDanger(
+            'Turn the SSH trap on?',
+            'While SSH is off, any address that tries to connect to it is banned from the whole server — the sites and this panel too — permanently, on its first try. ' +
+                (myIpTrusted.value
+                    ? 'Your address is on the never-ban list, so you are safe.'
+                    : `Your address (${props.myIp}) is not on the never-ban list: if you try SSH out of habit, you lose the panel too. Trust it on the SSH protection tab first.`),
+            'Turn trap on',
+        ))
+    )
+        return;
+
+    router.post(route('security.ssh-trap'), { enabled }, {
+        preserveScroll: true,
+        onStart: () => (switching.value = true),
+        onFinish: () => (switching.value = false),
+    });
+};
+
+const releaseTrapped = (ip) =>
+    router.post(route('security.ssh-trap.unban'), { ip }, { preserveScroll: true });
 
 const form = useForm({
     permit_root_login: props.hardening.permit_root_login || 'prohibit-password',
@@ -78,61 +111,89 @@ const save = async () => {
                     </span>
                 </h3>
                 <p class="mt-1 max-w-2xl text-sm text-slate-500">
-                    <template v-if="service.running && service.close_at">
-                        Open until {{ when(service.close_at) }} ({{ ago(service.close_at) }}), then
-                        it turns itself off again. Sessions opened before then stay connected.
-                    </template>
-                    <template v-else-if="service.running">
+                    <template v-if="service.running">
                         sshd is listening on port {{ (hardening.ports ?? []).join(', ') || '22' }}.
                         Turn it off and the port closes entirely — nothing to guess, scan or
-                        attack — until you turn it back on here.
+                        attack — and everyone connected is disconnected, until you turn it back
+                        on here.
                     </template>
                     <template v-else>
                         SSH stays off — through reboots and upgrades — until you turn it on here.
-                        Nothing is listening; the port is closed. Need a terminal once? Turn it on
-                        for a set time and it switches itself off again afterwards.
+                        Nothing is listening; the port is closed.
                     </template>
                 </p>
             </div>
 
-            <div v-if="service.running" class="flex flex-col items-end gap-2">
-                <div class="flex flex-wrap gap-2">
-                    <button
-                        v-if="service.close_at"
-                        type="button"
-                        :class="smallButton"
-                        class="py-2 text-slate-700"
-                        :disabled="switching"
-                        @click="turnOn"
+            <button
+                v-if="service.running"
+                type="button"
+                class="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                :disabled="switching"
+                @click="turnOff"
+            >
+                Turn off
+            </button>
+            <PrimaryButton v-else type="button" :disabled="switching" @click="turnOn">Turn on</PrimaryButton>
+        </div>
+
+        <!-- The trap, which only has anything to catch while SSH is off. -->
+        <div class="mt-5 border-t border-slate-100 pt-5">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <h4 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                        Ban anyone who tries SSH while it is off
+                        <span
+                            class="rounded-full px-2 py-0.5 text-xs font-medium"
+                            :class="trap.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
+                        >
+                            {{ trap.enabled ? (service.running ? 'waiting for SSH off' : 'armed') : 'off' }}
+                        </span>
+                    </h4>
+                    <p class="mt-1 max-w-2xl text-sm text-slate-500">
+                        With SSH off, nobody has a reason to connect to it. An address that tries is
+                        banned from the whole server — sites and panel included — permanently, on its
+                        first try. Addresses on the never-ban list are exempt.
+                    </p>
+                    <p
+                        v-if="trap.enabled && !myIpTrusted && myIp"
+                        class="mt-2 text-xs text-amber-700"
                     >
-                        Keep it on
-                    </button>
-                    <button
-                        type="button"
-                        class="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
-                        :disabled="switching"
-                        @click="turnOff"
-                    >
-                        {{ service.close_at ? 'Close now' : 'Turn SSH off' }}
-                    </button>
+                        Your address ({{ myIp }}) is not on the never-ban list. Trying SSH from it
+                        while SSH is off would lock you out of the panel too.
+                    </p>
                 </div>
-                <label class="flex items-center gap-2 text-xs text-slate-600">
-                    <Checkbox v-model:checked="endSessions" />
-                    Also disconnect everyone logged in now
-                </label>
+
+                <button
+                    type="button"
+                    class="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-slate-900/10 transition disabled:opacity-50"
+                    :class="trap.enabled ? 'bg-white text-slate-700 hover:bg-slate-50' : 'bg-slate-900 text-white hover:bg-slate-800'"
+                    :disabled="switching"
+                    @click="setTrap(!trap.enabled)"
+                >
+                    {{ trap.enabled ? 'Turn off' : 'Turn on' }}
+                </button>
             </div>
 
-            <div v-else class="flex flex-wrap items-center gap-2">
-                <select v-model.number="openMinutes" class="rounded-lg border-slate-300 py-2 text-sm shadow-sm">
-                    <option :value="15">15 minutes</option>
-                    <option :value="60">1 hour</option>
-                    <option :value="240">4 hours</option>
-                    <option :value="1440">24 hours</option>
-                </select>
-                <button type="button" :class="smallButton" class="py-2 text-slate-700" :disabled="switching" @click="openFor">
-                    Turn on for this long
-                </button>
-                <PrimaryButton type="button" :disabled="switching" @click="turnOn">Turn SSH on for good</PrimaryButton>
+            <div v-if="trap.enabled && trapped.length" class="mt-4">
+                <p class="text-xs font-medium text-slate-500">
+                    Caught {{ trapped.length }} address{{ trapped.length === 1 ? '' : 'es' }}
+                </p>
+                <ul class="mt-2 flex flex-wrap gap-2">
+                    <li
+                        v-for="ip in trapped"
+                        :key="ip"
+                        class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 font-mono text-xs text-slate-700"
+                    >
+                        {{ ip }}
+                        <button
+                            type="button"
+                            class="font-sans font-medium text-brand-600 hover:underline"
+                            @click="releaseTrapped(ip)"
+                        >
+                            unban
+                        </button>
+                    </li>
+                </ul>
             </div>
         </div>
     </div>

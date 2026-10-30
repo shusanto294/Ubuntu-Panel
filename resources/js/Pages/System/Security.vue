@@ -21,6 +21,7 @@ const props = defineProps({
     users: Array,
     hardening: Object,
     sshService: Object,
+    sshTrap: Object,
     firewall: Object,
     panelPort: Number,
     updates: Object,
@@ -269,7 +270,14 @@ const tiles = computed(() => [
             :panel-port="panelPort"
             :my-ip="myIp"
         />
-        <Hardening v-else-if="tab === 'hardening'" :hardening="hardening" :service="sshService" />
+        <Hardening
+            v-else-if="tab === 'hardening'"
+            :hardening="hardening"
+            :service="sshService"
+            :trap="sshTrap"
+            :never-ban="ssh.jail?.ignore_ips ?? []"
+            :my-ip="myIp"
+        />
         <Updates v-else-if="tab === 'updates'" :updates="updates" :busy="Boolean(activeTask)" />
         <Sessions v-else-if="tab === 'sessions'" :sessions="sessions" />
         <Alerts v-else-if="tab === 'alerts'" :alerts="alerts" :smtp-ready="smtpReady" />

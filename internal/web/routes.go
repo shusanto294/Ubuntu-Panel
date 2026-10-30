@@ -248,6 +248,8 @@ func (a *App) routes() *router {
 	rt.post("/security/firewall/block", "security.firewall.block", authenticated, a.securityFirewallBlock)
 	rt.post("/security/hardening", "security.hardening", authenticated, a.securityHardening)
 	rt.post("/security/ssh-service", "security.ssh-service", authenticated, a.securitySSHService)
+	rt.post("/security/ssh-trap", "security.ssh-trap", authenticated, a.securitySSHTrap)
+	rt.post("/security/ssh-trap/unban", "security.ssh-trap.unban", authenticated, a.securitySSHTrapUnban)
 	rt.post("/security/updates/automatic", "security.updates.automatic", authenticated,
 		a.securityAutoUpdates)
 	rt.post("/security/updates/install", "security.updates.install", authenticated,

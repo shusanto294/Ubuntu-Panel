@@ -196,15 +196,20 @@ type JailStatus struct {
 
 // Status asks fail2ban.
 func Status() JailStatus {
+	return jailStatus(Jail, JailPath)
+}
+
+// jailStatus asks fail2ban about one jail; path is the panel's file for it.
+func jailStatus(jail, path string) JailStatus {
 	status := JailStatus{Installed: proc.Which("fail2ban-client"), Banned: []string{}}
 
 	if !status.Installed {
 		return status
 	}
 
-	status.Managed = proc.Exists(JailPath, true)
+	status.Managed = proc.Exists(path, true)
 
-	result := proc.Run("sudo fail2ban-client status "+Jail+" 2>&1", 30*time.Second)
+	result := proc.Run("sudo fail2ban-client status "+jail+" 2>&1", 30*time.Second)
 	if !result.OK() {
 		return status
 	}
@@ -259,11 +264,15 @@ func Ban(address string) error {
 
 // Unban lets an address back in.
 func Unban(address string) error {
+	return unban(Jail, address)
+}
+
+func unban(jail, address string) error {
 	if !ValidIP(address) {
 		return errors.New("that is not an IP address")
 	}
 
-	if result := proc.Run("sudo fail2ban-client set "+Jail+" unbanip "+proc.Quote(address),
+	if result := proc.Run("sudo fail2ban-client set "+jail+" unbanip "+proc.Quote(address),
 		30*time.Second); !result.OK() {
 		return fmt.Errorf("fail2ban refused: %s", lastLines(result.Output, 3))
 	}
