@@ -75,8 +75,10 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	catalog.SharedNginxConfig = app.Sites.WriteSharedConfig
 	catalog.ConfigureMail = app.Mail.Configure
 	catalog.ConfigurePhpMyAdmin = app.EnsurePhpMyAdminReady
+	catalog.ConfigureSSHProtection = app.applySSHProtection
 
 	app.registerJobs()
+	app.registerSecurityJobs()
 
 	app.MCP = app.buildMCP()
 
@@ -113,7 +115,14 @@ func (a *App) Start(ctx context.Context) {
 		// After the helpers, because it rewrites vhosts and reloads nginx, and
 		// the configuration those write is what nginx is being asked to take.
 		a.EnsureSiteAliases(ctx)
+
+		// Last, so a first run's install is already queued and fail2ban goes
+		// in with it rather than racing it for the dpkg lock.
+		a.EnsureSSHProtection(ctx)
 	}()
+
+	// Security alerts: the clock that emails sign-ins, lockouts and bans.
+	go a.runSecurityAlerts(ctx)
 
 	// The sites that back themselves up. Its own goroutine rather than part of
 	// the queue, because it is a clock rather than a piece of work: it does
@@ -145,6 +154,7 @@ func (a *App) Handler() http.Handler {
 	// session row every couple of seconds for nobody to read.
 	handler = a.withMCP(handler)
 
+	handler = a.withSecurityHeaders(handler)
 	handler = a.withLogging(handler)
 	handler = a.withRecovery(handler)
 

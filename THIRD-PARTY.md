@@ -37,6 +37,7 @@ The Go standard library itself is BSD-3-Clause.
 | `@xterm/xterm` and its addons | MIT — The xterm.js authors |
 | `axios` | MIT — Matt Zabriskie and contributors |
 | `sweetalert2` | MIT — Limon Monte |
+| `qrcode` | MIT — Ryan Day |
 | `tailwindcss`, `@tailwindcss/forms` | MIT — Tailwind Labs |
 | `vite`, `@vitejs/plugin-vue`, `postcss`, `autoprefixer` | MIT (build tools; not shipped in the binary) |
 

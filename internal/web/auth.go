@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 
@@ -124,9 +126,27 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	attempt := a.loginAttempt(r, input["email"])
+
+	// Refused before the password is looked at, so a locked-out address learns
+	// nothing from trying more — not even whether the password was right.
+	if until := a.loginLockedUntil(r.Context(), attempt.IP); until > 0 {
+		attempt.Reason = store.LoginLocked
+		a.Store.RecordLoginAttempt(r.Context(), attempt)
+
+		sess.Error("email", lockedMessage(until))
+		inertia.Back(w, r, "/login")
+		return
+	}
+
 	user, err := a.Store.Authenticate(r.Context(), input["email"], input["password"])
 
 	if errors.Is(err, store.ErrNoUser) {
+		attempt.Reason = store.LoginPassword
+		a.Store.RecordLoginAttempt(r.Context(), attempt)
+
+		a.Log.Warn("sign-in failed", "ip", attempt.IP, "email", attempt.Email)
+
 		// One message for a wrong address and a wrong password alike. Telling
 		// them apart is how an attacker learns which addresses have accounts.
 		sess.Error("email", "Those credentials do not match our records.")
@@ -139,12 +159,37 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The password was right, but it is only half of it. The account is held
+	// in the session — not signed in — until the second step is passed, and
+	// only for a few minutes.
+	if a.Store.TwoFactorEnabled(r.Context(), user.ID) {
+		sess.Put(twoFactorUserKey, strconv.FormatInt(user.ID, 10))
+		sess.Put(twoFactorAtKey, strconv.FormatInt(time.Now().Unix(), 10))
+		sess.Forget(twoFactorTriesKey)
+
+		inertia.Redirect(w, r, "/login/two-factor")
+		return
+	}
+
+	a.completeLogin(w, r, user, store.LoginPassword)
+}
+
+// completeLogin signs an account in once every step it has has been passed.
+func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, user *store.User, reason string) {
+	sess := session.FromContext(r.Context())
+
 	if err := sess.Login(r.Context(), user.ID); err != nil {
 		a.serverError(w, r, "could not sign in", err)
 		return
 	}
 
-	a.Log.Info("signed in", "email", user.Email)
+	attempt := a.loginAttempt(r, user.Email)
+	attempt.UserID = user.ID
+	attempt.Success = true
+	attempt.Reason = reason
+	a.Store.RecordLoginAttempt(r.Context(), attempt)
+
+	a.Log.Info("signed in", "email", user.Email, "ip", attempt.IP)
 
 	// Back to whatever they were reaching for before being asked to sign in.
 	target := sess.Pull("intended")
@@ -167,6 +212,7 @@ func (a *App) editProfile(w http.ResponseWriter, r *http.Request) {
 	a.Render.Render(w, r, "Profile/Edit", inertia.Props{
 		"mustVerifyEmail": false,
 		"status":          nullable(sess.Flashed("status")),
+		"twoFactor":       a.twoFactorProps(r, userFrom(r.Context())),
 	})
 }
 
@@ -241,6 +287,11 @@ func (a *App) updatePassword(w http.ResponseWriter, r *http.Request) {
 		inertia.Back(w, r, "/profile")
 		return
 	}
+
+	// Every other browser signed in to this account is signed out. A password
+	// is changed because somebody else might know it, and a session they
+	// already have would otherwise outlive the change.
+	a.Store.RevokeOtherSessions(r.Context(), user.ID, sess.ID)
 
 	sess.Flash("status", "password-updated")
 

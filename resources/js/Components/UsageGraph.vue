@@ -12,7 +12,7 @@ const props = defineProps({
     label: { type: String, required: true },
     // Hue for this metric, held across every range so the card keeps its identity.
     color: { type: String, default: '#4f46e5' },
-    // [{ t: unix seconds, v: 0–100 | null }], oldest first.
+    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null }], oldest first.
     points: { type: Array, default: () => [] },
     // The live reading, which is fresher than the newest recorded point.
     current: { type: [Number, null], default: null },
@@ -127,6 +127,27 @@ const areaPath = computed(() =>
         .join(' '),
 );
 
+// The highest second of each point, drawn faintly above the average. Only
+// where it differs: on a flat series it would sit on top of the line.
+const hasPeaks = computed(() =>
+    known.value.some((p) => p.p !== null && p.p !== undefined && p.p - p.v >= 1),
+);
+
+const peakPath = computed(() =>
+    hasPeaks.value
+        ? runs.value
+              .map((run) =>
+                  run
+                      .map(
+                          (p, i) =>
+                              `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.p ?? p.v).toFixed(1)}`,
+                      )
+                      .join(' '),
+              )
+              .join(' ')
+        : '',
+);
+
 const gridlines = [0, 25, 50, 75, 100];
 
 const timeLabels = computed(() => {
@@ -155,9 +176,12 @@ const summary = computed(() => {
     const values = known.value.map((p) => p.v);
     const sum = values.reduce((a, b) => a + b, 0);
 
+    // High is the highest second recorded, not the highest average.
+    const peaks = known.value.map((p) => Math.max(p.v, p.p ?? p.v));
+
     return {
         min: Math.min(...values),
-        max: Math.max(...values),
+        max: Math.max(...peaks),
         average: sum / values.length,
     };
 });
@@ -286,6 +310,15 @@ const tone = computed(() => {
 
                 <path v-if="areaPath" :d="areaPath" :fill="`url(#fill-${label})`" />
                 <path
+                    v-if="peakPath"
+                    :d="peakPath"
+                    fill="none"
+                    :stroke="color"
+                    stroke-opacity="0.35"
+                    stroke-width="1"
+                    stroke-linejoin="round"
+                />
+                <path
                     v-if="linePath"
                     :d="linePath"
                     fill="none"
@@ -335,6 +368,12 @@ const tone = computed(() => {
                 <span class="font-semibold tabular-nums">
                     {{ hover.point.v.toFixed(1) }}%
                 </span>
+                <span
+                    v-if="hover.point.p !== null && hover.point.p !== undefined && hover.point.p - hover.point.v >= 0.1"
+                    class="tabular-nums text-slate-300"
+                >
+                    · peak {{ hover.point.p.toFixed(1) }}%
+                </span>
                 <span class="block text-[10px] text-slate-300">{{ hoverTime }}</span>
             </div>
 
@@ -355,6 +394,7 @@ const tone = computed(() => {
         <p v-if="summary" class="mt-1 text-[11px] text-slate-400 tabular-nums">
             low {{ summary.min.toFixed(0) }}% · average
             {{ summary.average.toFixed(0) }}% · high {{ summary.max.toFixed(0) }}%
+            <span v-if="hasPeaks" class="text-slate-300">· faint line: peak second</span>
         </p>
     </div>
 </template>

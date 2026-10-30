@@ -137,6 +137,24 @@ func changesState(r *http.Request) bool {
 	return true
 }
 
+// withSecurityHeaders tells the browser what this panel never needs, so it
+// refuses it on the panel's behalf: being framed by another site (which is how
+// a click on a fake page becomes a click on "delete"), guessing a response's
+// type, and a full URL in the Referer of every link out.
+func (a *App) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+
+		header.Set("X-Frame-Options", "SAMEORIGIN")
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		header.Set("Cross-Origin-Opener-Policy", "same-origin")
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // withLogging records one line per request.
 func (a *App) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

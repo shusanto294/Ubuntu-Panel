@@ -68,6 +68,10 @@ const (
 	MailDomainDNS     = "mail.domain.dns"
 
 	PanelDomain = "panel.domain"
+
+	// The Security page's two pieces of work that wait on apt.
+	SecurityAutoUpdates = "security.auto-updates"
+	SecurityUpdates     = "security.updates"
 )
 
 // Handler runs one job. Returning an error records it against the job row; the

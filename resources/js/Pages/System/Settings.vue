@@ -8,6 +8,7 @@ import TaskStatus from '@/Components/TaskStatus.vue';
 import TextInput from '@/Components/TextInput.vue';
 import VersionCard from '@/Components/VersionCard.vue';
 import { useLiveRefresh } from '@/Composables/useLiveRefresh';
+import { confirmDanger } from '@/dialog';
 import { Head, router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -19,6 +20,7 @@ const props = defineProps({
     nodeVersions: Array,
     activeTask: Object,
     latestTask: Object,
+    smtp: Object,
 });
 
 const domainForm = useForm({
@@ -64,6 +66,47 @@ const submitDomain = () =>
             setTimeout(() => (awaiting.value = false), 15000);
         },
     });
+// The relay the panel sends its own mail through. The password field starts
+// empty and stays that way: leaving it blank keeps the stored one.
+const smtpForm = useForm({
+    smtp_host: props.smtp.host ?? '',
+    smtp_port: String(props.smtp.port || 587),
+    smtp_encryption: props.smtp.encryption || 'starttls',
+    smtp_username: props.smtp.username ?? '',
+    smtp_password: '',
+    smtp_from_email: props.smtp.from_email ?? '',
+    smtp_from_name: props.smtp.from_name ?? '',
+});
+
+const saveSmtp = () =>
+    smtpForm.patch(route('settings.smtp'), {
+        preserveScroll: true,
+        onSuccess: () => smtpForm.reset('smtp_password'),
+    });
+
+const testing = ref(false);
+const testSmtp = () => {
+    testing.value = true;
+    router.post(route('settings.smtp.test'), {}, {
+        preserveScroll: true,
+        onFinish: () => (testing.value = false),
+    });
+};
+
+const removeSmtp = async () => {
+    if (!(await confirmDanger('Remove the SMTP settings?', 'The panel will stop sending security alerts.', 'Remove')))
+        return;
+    router.delete(route('settings.smtp.destroy'), { preserveScroll: true });
+};
+
+// Picking an encryption suggests its usual port, unless one was typed.
+const portFor = { tls: '465', starttls: '587', none: '25' };
+const pickEncryption = (value) => {
+    if (Object.values(portFor).includes(smtpForm.smtp_port) || !smtpForm.smtp_port) {
+        smtpForm.smtp_port = portFor[value];
+    }
+};
+
 const submitDefaults = () => defaultsForm.patch(route('system.settings'), { preserveScroll: true });
 </script>
 
@@ -289,6 +332,104 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
             </div>
 
             <VersionCard :update="update" />
+
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="flex items-center gap-2 font-semibold text-slate-900">
+                    Outgoing email (SMTP)
+                    <span
+                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                        :class="smtp.configured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
+                    >
+                        {{ smtp.configured ? 'connected' : 'not set' }}
+                    </span>
+                </h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    The server the panel sends its own email through — security alerts and
+                    sign-in notices. A transactional provider (Postmark, SES, Mailgun,
+                    Brevo) or a mailbox at your host delivers far better than a new server.
+                </p>
+
+                <form @submit.prevent="saveSmtp" class="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div class="sm:col-span-2">
+                        <InputLabel for="smtp_host" value="SMTP host" />
+                        <TextInput id="smtp_host" v-model="smtpForm.smtp_host" type="text" class="mt-1 block w-full" placeholder="smtp.example.com" />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_host" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_encryption" value="Encryption" />
+                        <select
+                            id="smtp_encryption"
+                            v-model="smtpForm.smtp_encryption"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            @change="pickEncryption(smtpForm.smtp_encryption)"
+                        >
+                            <option value="starttls">STARTTLS (587)</option>
+                            <option value="tls">TLS (465)</option>
+                            <option value="none">None (local relay only)</option>
+                        </select>
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_encryption" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_port" value="Port" />
+                        <TextInput id="smtp_port" v-model="smtpForm.smtp_port" type="number" class="mt-1 block w-full" />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_port" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_username" value="Username" />
+                        <TextInput id="smtp_username" v-model="smtpForm.smtp_username" type="text" class="mt-1 block w-full" autocomplete="off" />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_username" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_password" value="Password" />
+                        <TextInput
+                            id="smtp_password"
+                            v-model="smtpForm.smtp_password"
+                            type="password"
+                            class="mt-1 block w-full"
+                            autocomplete="new-password"
+                            :placeholder="smtp.has_password ? 'Stored — leave empty to keep' : ''"
+                        />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_password" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_from_email" value="From address" />
+                        <TextInput id="smtp_from_email" v-model="smtpForm.smtp_from_email" type="email" class="mt-1 block w-full" placeholder="panel@example.com" />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_from_email" />
+                    </div>
+
+                    <div>
+                        <InputLabel for="smtp_from_name" value="From name" />
+                        <TextInput id="smtp_from_name" v-model="smtpForm.smtp_from_name" type="text" class="mt-1 block w-full" />
+                        <InputError class="mt-2" :message="smtpForm.errors.smtp_from_name" />
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-3 sm:col-span-2">
+                        <PrimaryButton :disabled="smtpForm.processing">Save SMTP</PrimaryButton>
+                        <button
+                            v-if="smtp.configured"
+                            type="button"
+                            class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 hover:bg-slate-50 disabled:opacity-50"
+                            :disabled="testing"
+                            @click="testSmtp"
+                        >
+                            {{ testing ? 'Sending…' : 'Send a test to me' }}
+                        </button>
+                        <button
+                            v-if="smtp.configured"
+                            type="button"
+                            class="text-sm font-medium text-rose-600 hover:underline"
+                            @click="removeSmtp"
+                        >
+                            Remove
+                        </button>
+                    </div>
+                </form>
+            </div>
 
         </div>
     </AuthenticatedLayout>

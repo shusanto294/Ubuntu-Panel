@@ -227,7 +227,7 @@ func (m *Manager) create(r *http.Request, session *Session) error {
 	_, err = m.db.ExecContext(r.Context(),
 		`INSERT INTO sessions (id, user_id, ip_address, user_agent, payload, last_activity)
 		 VALUES (?, 0, ?, ?, ?, ?)`,
-		session.ID, clientIP(r), r.UserAgent(), payload, time.Now().Unix())
+		session.ID, ClientIP(r), r.UserAgent(), payload, time.Now().Unix())
 
 	// Handing out a session that was never stored is worse than refusing the
 	// request: the browser gets a token for a session that does not exist, and
@@ -402,6 +402,19 @@ func (s *Session) Put(key, value string) {
 	s.dirty = true
 }
 
+// Get reads a stored value without taking it.
+func (s *Session) Get(key string) string { return s.keep[key] }
+
+// Forget removes stored values.
+func (s *Session) Forget(keys ...string) {
+	for _, key := range keys {
+		if _, ok := s.keep[key]; ok {
+			delete(s.keep, key)
+			s.dirty = true
+		}
+	}
+}
+
 // Pull takes a stored value and removes it.
 func (s *Session) Pull(key string) string {
 	value := s.keep[key]
@@ -528,7 +541,10 @@ func token() string {
 	return hex.EncodeToString(buffer)
 }
 
-func clientIP(r *http.Request) string {
+// ClientIP is the address a request came from. The panel listens on loopback
+// behind nginx, which overwrites X-Real-IP with the address it was connected
+// from, so the header is the peer rather than something the client chose.
+func ClientIP(r *http.Request) string {
 	// The panel sits behind nginx on the same machine, which sets these.
 	if forwarded := r.Header.Get("X-Real-IP"); forwarded != "" {
 		return forwarded

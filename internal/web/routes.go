@@ -35,6 +35,11 @@ func (a *App) routes() *router {
 	rt.post("/login", "", guest, a.login)
 	rt.post("/logout", "logout", authenticated, a.logout)
 
+	// The second step of a sign-in, for an account with two-factor on. Guest,
+	// because nobody is signed in until it has been passed.
+	rt.get("/login/two-factor", "two-factor.login", guest, a.showTwoFactorChallenge)
+	rt.post("/login/two-factor", "", guest, a.twoFactorChallenge)
+
 	rt.get("/setup", "setup", guest, a.showSetup)
 	rt.post("/setup", "", guest, a.setup)
 
@@ -208,10 +213,59 @@ func (a *App) routes() *router {
 	rt.post("/ai/tokens", "ai.tokens.store", authenticated, a.aiStoreToken)
 	rt.delete("/ai/tokens/{token}", "ai.tokens.destroy", authenticated, a.aiDestroyToken)
 
+	// Security: who is trying to get in, and what stops them.
+	rt.get("/security", "security.index", authenticated, a.securityIndex)
+	rt.post("/security/ssh-protection", "security.ssh-protection", authenticated, a.securitySSHProtection)
+	rt.post("/security/ssh-protection/install", "security.ssh-protection.install", authenticated,
+		a.securityInstallFail2ban)
+	rt.post("/security/bans", "security.bans.store", authenticated, a.securityBan)
+	rt.post("/security/bans/remove", "security.bans.destroy", authenticated, a.securityUnban)
+	rt.post("/security/trust", "security.trust", authenticated, a.securityTrust)
+	rt.post("/security/login-protection", "security.login-protection", authenticated,
+		a.securityLoginProtection)
+	rt.post("/security/logins/unlock", "security.logins.unlock", authenticated, a.securityUnlock)
+	rt.post("/security/firewall/enable", "security.firewall.enable", authenticated, a.securityFirewallEnable)
+	rt.post("/security/firewall/disable", "security.firewall.disable", authenticated,
+		a.securityFirewallDisable)
+	rt.post("/security/firewall/rules", "security.firewall.rules.store", authenticated,
+		a.securityFirewallRule)
+	rt.delete("/security/firewall/rules/{rule}", "security.firewall.rules.destroy", authenticated,
+		a.securityFirewallDelete)
+	rt.post("/security/firewall/block", "security.firewall.block", authenticated, a.securityFirewallBlock)
+	rt.post("/security/hardening", "security.hardening", authenticated, a.securityHardening)
+	rt.post("/security/ssh-service", "security.ssh-service", authenticated, a.securitySSHService)
+	rt.post("/security/updates/automatic", "security.updates.automatic", authenticated,
+		a.securityAutoUpdates)
+	rt.post("/security/updates/install", "security.updates.install", authenticated,
+		a.securityInstallUpdates)
+	rt.post("/security/alerts", "security.alerts", authenticated, a.securityAlerts)
+	rt.delete("/security/sessions/{session}", "security.sessions.destroy", authenticated,
+		a.securityRevokeSession)
+	rt.post("/security/sessions/others", "security.sessions.others", authenticated,
+		a.securityRevokeOthers)
+
+	// The accounts that can log in over SSH.
+	rt.post("/security/users", "security.users.store", authenticated, a.sshUserStore)
+	rt.post("/security/users/{user}", "security.users.update", authenticated, a.sshUserUpdate)
+	rt.delete("/security/users/{user}", "security.users.destroy", authenticated, a.sshUserDestroy)
+	rt.post("/security/users/{user}/keys", "security.users.keys.store", authenticated, a.sshUserKeyStore)
+	rt.post("/security/users/{user}/keys/remove", "security.users.keys.destroy", authenticated,
+		a.sshUserKeyDestroy)
+
+	// The relay the panel sends its own mail through.
+	rt.patch("/settings/smtp", "settings.smtp", authenticated, a.smtpUpdate)
+	rt.post("/settings/smtp/test", "settings.smtp.test", authenticated, a.smtpTest)
+	rt.delete("/settings/smtp", "settings.smtp.destroy", authenticated, a.smtpDestroy)
+
 	// Profile
 	rt.get("/profile", "profile.edit", authenticated, a.editProfile)
 	rt.patch("/profile", "profile.update", authenticated, a.updateProfile)
 	rt.patch("/password", "password.update", authenticated, a.updatePassword)
+	rt.post("/profile/two-factor", "two-factor.enable", authenticated, a.twoFactorStart)
+	rt.post("/profile/two-factor/confirm", "two-factor.confirm", authenticated, a.twoFactorConfirm)
+	rt.post("/profile/two-factor/recovery-codes", "two-factor.recovery-codes", authenticated,
+		a.twoFactorRecoveryCodes)
+	rt.post("/profile/two-factor/disable", "two-factor.disable", authenticated, a.twoFactorDisable)
 
 	// Terminal. The websocket carries its own one-shot ticket, so it is a
 	// public route: the session cookie cannot be relied on for a cross-scheme

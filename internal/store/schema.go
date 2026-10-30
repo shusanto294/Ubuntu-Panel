@@ -302,6 +302,23 @@ var schema = []string{
 		finished_at  TEXT
 	)`,
 	`CREATE INDEX IF NOT EXISTS site_backups_site ON site_backups(site_id, id DESC)`,
+
+	// Every attempt to sign in to the panel, right or wrong. It is what the
+	// lockout counts, and what the Security page shows as login activity.
+	// `email` is what was typed, not an account id: the failures that matter
+	// most are the ones for addresses that have no account.
+	`CREATE TABLE IF NOT EXISTS login_attempts (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER,
+		email      TEXT,
+		ip_address TEXT NOT NULL,
+		user_agent TEXT,
+		success    INTEGER NOT NULL DEFAULT 0,
+		reason     TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts(ip_address, created_at)`,
+	`CREATE INDEX IF NOT EXISTS login_attempts_created ON login_attempts(created_at)`,
 }
 
 // migrations are ALTER TABLE statements for databases created by an older
@@ -365,6 +382,23 @@ var migrations = []string{
 	// The commit the site is serving, so a pull can say what it changed and a
 	// poll can tell whether there is anything to do.
 	`ALTER TABLE sites ADD COLUMN last_commit TEXT`,
+
+	// Two-factor sign-in. The secret is encrypted with the application key like
+	// every other credential; it is set when somebody starts enrolling and only
+	// counts once `two_factor_confirmed_at` says a code from it was typed back.
+	// The recovery codes are kept as hashes, and `two_factor_last_step` is the
+	// last thirty-second window a code was accepted for, so the same code
+	// cannot be used twice.
+	`ALTER TABLE users ADD COLUMN two_factor_secret TEXT`,
+	`ALTER TABLE users ADD COLUMN two_factor_confirmed_at TEXT`,
+	`ALTER TABLE users ADD COLUMN two_factor_recovery_codes TEXT`,
+	`ALTER TABLE users ADD COLUMN two_factor_last_step INTEGER NOT NULL DEFAULT 0`,
+
+	// The highest CPU and memory reading of the minute a sample stands for,
+	// read once a second. The percentages beside them are the minute's
+	// averages; without these a spike between two samples was never recorded.
+	`ALTER TABLE metric_samples ADD COLUMN cpu_max REAL`,
+	`ALTER TABLE metric_samples ADD COLUMN memory_max REAL`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

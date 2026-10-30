@@ -119,6 +119,7 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 		"sites":          recent,
 		"activeTask":     a.firstActiveTask(r, "provision", "site", "database", "mail"),
 		"recentActivity": recentActivity,
+		"security":       a.securitySummary(r.Context(), userFrom(r.Context())),
 	})
 }
 
@@ -190,6 +191,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		},
 		"phpVersions":  config.PHPVersions,
 		"nodeVersions": config.NodeVersions,
+		"smtp":         a.smtpProps(),
 		// Narrowed to this action so an app install running on the Apps page
 		// does not appear here.
 		"activeTask": a.Store.TaskConsole(r.Context(),

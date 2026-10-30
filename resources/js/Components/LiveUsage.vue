@@ -10,7 +10,9 @@ import { streamState, subscribe } from '@/stream';
  * a second: the panel runs on the box it reports on, so a reading costs
  * microseconds and no daemon, queue or SSH is involved. The line behind it comes
  * from the minute-by-minute samples the scheduler records, which is the only way
- * to see further back than the page has been open.
+ * to see further back than the page has been open. The recorder watches CPU and
+ * memory every second, so each sample carries the minute's peak as well as its
+ * average, and a spike seen live is still on the graph after a reload.
  */
 const props = defineProps({
     // Rendered with the page so there is never an empty frame.
@@ -159,8 +161,14 @@ const duration = (seconds) => {
     return `${m}m`;
 };
 
+// `p` is the highest second inside the point, where the server has one — the
+// line is the average, which on its own smooths a spike away.
 const points = (key) =>
-    (series.value?.points ?? []).map((point) => ({ t: point.t, v: point[key] }));
+    (series.value?.points ?? []).map((point) => ({
+        t: point.t,
+        v: point[key],
+        p: point[`${key}_peak`] ?? null,
+    }));
 
 const bucketSeconds = computed(() => series.value?.bucket_seconds ?? 60);
 

@@ -247,26 +247,48 @@ func run(configPath string) error {
 }
 
 // sample records one metrics reading a minute for the dashboard graphs, and
-// prunes what has aged out of the longest window.
+// prunes what has aged out of the longest window. CPU and memory are watched
+// every second in between, so the minute is recorded as its average and its
+// peak rather than as whatever the last instant of it happened to be.
 func sample(ctx context.Context, db *store.Store) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
+	var watcher system.Sampler
+
+	second := time.NewTicker(time.Second)
+	defer second.Stop()
+
+	minute := time.NewTicker(time.Minute)
+	defer minute.Stop()
 
 	pruned := time.Now()
+
+	watcher.Tick()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-second.C:
+			watcher.Tick()
+			continue
+		case <-minute.C:
 		}
 
+		watcher.Tick()
+		window := watcher.Take()
 		metrics := system.Read()
 
-		db.RecordMetrics(metrics.CPUPercent, metrics.MemoryPercent, metrics.DiskPercent,
-			metrics.SwapPercent, metrics.Load[0],
-			int64(metrics.MemoryUsed), int64(metrics.MemoryTotal),
-			int64(metrics.DiskUsed), int64(metrics.DiskTotal))
+		memory, memoryPeak := window.MemoryAverage, window.MemoryPeak
+		if memory < 0 {
+			memory, memoryPeak = metrics.MemoryPercent, metrics.MemoryPercent
+		}
+
+		db.RecordMetrics(store.MetricSample{
+			CPU: window.CPUAverage, CPUPeak: window.CPUPeak,
+			Memory: memory, MemoryPeak: memoryPeak,
+			Disk: metrics.DiskPercent, Swap: metrics.SwapPercent, Load: metrics.Load[0],
+			MemoryUsed: int64(metrics.MemoryUsed), MemoryTotal: int64(metrics.MemoryTotal),
+			DiskUsed: int64(metrics.DiskUsed), DiskTotal: int64(metrics.DiskTotal),
+		})
 
 		if time.Since(pruned) > 6*time.Hour {
 			db.PruneMetrics()

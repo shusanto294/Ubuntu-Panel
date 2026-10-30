@@ -22,6 +22,10 @@ var SharedNginxConfig func(runner *tasks.Runner) error
 // configured once its packages are down.
 var ConfigureMail func(ctx context.Context, userID int64) error
 
+// ConfigureSSHProtection writes the fail2ban jail the Security page manages.
+// Wired in from the web package, which owns the jail's settings.
+var ConfigureSSHProtection func(runner *tasks.Runner) error
+
 // ConfigurePhpMyAdmin puts phpMyAdmin into the state the Databases page
 // promises: served from the panel's own vhost, guarded by the panel's session,
 // and configured with both an auto-login server and one that asks. Same
@@ -209,6 +213,19 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 			"sudo mkdir -p /var/www",
 			"printf '// Managed by Ubuntu Panel\\nDPkg::Lock::Timeout \"600\";\\n' | "+
 				"sudo tee /etc/apt/apt.conf.d/99-ubuntu-panel > /dev/null").Group(key)
+
+	case "fail2ban":
+		list.AddFn("Protect SSH from password guessing", func(runner *tasks.Runner) (string, error) {
+			if ConfigureSSHProtection == nil {
+				return "", errors.New("the SSH protection writer is not wired up")
+			}
+
+			if err := ConfigureSSHProtection(runner); err != nil {
+				return "", err
+			}
+
+			return "fail2ban is watching SSH.", nil
+		}).Group(key)
 
 	case "nginx":
 		list.AddFn("Refuse unknown hostnames", func(runner *tasks.Runner) (string, error) {

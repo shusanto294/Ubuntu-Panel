@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"time"
 )
@@ -59,23 +60,35 @@ func findMetricRange(key string) MetricRange {
 	return MetricRanges[0]
 }
 
+// MetricSample is one minute of this machine: CPU and memory as the minute's
+// average and its highest one-second reading, the rest as read at the end of
+// it. A CPU figure below zero is a minute with no reading to compare against.
+type MetricSample struct {
+	CPU, CPUPeak       float64
+	Memory, MemoryPeak float64
+	Disk, Swap, Load   float64
+
+	MemoryUsed, MemoryTotal, DiskUsed, DiskTotal int64
+}
+
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
-// housekeeper. A CPU percentage of below zero is the reading that had no
-// previous sample to compare against, and is stored as NULL rather than as a
-// zero the graph would draw a floor at.
-func (s *Store) RecordMetrics(cpu, memory, disk, swap, load float64,
-	memoryUsed, memoryTotal, diskUsed, diskTotal int64) {
-	cpuValue := any(nil)
-	if cpu >= 0 {
-		cpuValue = cpu
+// housekeeper. A CPU percentage of below zero is stored as NULL rather than as
+// a zero the graph would draw a floor at.
+func (s *Store) RecordMetrics(sample MetricSample) {
+	cpu, cpuPeak := any(nil), any(nil)
+	if sample.CPU >= 0 {
+		cpu = sample.CPU
+		cpuPeak = math.Max(sample.CPU, sample.CPUPeak)
 	}
 
 	s.db.Exec(
 		`INSERT INTO metric_samples
-		    (cpu_percent, memory_percent, disk_percent, swap_percent,
+		    (cpu_percent, cpu_max, memory_percent, memory_max, disk_percent, swap_percent,
 		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		cpuValue, memory, disk, swap, memoryUsed, memoryTotal, diskUsed, diskTotal, load,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cpu, cpuPeak, sample.Memory, math.Max(sample.Memory, sample.MemoryPeak),
+		sample.Disk, sample.Swap, sample.MemoryUsed, sample.MemoryTotal,
+		sample.DiskUsed, sample.DiskTotal, sample.Load,
 		time.Now().UTC().Format("2006-01-02 15:04:05"))
 }
 
@@ -90,7 +103,10 @@ func (s *Store) PruneMetrics() {
 //
 // The shape is the one the graphs already read: points oldest first, each with
 // a unix timestamp and the three percentages, plus the byte figures the tooltip
-// puts under them.
+// puts under them. `cpu_peak` and `memory_peak` are the highest second inside
+// the bucket — the average alone flattens a spike into the minutes around it,
+// and the further back the range the flatter it gets. Samples from before
+// peaks were recorded fall back to their own average.
 func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 	window := findMetricRange(key)
 
@@ -102,7 +118,8 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
 		`SELECT (strftime('%s', sampled_at) / ?) AS bucket,
 		        avg(cpu_percent), avg(memory_percent), avg(disk_percent),
-		        avg(memory_used), max(memory_total), avg(disk_used), max(disk_total)
+		        avg(memory_used), max(memory_total), avg(disk_used), max(disk_total),
+		        max(coalesce(cpu_max, cpu_percent)), max(coalesce(memory_max, memory_percent))
 		   FROM metric_samples
 		  WHERE sampled_at >= ?
 		  GROUP BY bucket
@@ -115,9 +132,10 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 		for rows.Next() {
 			var bucket int64
 			var cpu, memory, disk, memoryUsed, memoryTotal, diskUsed, diskTotal nullFloat
+			var cpuPeak, memoryPeak nullFloat
 
 			if err := rows.Scan(&bucket, &cpu, &memory, &disk,
-				&memoryUsed, &memoryTotal, &diskUsed, &diskTotal); err != nil {
+				&memoryUsed, &memoryTotal, &diskUsed, &diskTotal, &cpuPeak, &memoryPeak); err != nil {
 				continue
 			}
 
@@ -126,7 +144,9 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 				// graph plots against.
 				"t":            bucket * int64(window.Bucket),
 				"cpu":          rounded(cpu),
+				"cpu_peak":     rounded(cpuPeak),
 				"memory":       rounded(memory),
+				"memory_peak":  rounded(memoryPeak),
 				"disk":         rounded(disk),
 				"memory_used":  whole(memoryUsed),
 				"memory_total": whole(memoryTotal),

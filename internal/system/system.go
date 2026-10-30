@@ -44,12 +44,20 @@ type Metrics struct {
 	SampledAt     string
 }
 
-var cpu struct {
+// CPUMeter turns two readings of /proc/stat into a percentage. Each reader
+// keeps its own: the figure is the CPU used since that reader last asked, and
+// a shared one would make every reader's figure the time since whichever of
+// them asked last — the dashboard polling once a second would leave the
+// minute's recording measuring only the last second of it.
+type CPUMeter struct {
 	sync.Mutex
 	idle  uint64
 	total uint64
 	seen  bool
 }
+
+// live is the meter the dashboard's live figure reads.
+var live CPUMeter
 
 // Read takes a sample.
 func Read() Metrics {
@@ -63,7 +71,7 @@ func Read() Metrics {
 	readDisk(&metrics)
 	readLoad(&metrics)
 	readUptime(&metrics)
-	metrics.CPUPercent = readCPU()
+	metrics.CPUPercent = live.Read()
 
 	return metrics
 }
@@ -230,9 +238,9 @@ func readUptime(metrics *Metrics) {
 	metrics.UptimeSeconds = int64(seconds)
 }
 
-// readCPU is a delta between two readings of /proc/stat, so the first call
-// after a restart has nothing to compare against and returns -1.
-func readCPU() float64 {
+// Read is the CPU used since this meter's previous reading, so the first
+// call has nothing to compare against and returns -1.
+func (m *CPUMeter) Read() float64 {
 	contents, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return -1
@@ -261,12 +269,12 @@ func readCPU() float64 {
 		}
 	}
 
-	cpu.Lock()
-	defer cpu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 
-	previousIdle, previousTotal, seen := cpu.idle, cpu.total, cpu.seen
+	previousIdle, previousTotal, seen := m.idle, m.total, m.seen
 
-	cpu.idle, cpu.total, cpu.seen = idle, total, true
+	m.idle, m.total, m.seen = idle, total, true
 
 	if !seen || total <= previousTotal {
 		return -1

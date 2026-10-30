@@ -25,7 +25,8 @@ func metricStore(t *testing.T) *Store {
 func TestHistoryHasTheShapeTheGraphsRead(t *testing.T) {
 	st := metricStore(t)
 
-	st.RecordMetrics(12.5, 40, 57.1, 0, 0.4, 400, 1000, 570, 1000)
+	st.RecordMetrics(MetricSample{CPU: 12.5, Memory: 40, Disk: 57.1, Load: 0.4,
+		MemoryUsed: 400, MemoryTotal: 1000, DiskUsed: 570, DiskTotal: 1000})
 
 	history := st.MetricHistory(context.Background(), DefaultMetricRange)
 
@@ -40,7 +41,7 @@ func TestHistoryHasTheShapeTheGraphsRead(t *testing.T) {
 		t.Fatalf("points is %#v", history["points"])
 	}
 
-	for _, key := range []string{"t", "cpu", "memory", "disk",
+	for _, key := range []string{"t", "cpu", "cpu_peak", "memory", "memory_peak", "disk",
 		"memory_used", "memory_total", "disk_used", "disk_total"} {
 		if _, ok := points[0][key]; !ok {
 			t.Errorf("a point is missing %q", key)
@@ -63,7 +64,8 @@ func TestHistoryHasTheShapeTheGraphsRead(t *testing.T) {
 func TestAFirstCPUReadingIsRecordedAsNull(t *testing.T) {
 	st := metricStore(t)
 
-	st.RecordMetrics(-1, 40, 57, 0, 0.4, 400, 1000, 570, 1000)
+	st.RecordMetrics(MetricSample{CPU: -1, Memory: 40, Disk: 57, Load: 0.4,
+		MemoryUsed: 400, MemoryTotal: 1000, DiskUsed: 570, DiskTotal: 1000})
 
 	points := st.MetricHistory(context.Background(), DefaultMetricRange)["points"].([]map[string]any)
 
@@ -80,8 +82,8 @@ func TestAFirstCPUReadingIsRecordedAsNull(t *testing.T) {
 func TestSamplesInOneBucketAverage(t *testing.T) {
 	st := metricStore(t)
 
-	st.RecordMetrics(10, 20, 30, 0, 0, 0, 0, 0, 0)
-	st.RecordMetrics(30, 40, 50, 0, 0, 0, 0, 0, 0)
+	st.RecordMetrics(MetricSample{CPU: 10, Memory: 20, Disk: 30})
+	st.RecordMetrics(MetricSample{CPU: 30, Memory: 40, Disk: 50})
 
 	points := st.MetricHistory(context.Background(), DefaultMetricRange)["points"].([]map[string]any)
 
@@ -91,6 +93,34 @@ func TestSamplesInOneBucketAverage(t *testing.T) {
 
 	if points[0]["cpu"] != 20.0 || points[0]["memory"] != 30.0 {
 		t.Fatalf("averages are %#v", points[0])
+	}
+}
+
+// A bucket's peak is the highest second of any sample in it, so a spike stays
+// visible on the longer ranges where averaging would flatten it.
+func TestABucketKeepsItsHighestSecond(t *testing.T) {
+	st := metricStore(t)
+
+	st.RecordMetrics(MetricSample{CPU: 4, CPUPeak: 100, Memory: 30, MemoryPeak: 85, Disk: 20})
+	st.RecordMetrics(MetricSample{CPU: 2, CPUPeak: 6, Memory: 30, MemoryPeak: 31, Disk: 20})
+
+	for _, window := range MetricRanges {
+		points := st.MetricHistory(context.Background(), window.Key)["points"].([]map[string]any)
+		if len(points) != 1 {
+			t.Fatalf("%s: got %d points", window.Key, len(points))
+		}
+
+		if points[0]["cpu"] != 3.0 || points[0]["cpu_peak"] != 100.0 || points[0]["memory_peak"] != 85.0 {
+			t.Fatalf("%s: point is %#v", window.Key, points[0])
+		}
+	}
+
+	// A sample written before peaks were recorded counts its average as its peak.
+	st.db.Exec(`UPDATE metric_samples SET cpu_max = NULL, memory_max = NULL`)
+
+	points := st.MetricHistory(context.Background(), DefaultMetricRange)["points"].([]map[string]any)
+	if points[0]["cpu_peak"] != 4.0 || points[0]["memory_peak"] != 30.0 {
+		t.Fatalf("old samples: point is %#v", points[0])
 	}
 }
 
