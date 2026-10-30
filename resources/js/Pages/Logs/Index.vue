@@ -1,16 +1,20 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
+import { confirmDanger } from '@/dialog';
 import { browser } from '@/Components/Security/ui';
 import { useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { formatDuration, formatRelative, formatStamp } from '@/time';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     logs: { type: Array, default: () => [] },
     pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0 }) },
     type: { type: String, default: null },
+    retention: { type: Number, default: 90 },
+    retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
 });
 
 const FILTERS = [
@@ -73,8 +77,37 @@ const pageHref = (page) => {
     return string ? `${route('logs.index')}?${string}` : route('logs.index');
 };
 
-const previous = computed(() => Math.max(1, props.pagination.page - 1));
-const next = computed(() => Math.min(props.pagination.pages, props.pagination.page + 1));
+// Paged on the server, so a page is a visit rather than a slice.
+const goToPage = (page) => router.visit(pageHref(page), { preserveScroll: true });
+
+// ---------------------------------------------------------------- clearing
+
+const showClear = ref(false);
+
+const clearForm = useForm({ what: 'all', older_than: '0' });
+
+const WHAT = {
+    all: 'every log',
+    tasks: 'the panel’s task logs',
+    logins: 'the panel sign-in history',
+    ssh: 'the SSH login history',
+};
+
+const clearLogs = async () => {
+    const range =
+        clearForm.older_than === '0' ? 'all of it' : `entries older than ${clearForm.older_than} days`;
+
+    if (!(await confirmDanger('Clear logs?', `This deletes ${WHAT[clearForm.what]} — ${range}. It cannot be undone.`, 'Clear')))
+        return;
+
+    clearForm.post(route('logs.clear'), {
+        preserveScroll: true,
+        onSuccess: () => (showClear.value = false),
+    });
+};
+
+const setRetention = (days) =>
+    router.post(route('logs.retention'), { days }, { preserveScroll: true });
 </script>
 
 <template>
@@ -82,14 +115,89 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
 
     <AuthenticatedLayout>
         <template #header>
-            <div>
-                <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
-                <p class="text-sm text-slate-500">
-                    What the panel ran, every sign-in to it, and every SSH login, newest first
-                    <span v-if="pagination.total">· {{ pagination.total }} in total</span>
-                </p>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
+                    <p class="text-sm text-slate-500">
+                        What the panel ran, every sign-in to it, and every SSH login or attempt,
+                        newest first
+                        <span v-if="pagination.total">· {{ pagination.total }} in total</span>
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                    @click="showClear = !showClear"
+                >
+                    {{ showClear ? 'Close' : 'Clear logs' }}
+                </button>
             </div>
         </template>
+
+        <!-- Clearing, and how long logs are kept without anybody clearing them. -->
+        <div v-if="showClear" class="mb-6 grid gap-6 lg:grid-cols-2">
+            <form
+                class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
+                @submit.prevent="clearLogs"
+            >
+                <h3 class="font-semibold text-slate-900">Clear logs now</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    Deleted from the panel's database, which is then compacted so the space
+                    is given back. Tasks still running are kept.
+                </p>
+                <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                    <label class="block text-sm">
+                        <span class="text-xs font-medium text-slate-700">Which</span>
+                        <select v-model="clearForm.what" class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm">
+                            <option value="all">Everything</option>
+                            <option value="tasks">Panel tasks</option>
+                            <option value="logins">Panel sign-ins</option>
+                            <option value="ssh">SSH logins and attempts</option>
+                        </select>
+                    </label>
+                    <label class="block text-sm">
+                        <span class="text-xs font-medium text-slate-700">How much</span>
+                        <select v-model="clearForm.older_than" class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm">
+                            <option value="0">All of it</option>
+                            <option value="7">Older than 7 days</option>
+                            <option value="30">Older than 30 days</option>
+                            <option value="90">Older than 90 days</option>
+                        </select>
+                    </label>
+                </div>
+                <button
+                    type="submit"
+                    :disabled="clearForm.processing"
+                    class="mt-4 rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
+                >
+                    {{ clearForm.processing ? 'Clearing…' : 'Clear' }}
+                </button>
+            </form>
+
+            <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-900">Keep logs for</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    Anything older is deleted automatically every hour, so the logs never grow
+                    past this.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <button
+                        v-for="days in retentionOptions"
+                        :key="days"
+                        type="button"
+                        class="rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition"
+                        :class="
+                            days === retention
+                                ? 'bg-brand-600 text-white ring-brand-600'
+                                : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                        "
+                        @click="setRetention(days)"
+                    >
+                        {{ days === 365 ? '1 year' : `${days} days` }}
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <div class="mb-6 flex flex-wrap gap-2">
             <Link
@@ -108,11 +216,6 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
             </Link>
         </div>
 
-        <p v-if="!type" class="-mt-3 mb-4 text-xs text-slate-500">
-            Failed SSH attempts are left out of this view, because there can be thousands
-            a day. They are all under
-            <Link :href="filterHref('ssh')" class="font-medium text-brand-600 hover:underline">SSH</Link>.
-        </p>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div v-if="!logs.length" class="px-5 py-12 text-center text-sm text-slate-500">
@@ -248,28 +351,13 @@ const next = computed(() => Math.min(props.pagination.pages, props.pagination.pa
                 </table>
             </div>
 
-            <div
-                v-if="pagination.pages > 1"
-                class="flex items-center justify-between border-t border-slate-200 px-5 py-3 text-xs text-slate-500"
-            >
-                <span>Page {{ pagination.page }} of {{ pagination.pages }}</span>
-                <div class="flex gap-2">
-                    <Link
-                        v-if="pagination.page > 1"
-                        :href="pageHref(previous)"
-                        class="rounded-lg bg-white px-3 py-1.5 font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                    >
-                        Newer
-                    </Link>
-                    <Link
-                        v-if="pagination.page < pagination.pages"
-                        :href="pageHref(next)"
-                        class="rounded-lg bg-white px-3 py-1.5 font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                    >
-                        Older
-                    </Link>
-                </div>
-            </div>
+            <Pagination
+                :model-value="pagination.page"
+                :pages="pagination.pages"
+                :total="pagination.total"
+                :per-page="25"
+                @update:model-value="goToPage"
+            />
         </div>
     </AuthenticatedLayout>
 </template>

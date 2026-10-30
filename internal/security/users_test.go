@@ -69,3 +69,28 @@ func TestNewUserValidate(t *testing.T) {
 		t.Fatalf("expected problems: %v", problems)
 	}
 }
+
+// An account whose home is a site's directory belongs to that site: the SSH
+// users tab shows it protected, so sudo, locking and deleting all go through
+// the site's page — and root is never mistaken for one.
+func TestSiteAccountsAreProtected(t *testing.T) {
+	users := []SSHUser{
+		{Name: "root", UID: 0, Home: "/root"},
+		{Name: "shop", UID: 1002, Home: "/var/www/shop.example/"},
+		{Name: "deploy", UID: 1001, Home: "/home/deploy"},
+	}
+
+	markSiteAccounts(users, map[string]string{"/var/www/shop.example": "shop.example", "/root": "nope"})
+
+	if users[0].Protected || users[0].Site != "" {
+		t.Fatalf("root was taken for a site account: %+v", users[0])
+	}
+
+	if !users[1].Protected || users[1].Site != "shop.example" {
+		t.Fatalf("the site account is not protected: %+v", users[1])
+	}
+
+	if users[2].Protected || users[2].Site != "" {
+		t.Fatalf("a machine account was taken for a site's: %+v", users[2])
+	}
+}

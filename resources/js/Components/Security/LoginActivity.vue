@@ -33,6 +33,14 @@ const { page, pages, total, perPage, visible: visibleAttempts } = usePagination(
 
 watch(filter, () => (page.value = 1));
 
+const {
+    page: lockedPage,
+    pages: lockedPages,
+    total: lockedTotal,
+    perPage: lockedPerPage,
+    visible: visibleLocked,
+} = usePagination(() => props.logins.locked, 10);
+
 const reasonLabel = {
     password: 'Password',
     two_factor: 'Two-factor code',
@@ -80,7 +88,7 @@ const reasonLabel = {
             <div :class="card">
                 <h3 class="font-semibold text-slate-900">Locked out now</h3>
                 <ul class="mt-3 divide-y divide-slate-100">
-                    <li v-for="entry in logins.locked" :key="entry.ip" class="flex items-center justify-between py-2">
+                    <li v-for="entry in visibleLocked" :key="entry.ip" class="flex items-center justify-between py-2">
                         <span>
                             <IpAddress :ip="entry.ip" class="text-sm" />
                             <span class="block text-xs text-slate-500">until {{ when(entry.until) }}</span>
@@ -89,6 +97,13 @@ const reasonLabel = {
                     </li>
                     <li v-if="!logins.locked.length" class="py-4 text-sm text-slate-400">Nobody is locked out.</li>
                 </ul>
+                <Pagination
+                    v-model="lockedPage"
+                    :pages="lockedPages"
+                    :total="lockedTotal"
+                    :per-page="lockedPerPage"
+                    class="-mx-6 -mb-6"
+                />
             </div>
         </div>
 
@@ -96,7 +111,10 @@ const reasonLabel = {
             <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
                 <div>
                     <h3 class="font-semibold text-slate-900">Panel sign-in history</h3>
-                    <p class="text-sm text-slate-500">Every attempt to sign in to this panel, kept for 90 days.</p>
+                    <p class="text-sm text-slate-500">
+                        Every attempt to sign in to this panel, kept for as long as the
+                        <a :href="route('logs.index')" class="text-brand-600 hover:underline">Logs page</a> keeps logs.
+                    </p>
                 </div>
                 <select v-model="filter" class="rounded-lg border-slate-300 text-sm shadow-sm">
                     <option value="all">All</option>

@@ -467,6 +467,10 @@ func (s *Service) Restore(ctx context.Context, backupID int64) error {
 			"; sleep 2; sudo systemctl status "+service+" --no-pager --lines=20")
 	}
 
+	list.AddFn("Keep the site's files to itself", func(runner *tasks.Runner) (string, error) {
+		return "", s.IsolateSite(site)
+	}).Optional()
+
 	list.Add("Reload nginx", "sudo nginx -t && sudo systemctl reload nginx").Optional()
 
 	if !tasks.New(s.Store, taskID).Run(list) {

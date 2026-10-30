@@ -262,7 +262,7 @@ func (a *App) checkAlerts(ctx context.Context) {
 	alerts = append(alerts, a.panelAlerts(ctx, ready)...)
 	alerts = append(alerts, a.sshAlerts(ready)...)
 
-	a.Store.PruneLoginAttempts(ctx, loginHistory)
+	a.pruneLogs(ctx)
 
 	if !ready || len(alerts) == 0 {
 		return

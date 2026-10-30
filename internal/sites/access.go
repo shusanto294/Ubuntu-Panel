@@ -130,9 +130,11 @@ func (s *Service) AccessUsers(site *store.Site) []AccessUser {
 
 // CreateAccessUser adds a system account for a site.
 //
-// Its home is the site directory and its group is www-data, so what it writes
-// is what the web server can read — an SFTP account that uploads files PHP
-// cannot open is the same as no account at all.
+// Its home is the site directory, and it reaches that site's files and no
+// other's. It used to be given www-data as its group, which is the group of
+// every site on the machine: an account made for one site could read the
+// wp-config.php of all of them. Now it has a group of its own, and its access
+// to its site is an ACL on that site's files — see IsolateSite.
 func (s *Service) CreateAccessUser(ctx context.Context, siteID int64,
 	name, password string, sftpOnly bool) error {
 	site, err := s.Store.FindSite(ctx, siteID)
@@ -165,7 +167,7 @@ func (s *Service) CreateAccessUser(ctx context.Context, siteID int64,
 
 	// -M, because the home directory is the site and already exists; creating
 	// it would mean writing a skeleton into somebody's document root.
-	command := fmt.Sprintf("sudo useradd -M -d %s -s %s -g www-data %s",
+	command := fmt.Sprintf("sudo useradd -M -U -d %s -s %s %s",
 		proc.Quote(strings.TrimRight(site.RootPath, "/")), proc.Quote(shell), proc.Quote(name))
 
 	if result := proc.Run(command, 2*time.Minute); !result.OK() {
@@ -184,7 +186,11 @@ func (s *Service) CreateAccessUser(ctx context.Context, siteID int64,
 		return errors.New("the account could not be put in the SFTP group")
 	}
 
-	return s.shareSiteDirectory(site)
+	if err := s.IsolateSite(site); err != nil {
+		return fmt.Errorf("the account was created, but %w", err)
+	}
+
+	return nil
 }
 
 // SetAccessPassword changes one account's password.
@@ -205,6 +211,15 @@ func (s *Service) SetAccessPassword(ctx context.Context, siteID int64, name, pas
 func (s *Service) DeleteAccessUser(ctx context.Context, siteID int64, name string) error {
 	if _, err := s.accessUser(ctx, siteID, name); err != nil {
 		return err
+	}
+
+	// Its entries come off the site's files first, while the name still
+	// resolves: after userdel they are a bare number that a later account
+	// given the same uid would inherit.
+	if site, err := s.Store.FindSite(ctx, siteID); err == nil {
+		root := proc.Quote(strings.TrimRight(site.RootPath, "/"))
+		proc.Run(fmt.Sprintf("sudo setfacl -R -x u:%[1]s %[2]s 2>/dev/null; "+
+			"sudo setfacl -R -d -x u:%[1]s %[2]s 2>/dev/null; true", proc.Quote(name), root), 10*time.Minute)
 	}
 
 	if result := proc.Run("sudo userdel "+proc.Quote(name), 2*time.Minute); !result.OK() {
@@ -311,24 +326,82 @@ func (s *Service) prepareSSHAccess() error {
 	return nil
 }
 
-// shareSiteDirectory makes the site's files writable by its accounts.
+// IsolateSite keeps a site's files to the site: the web server, which runs as
+// www-data and owns them; the site's own SSH and SFTP accounts, by name; and
+// nobody else. Not the accounts of other sites, and not the machine's other
+// users.
 //
-// The group is www-data on every file, the group bit is set on every
-// directory, and new directories inherit it — so a file uploaded over SFTP is
-// a file PHP-FPM can read, and one written by PHP is a file the account can
-// edit. Without the setgid bit that is true only until somebody creates a
-// folder.
-func (s *Service) shareSiteDirectory(site *store.Site) error {
-	root := proc.Quote(strings.TrimRight(site.RootPath, "/"))
+// Two parts. The site directory loses its permissions for "other", so an
+// account that is neither www-data nor named on it cannot even list it. And
+// each of the site's accounts is named in an ACL on every file, with a default
+// ACL on every directory so files created later — by the account, by PHP, by
+// a git pull — carry the same entries: the account can edit what PHP wrote,
+// and PHP can read what the account uploaded.
+//
+// ACLs rather than a group per site: the panel resets ownership to
+// www-data:www-data in a dozen places — every deploy, every restore, every
+// upload — and an ACL survives a chown where a group would not. A chmod does
+// narrow an ACL, which is why a deploy ends by running this again.
+func (s *Service) IsolateSite(site *store.Site) error {
+	root := strings.TrimRight(site.RootPath, "/")
+	if root == "" || root == "/" {
+		return errors.New("the site has no directory to protect")
+	}
 
-	command := fmt.Sprintf(
-		"sudo chgrp -R www-data %[1]s && "+
-			"sudo chmod -R g+rwX %[1]s && "+
-			"sudo find %[1]s -type d -exec chmod g+s {} +", root)
+	quoted := proc.Quote(root)
 
-	if !proc.Ok(command) {
-		return errors.New("the account was created, but the site's files could not be shared " +
-			"with it — check the permissions on the site directory")
+	script := fmt.Sprintf("sudo test -d %[1]s || exit 0\nsudo chmod o-rwx %[1]s\n", quoted)
+
+	users := s.AccessUsers(site)
+
+	if len(users) > 0 {
+		script += "command -v setfacl >/dev/null 2>&1 || " +
+			"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq acl >/dev/null\n"
+		script += fmt.Sprintf("sudo setfacl -R -m u:www-data:rwX %[1]s && "+
+			"sudo setfacl -R -d -m u:www-data:rwX %[1]s\n", quoted)
+
+		for _, user := range users {
+			script += fmt.Sprintf("sudo setfacl -R -m u:%[1]s:rwX %[2]s && "+
+				"sudo setfacl -R -d -m u:%[1]s:rwX %[2]s\n", proc.Quote(user.Name), quoted)
+		}
+	}
+
+	if result := proc.Run("set -e\n"+script, 15*time.Minute); !result.OK() {
+		return fmt.Errorf("the site's files could not be restricted to it: %s",
+			strings.TrimSpace(result.Output))
+	}
+
+	return nil
+}
+
+// MigrateAccessUsers takes the accounts made before IsolateSite existed out of
+// www-data — whose group opens every site — and gives each its own group, then
+// isolates every site. Idempotent; the caller runs it once.
+func (s *Service) MigrateAccessUsers(ctx context.Context) error {
+	sites, err := s.Store.Sites(ctx)
+	if err != nil {
+		return err
+	}
+
+	var failed []string
+
+	for _, site := range sites {
+		for _, user := range s.AccessUsers(site) {
+			name := proc.Quote(user.Name)
+
+			if strings.TrimSpace(proc.Run("id -gn "+name, 15*time.Second).Output) == "www-data" {
+				proc.Run(fmt.Sprintf("sudo groupadd -f %[1]s && sudo usermod -g %[1]s %[1]s && "+
+					"sudo gpasswd -d %[1]s www-data >/dev/null 2>&1; true", name), time.Minute)
+			}
+		}
+
+		if err := s.IsolateSite(site); err != nil {
+			failed = append(failed, site.Domain+": "+err.Error())
+		}
+	}
+
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
 	}
 
 	return nil

@@ -15,6 +15,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/mail"
 	"github.com/shusanto294/Ubuntu-Panel/internal/mcp"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
@@ -73,6 +74,10 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	// shared configuration the sites package owns, and its mail step
 	// configures the mail server once the packages are down.
 	catalog.SharedNginxConfig = app.Sites.WriteSharedConfig
+
+	// Which accounts belong to a site, for the SSH users tab to keep its
+	// hands off them.
+	security.SiteHomes = app.siteHomes
 	catalog.ConfigureMail = app.Mail.Configure
 	catalog.ConfigurePhpMyAdmin = app.EnsurePhpMyAdminReady
 	catalog.ConfigureSSHProtection = app.applySSHProtection
@@ -115,6 +120,10 @@ func (a *App) Start(ctx context.Context) {
 		// After the helpers, because it rewrites vhosts and reloads nginx, and
 		// the configuration those write is what nginx is being asked to take.
 		a.EnsureSiteAliases(ctx)
+
+		// Before anything else touches site files: accounts made for one site
+		// used to be able to open every site.
+		a.EnsureSiteIsolation(ctx)
 
 		// Last, so a first run's install is already queued and fail2ban goes
 		// in with it rather than racing it for the dpkg lock.

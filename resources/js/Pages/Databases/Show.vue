@@ -2,10 +2,12 @@
 import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import AppIcon from '@/Components/AppIcon.vue';
+import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { confirmDanger } from '@/dialog';
+import { usePagination } from '@/Composables/usePagination';
 
 const props = defineProps({
     database: Object,
@@ -14,6 +16,14 @@ const props = defineProps({
     phpMyAdminManual: String,
     activeTask: { type: Object, default: null },
 });
+
+const {
+    page: userPage,
+    pages: userPages,
+    total: userTotal,
+    perPage: userPerPage,
+    visible: visibleUsers,
+} = usePagination(() => props.users, 10);
 
 const credentials = computed(() => props.database.credentials);
 const isMySQL = computed(() => props.database.engine === 'mysql');
@@ -305,7 +315,7 @@ const destroy = async () => {
 
                 <ul class="mt-4 divide-y divide-slate-100 text-sm">
                     <li
-                        v-for="user in users"
+                        v-for="user in visibleUsers"
                         :key="user.name"
                         class="flex flex-wrap items-center justify-between gap-2 py-3"
                     >
@@ -348,6 +358,13 @@ const destroy = async () => {
                         The engine reported no users for this database.
                     </li>
                 </ul>
+                <Pagination
+                    v-model="userPage"
+                    :pages="userPages"
+                    :total="userTotal"
+                    :per-page="userPerPage"
+                    class="-mx-6"
+                />
 
                 <div class="mt-5 border-t border-slate-200 pt-4">
                     <p class="text-sm font-medium text-slate-700">Add a user</p>

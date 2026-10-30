@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -42,6 +43,7 @@ func (a *App) sshUsers(snap *securitySnapshot) []map[string]any {
 			"keys":             user.Keys,
 			"protected":        user.Protected,
 			"protected_reason": user.Reason,
+			"site":             nullable(user.Site),
 			"last_login":       nil,
 		}
 
@@ -203,4 +205,44 @@ func (a *App) sshUserKeyDestroy(w http.ResponseWriter, r *http.Request) {
 
 	a.Log.Info("SSH key removed", "user", name, "fingerprint", input["fingerprint"])
 	a.securityBack(w, r, "Key removed from "+name+".", false)
+}
+
+// siteIsolationSetting records that site accounts were moved out of www-data
+// and every site's files were restricted to it.
+const siteIsolationSetting = "site_isolation_v1"
+
+// EnsureSiteIsolation does that once, on a machine set up before it was how
+// site accounts worked. Marked done only when every site succeeded, so a site
+// that failed is tried again at the next start.
+func (a *App) EnsureSiteIsolation(ctx context.Context) {
+	if a.Store.SettingBool(siteIsolationSetting, false) {
+		return
+	}
+
+	if err := a.Sites.MigrateAccessUsers(ctx); err != nil {
+		a.Log.Error("could not restrict every site's files to the site", "error", err)
+		return
+	}
+
+	a.Store.SetSetting(siteIsolationSetting, "1")
+	a.Log.Info("site accounts can reach their own site only")
+}
+
+// siteHomes tells the security package which accounts belong to a site: the
+// ones whose home is a site's directory. Those are managed from the site's
+// page, and the SSH users tab — which is about the machine — shows them
+// without offering anything that would reach past the site.
+func (a *App) siteHomes() map[string]string {
+	homes := map[string]string{}
+
+	sites, err := a.Store.Sites(context.Background())
+	if err != nil {
+		return homes
+	}
+
+	for _, site := range sites {
+		homes[strings.TrimRight(site.RootPath, "/")] = site.Domain
+	}
+
+	return homes
 }

@@ -40,7 +40,17 @@ type SSHUser struct {
 	// given a password and unlocked, which only ever opens a way back in.
 	Protected bool   `json:"protected"`
 	Reason    string `json:"protected_reason"`
+
+	// Site is the domain whose account this is, when its home is a site's
+	// directory. Those belong to the site's page: from here they are shown
+	// and nothing else, so nothing done on this tab — sudo above all — can
+	// reach past the one site they were made for.
+	Site string `json:"site"`
 }
+
+// SiteHomes maps a site's directory to its domain. The web package sets it;
+// security has no way to know where sites live.
+var SiteHomes func() map[string]string
 
 // SSHKey is one line of an authorized_keys file.
 type SSHKey struct {
@@ -86,7 +96,25 @@ done`
 
 	result := proc.Run("sudo bash -c "+proc.Quote(script), time.Minute)
 
-	return parseUsers(result.Output, panelUser)
+	users := parseUsers(result.Output, panelUser)
+
+	if SiteHomes != nil {
+		markSiteAccounts(users, SiteHomes())
+	}
+
+	return users
+}
+
+// markSiteAccounts protects the accounts whose home is a site's directory.
+func markSiteAccounts(users []SSHUser, homes map[string]string) {
+	for i := range users {
+		if domain, ok := homes[strings.TrimRight(users[i].Home, "/")]; ok && users[i].UID != 0 {
+			users[i].Site = domain
+			users[i].Protected = true
+			users[i].Reason = "This account belongs to " + domain + " and can reach that site's " +
+				"files only. Manage it from the site's own page."
+		}
+	}
 }
 
 func parseUsers(output, panelUser string) []SSHUser {

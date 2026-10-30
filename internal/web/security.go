@@ -26,9 +26,6 @@ const (
 	loginMaxSetting        = "security_login_max_attempts"
 	loginLockoutSetting    = "security_login_lockout_minutes"
 	fail2banOfferedSetting = "security_fail2ban_offered"
-
-	// How long the sign-in history is kept.
-	loginHistory = 90 * 24 * time.Hour
 )
 
 // securityTaskActions are the tasks this page starts.
@@ -499,7 +496,6 @@ func (a *App) recordSSHEvents(ctx context.Context) {
 	}
 
 	a.Store.RecordSSHEvents(ctx, kept)
-	a.Store.PruneSSHEvents(ctx, loginHistory)
 	a.Store.SetSetting(sshEventsSetting, strconv.FormatInt(now.Unix(), 10))
 }
 

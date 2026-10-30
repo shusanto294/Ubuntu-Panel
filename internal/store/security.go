@@ -159,12 +159,6 @@ func (s *Store) ClearLoginFailures(ctx context.Context, ip string) error {
 	return err
 }
 
-// PruneLoginAttempts drops history older than the retention window.
-func (s *Store) PruneLoginAttempts(ctx context.Context, keep time.Duration) {
-	s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE created_at < ?`,
-		time.Now().Add(-keep).Unix())
-}
-
 // LoginAttemptsAfter is everything recorded after an id, oldest first: what
 // the alert watcher has not yet looked at.
 func (s *Store) LoginAttemptsAfter(ctx context.Context, after int64) ([]LoginAttempt, error) {

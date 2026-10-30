@@ -161,6 +161,12 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 	}
 
 	list.AddFn("Write the nginx vhost", s.writeVhost(ctx, site.ID))
+	// Last before nginx: every step above may have reset the modes, and this
+	// is what keeps the site's files from the machine's other accounts.
+	list.AddFn("Keep the site's files to itself", func(runner *tasks.Runner) (string, error) {
+		return "", s.IsolateSite(site)
+	})
+
 	list.Add("Reload nginx", "sudo nginx -t", "sudo systemctl reload nginx")
 
 	// The certificate — unless the site's DNS provider is already serving one.

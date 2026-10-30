@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"time"
 )
@@ -41,11 +42,6 @@ func (s *Store) RecordSSHEvents(ctx context.Context, events []SSHEvent) {
 	tx.Commit()
 }
 
-// PruneSSHEvents drops what is older than the retention window.
-func (s *Store) PruneSSHEvents(ctx context.Context, keep time.Duration) {
-	s.db.ExecContext(ctx, `DELETE FROM ssh_events WHERE created_at < ?`, time.Now().Add(-keep).Unix())
-}
-
 // Timeline filters beyond the task types.
 const (
 	TimelinePanelLogins = "panel-login"
@@ -65,9 +61,7 @@ type TimelineEntry struct {
 // many entries there are in all.
 //
 // The filter is a task type, TimelinePanelLogins, TimelineSSH, or "" for
-// everything — which leaves out failed SSH attempts: a machine on the internet
-// collects a thousand a day, and they would bury every other line. They are
-// all under TimelineSSH.
+// everything.
 //
 // Paged in SQL over the three tables at once, and only the page's own rows are
 // then read in full: tasks carry their console, and a thousand of those is not
@@ -86,7 +80,7 @@ func (s *Store) Timeline(ctx context.Context, filter string, limit, offset int) 
 
 	switch filter {
 	case "":
-		parts = []string{tasks, logins, ssh + ` WHERE kind = 'accepted'`}
+		parts = []string{tasks, logins, ssh}
 	case TimelinePanelLogins:
 		parts = []string{logins}
 	case TimelineSSH:
@@ -254,4 +248,63 @@ func (s *Store) sshEventsByID(ctx context.Context, ids []any) (map[int64]*SSHEve
 	}
 
 	return found, rows.Err()
+}
+
+// Which records ClearLogs removes.
+const (
+	LogsTasks  = "tasks"
+	LogsLogins = "logins"
+	LogsSSH    = "ssh"
+)
+
+// ClearLogs deletes records older than before — everything, given a zero
+// time — of the kinds named, and says how many went. A task still running is
+// never removed: its console is being written, and a page is following it.
+func (s *Store) ClearLogs(ctx context.Context, kinds []string, before time.Time) int64 {
+	ctx = ctxOrBackground(ctx)
+
+	cutoff := before.Unix()
+	if before.IsZero() {
+		cutoff = time.Now().Add(time.Hour).Unix()
+	}
+
+	var removed int64
+
+	for _, kind := range kinds {
+		var (
+			result sql.Result
+			err    error
+		)
+
+		switch kind {
+		case LogsTasks:
+			result, err = s.db.ExecContext(ctx,
+				`DELETE FROM activity_logs
+				  WHERE status != 'running' AND CAST(strftime('%s', created_at) AS INTEGER) < ?`, cutoff)
+		case LogsLogins:
+			result, err = s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE created_at < ?`, cutoff)
+		case LogsSSH:
+			result, err = s.db.ExecContext(ctx, `DELETE FROM ssh_events WHERE created_at < ?`, cutoff)
+		default:
+			continue
+		}
+
+		if err == nil {
+			if count, err := result.RowsAffected(); err == nil {
+				removed += count
+			}
+		}
+	}
+
+	return removed
+}
+
+// Compact gives the space deleted rows held back to the disk. SQLite keeps it
+// for reuse otherwise, so clearing a year of logs would not make the file any
+// smaller. It rewrites the whole database, so only after a clear somebody
+// asked for, not on every hourly prune.
+func (s *Store) Compact(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctxOrBackground(ctx), `VACUUM`)
+
+	return err
 }

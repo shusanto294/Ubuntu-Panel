@@ -53,6 +53,8 @@ func (a *App) routes() *router {
 	rt.get("/settings", "settings", authenticated, a.settings)
 	rt.post("/system/domain", "system.domain", authenticated, a.updateDomain)
 	rt.post("/system/update", "system.update", authenticated, a.updatePanel)
+	rt.post("/logs/clear", "logs.clear", authenticated, a.logsClear)
+	rt.post("/logs/retention", "logs.retention", authenticated, a.logsRetention)
 	rt.get("/system/update/status", "system.update.status", authenticated, a.updateStatusEndpoint)
 	rt.post("/system/update/automatic", "system.update.automatic", authenticated, a.updateAutomatic)
 

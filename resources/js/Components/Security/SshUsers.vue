@@ -186,7 +186,8 @@ const remove = async (user) => {
                                 >
                                     password locked
                                 </span>
-                                <span v-if="user.protected && user.uid !== 0" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">panel &amp; terminal</span>
+                                <span v-if="user.site" class="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">site: {{ user.site }}</span>
+                                <span v-else-if="user.protected && user.uid !== 0" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">panel &amp; terminal</span>
                                 <span v-else-if="user.protected" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">system</span>
                             </p>
                             <p class="text-xs text-slate-500">

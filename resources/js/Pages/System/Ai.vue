@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Checkbox from '@/Components/Checkbox.vue';
+import Pagination from '@/Components/Pagination.vue';
+import { usePagination } from '@/Composables/usePagination';
 import DangerButton from '@/Components/DangerButton.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -28,6 +30,14 @@ const props = defineProps({
     endpoint: { type: String, default: '' },
     issued: { type: String, default: null },
 });
+
+const {
+    page: tokenPage,
+    pages: tokenPages,
+    total: tokenTotal,
+    perPage: tokenPerPage,
+    visible: visibleTokens,
+} = usePagination(() => props.tokens, 10);
 
 // ------------------------------------------------------------------ copying
 
@@ -382,7 +392,7 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
 
                 <ul class="divide-y divide-slate-100">
                     <li
-                        v-for="token in tokens"
+                        v-for="token in visibleTokens"
                         :key="token.id"
                         class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                     >
@@ -425,6 +435,12 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
                         connecting an assistant appear with it.
                     </li>
                 </ul>
+                <Pagination
+                    v-model="tokenPage"
+                    :pages="tokenPages"
+                    :total="tokenTotal"
+                    :per-page="tokenPerPage"
+                />
 
                 <p
                     v-if="tokens.length && !issued"

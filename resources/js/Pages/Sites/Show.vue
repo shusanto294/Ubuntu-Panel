@@ -701,6 +701,22 @@ const addAccount = (kind) => {
 const sftpAccounts = computed(() => props.accessUsers.filter((user) => user.sftp_only));
 const sshAccounts = computed(() => props.accessUsers.filter((user) => !user.sftp_only));
 
+const {
+    page: sshPage,
+    pages: sshPages,
+    total: sshTotal,
+    perPage: sshPerPage,
+    visible: visibleSshAccounts,
+} = usePagination(sshAccounts, 10);
+
+const {
+    page: sftpPage,
+    pages: sftpPages,
+    total: sftpTotal,
+    perPage: sftpPerPage,
+    visible: visibleSftpAccounts,
+} = usePagination(sftpAccounts, 10);
+
 const changeAccountPassword = (user) => {
     const chosen = window.prompt(
         `New password for ${user.name}. Leave blank to have one generated.`,
@@ -2148,7 +2164,7 @@ const destroy = async () => {
 
                     <ul class="mt-4 divide-y divide-slate-100 text-sm">
                         <li
-                            v-for="user in sshAccounts"
+                            v-for="user in visibleSshAccounts"
                             :key="user.name"
                             class="flex flex-wrap items-center justify-between gap-2 py-3"
                         >
@@ -2181,6 +2197,13 @@ const destroy = async () => {
                             No account has a shell here.
                         </li>
                     </ul>
+                    <Pagination
+                        v-model="sshPage"
+                        :pages="sshPages"
+                        :total="sshTotal"
+                        :per-page="sshPerPage"
+                        class="-mx-6"
+                    />
 
                     <div class="mt-5 border-t border-slate-200 pt-4">
                         <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -2219,7 +2242,7 @@ const destroy = async () => {
 
                     <ul class="mt-4 divide-y divide-slate-100 text-sm">
                         <li
-                            v-for="user in sftpAccounts"
+                            v-for="user in visibleSftpAccounts"
                             :key="user.name"
                             class="flex flex-wrap items-center justify-between gap-2 py-3"
                         >
@@ -2252,6 +2275,13 @@ const destroy = async () => {
                             No SFTP account for this site yet.
                         </li>
                     </ul>
+                    <Pagination
+                        v-model="sftpPage"
+                        :pages="sftpPages"
+                        :total="sftpTotal"
+                        :per-page="sftpPerPage"
+                        class="-mx-6"
+                    />
 
                     <div class="mt-5 border-t border-slate-200 pt-4">
                         <p class="text-xs font-medium uppercase tracking-wide text-slate-400">

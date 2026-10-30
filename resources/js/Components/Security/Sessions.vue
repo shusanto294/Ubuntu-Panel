@@ -1,12 +1,16 @@
 <script setup>
 import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { confirmDanger } from '@/dialog';
 import { ago, browser, card, smallButton } from './ui';
 import { router } from '@inertiajs/vue3';
 
-defineProps({
+const props = defineProps({
     sessions: Array,
 });
+
+const { page, pages, total, perPage, visible: visibleSessions } = usePagination(() => props.sessions, 10);
 
 const revoke = (key) => router.delete(route('security.sessions.destroy', key), { preserveScroll: true });
 
@@ -34,7 +38,7 @@ const revokeOthers = async () => {
             </button>
         </div>
         <ul class="divide-y divide-slate-100">
-            <li v-for="entry in sessions" :key="entry.key" class="flex items-center gap-4 px-6 py-4">
+            <li v-for="entry in visibleSessions" :key="entry.key" class="flex items-center gap-4 px-6 py-4">
                 <div class="min-w-0 flex-1">
                     <p class="text-sm font-medium text-slate-900">
                         {{ browser(entry.user_agent) }}
@@ -49,5 +53,6 @@ const revokeOthers = async () => {
                 </button>
             </li>
         </ul>
+        <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
     </div>
 </template>
