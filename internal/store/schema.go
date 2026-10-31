@@ -426,6 +426,14 @@ var migrations = []string{
 	// averages; without these a spike between two samples was never recorded.
 	`ALTER TABLE metric_samples ADD COLUMN cpu_max REAL`,
 	`ALTER TABLE metric_samples ADD COLUMN memory_max REAL`,
+
+	// Where a site's backups are kept: empty or "local" for this server, "s3"
+	// for the remote storage set up in Settings. A backup row carries the
+	// destination it was written to, and `remote_key` is the folder in the
+	// bucket holding its parts — set only once every part has been uploaded.
+	`ALTER TABLE sites ADD COLUMN backup_destination TEXT`,
+	`ALTER TABLE site_backups ADD COLUMN destination TEXT`,
+	`ALTER TABLE site_backups ADD COLUMN remote_key TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/s3"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
@@ -104,6 +106,22 @@ func (s *Service) Backup(ctx context.Context, backupID int64) error {
 
 	directory := backupDir(site, backupID, time.Now())
 
+	// A remote backup is built here like any other and then uploaded, so the
+	// storage is checked before any of that work is done.
+	var client *s3.Client
+	key := ""
+
+	if backup.Remote() {
+		if client, err = s.remote(); err != nil {
+			s.Store.FinishBackup(backupID, "failed", err.Error(), 0)
+			s.Store.FinishTask(taskID, "failed", err.Error(), 0)
+
+			return err
+		}
+
+		key = remoteKey(client, site, directory)
+	}
+
 	s.Store.StartBackup(backupID, directory)
 
 	database, engine, name := s.backupDatabase(ctx, site)
@@ -135,6 +153,20 @@ func (s *Service) Backup(ctx context.Context, backupID int64) error {
 		return s.writeManifest(site, backup, directory, engine, name)
 	})
 
+	size := int64(0)
+
+	if client != nil {
+		list.AddFn("Upload to "+client.Config().Bucket, func(runner *tasks.Runner) (string, error) {
+			size = directorySize(directory)
+
+			return uploadBackup(runner, client, directory, key)
+		})
+
+		// Optional: the upload worked, and a leftover directory is not a reason
+		// to call the backup failed and delete the copy that reached the bucket.
+		list.Add("Remove the copy on this server", "sudo rm -rf "+proc.Quote(directory)).Optional()
+	}
+
 	if !tasks.New(s.Store, taskID).Run(list) {
 		message := "The backup did not finish."
 
@@ -146,12 +178,23 @@ func (s *Service) Backup(ctx context.Context, backupID int64) error {
 		// nobody accounts for, holding a copy nothing will restore from.
 		proc.Ok("sudo rm -rf " + proc.Quote(directory))
 
+		// And whatever part of it reached the bucket.
+		if client != nil {
+			s.removeRemote(key)
+		}
+
 		s.Store.FinishBackup(backupID, "failed", message, 0)
 
 		return errors.New(message)
 	}
 
-	s.Store.FinishBackup(backupID, "complete", "", directorySize(directory))
+	if client != nil {
+		s.Store.MarkBackupUploaded(backupID, key)
+	} else {
+		size = directorySize(directory)
+	}
+
+	s.Store.FinishBackup(backupID, "complete", "", size)
 
 	s.pruneBackups(ctx, site)
 
@@ -357,6 +400,15 @@ func (s *Service) pruneBackups(ctx context.Context, site *store.Site) {
 // is not a backup, and leaving the row is offering somebody a restore that
 // cannot work.
 func (s *Service) RemoveBackup(backup *store.Backup) {
+	// The bucket's copy goes too. If it cannot be reached — the storage was
+	// removed from Settings, or the keys changed — the row still goes, and the
+	// objects are left for whoever owns the bucket.
+	if backup.Remote() && backup.RemoteKey != "" {
+		if err := s.removeRemote(backup.RemoteKey); err != nil {
+			slog.Warn("could not delete a remote backup", "key", backup.RemoteKey, "error", err)
+		}
+	}
+
 	if insideBackupRoot(backup.Path) {
 		proc.Ok("sudo rm -rf " + proc.Quote(backup.Path))
 	}
@@ -407,7 +459,23 @@ func (s *Service) Restore(ctx context.Context, backupID int64) error {
 		return errors.New("the site this backup belongs to no longer exists")
 	}
 
-	if !proc.Ok("sudo test -d " + proc.Quote(backup.Path)) {
+	// A remote backup is downloaded into a directory of its own first, and the
+	// rest of the restore reads from there exactly as it would a local one.
+	var client *s3.Client
+	download := ""
+
+	if backup.Remote() {
+		if backup.RemoteKey == "" {
+			return errors.New("this backup never finished uploading")
+		}
+
+		if client, err = s.remote(); err != nil {
+			return err
+		}
+
+		download = fmt.Sprintf("%s/%s/restore-%d", BackupRoot, site.Domain, backup.ID)
+		backup.Path = download
+	} else if !proc.Ok("sudo test -d " + proc.Quote(backup.Path)) {
 		return errors.New("this backup's files are no longer on disk")
 	}
 
@@ -432,7 +500,15 @@ func (s *Service) Restore(ctx context.Context, backupID int64) error {
 		list.Add("Stop "+service, "sudo systemctl stop "+service+" || true").Optional()
 	}
 
-	if backup.HasFiles && proc.Ok("sudo test -f "+proc.Quote(backup.Path+"/files.tar.gz")) {
+	if client != nil {
+		list.AddFn("Download the backup from "+client.Config().Bucket, func(runner *tasks.Runner) (string, error) {
+			return downloadBackup(runner, client, backup.RemoteKey, download)
+		})
+
+		defer proc.Ok("sudo rm -rf " + proc.Quote(download))
+	}
+
+	if backup.HasFiles && (client != nil || proc.Ok("sudo test -f "+proc.Quote(backup.Path+"/files.tar.gz"))) {
 		list.AddFn("Replace the site files", s.restoreFiles(site, backup))
 	}
 

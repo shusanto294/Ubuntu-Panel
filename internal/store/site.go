@@ -79,6 +79,10 @@ type Site struct {
 	BackupKeep     int
 	BackupNextAt   int64
 
+	// BackupDestination is where its backups are written: "local" for this
+	// server, "s3" for the remote storage set up in Settings.
+	BackupDestination string
+
 	// How the panel reaches this site's git remote, and what it does about new
 	// commits without being asked.
 	//
@@ -122,7 +126,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode,
 	backup_schedule, backup_keep, backup_next_at, staging_of,
 	repo_auth, repo_token, repo_deploy_key, webhook_secret, auto_pull,
-	auto_pull_next_at, last_commit, created_at`
+	auto_pull_next_at, last_commit, created_at, backup_destination`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -139,6 +143,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var cacheEnabled, backupKeep, backupNextAt, stagingOf nullInt
 	var repoAuth, repoToken, repoDeployKey, webhookSecret, autoPull, lastCommit text
 	var autoPullNextAt nullInt
+	var backupDestination text
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -149,7 +154,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
 		&backupSchedule, &backupKeep, &backupNextAt, &stagingOf,
 		&repoAuth, &repoToken, &repoDeployKey, &webhookSecret, &autoPull,
-		&autoPullNextAt, &lastCommit, &site.CreatedAt)
+		&autoPullNextAt, &lastCommit, &site.CreatedAt, &backupDestination)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -186,6 +191,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.AutoPull = autoPull.String()
 	site.AutoPullNextAt = autoPullNextAt.Int64
 	site.LastCommit = lastCommit.String()
+	site.BackupDestination = orDefault(backupDestination.String(), "local")
 
 	// A site from before the choice existed has the page cache or nothing, and
 	// says so rather than reading as "off" with the cache running.

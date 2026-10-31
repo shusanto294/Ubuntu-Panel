@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import BackupStorage from '@/Components/BackupStorage.vue';
 import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -21,6 +22,7 @@ const props = defineProps({
     activeTask: Object,
     latestTask: Object,
     smtp: Object,
+    backupStorage: Object,
 });
 
 const domainForm = useForm({
@@ -431,6 +433,7 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                 </form>
             </div>
 
+            <BackupStorage :storage="backupStorage" />
         </div>
     </AuthenticatedLayout>
 </template>

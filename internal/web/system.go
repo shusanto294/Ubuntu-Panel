@@ -189,9 +189,10 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 			"node_version":  a.Store.NodeVersion(),
 			"mail_hostname": nullable(a.Store.Setting("mail_hostname", "")),
 		},
-		"phpVersions":  config.PHPVersions,
-		"nodeVersions": config.NodeVersions,
-		"smtp":         a.smtpProps(),
+		"phpVersions":   config.PHPVersions,
+		"nodeVersions":  config.NodeVersions,
+		"smtp":          a.smtpProps(),
+		"backupStorage": a.backupStorageProps(),
 		// Narrowed to this action so an app install running on the Apps page
 		// does not appear here.
 		"activeTask": a.Store.TaskConsole(r.Context(),

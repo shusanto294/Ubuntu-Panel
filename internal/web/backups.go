@@ -34,6 +34,9 @@ func (a *App) QueueBackup(ctx context.Context, site *store.Site, userID int64,
 		Kind:     kind,
 		Note:     note,
 		HasFiles: true,
+
+		// Wherever the site is set to keep them at the moment it is asked for.
+		Destination: site.BackupDestination,
 	}
 
 	// Only a database the panel made for this site. One somebody pointed the
@@ -142,6 +145,17 @@ func (a *App) sitesBackupSchedule(w http.ResponseWriter, r *http.Request) {
 	schedule := strings.ToLower(strings.TrimSpace(input["schedule"]))
 	keep, _ := strconv.Atoi(strings.TrimSpace(input["keep"]))
 
+	destination := stringInput(input, "destination", site.BackupDestination)
+	if destination != "s3" {
+		destination = "local"
+	}
+
+	if destination == "s3" && !sites.RemoteConfig(a.Store).Ready() {
+		a.failBack(w, r, "Set up remote backup storage in Settings first.")
+
+		return
+	}
+
 	if schedule == "" {
 		schedule = "off"
 	}
@@ -172,16 +186,21 @@ func (a *App) sitesBackupSchedule(w http.ResponseWriter, r *http.Request) {
 		next = sites.NextBackupAt(schedule, time.Now())
 	}
 
-	a.Store.SetSiteBackupSchedule(site.ID, schedule, keep, next)
+	a.Store.SetSiteBackupSchedule(site.ID, schedule, keep, next, destination)
+
+	where := "on this server"
+	if destination == "s3" {
+		where = "in remote storage (" + sites.RemoteConfig(a.Store).Bucket + ")"
+	}
 
 	if schedule == "off" {
 		a.okBack(w, r, "Automatic backups are off for "+site.Domain+
-			". The ones already taken are kept.")
+			". Backups you take are kept "+where+".")
 
 		return
 	}
 
-	a.okBack(w, r, site.Domain+" is backed up "+schedule+", keeping the newest "+
+	a.okBack(w, r, site.Domain+" is backed up "+schedule+" "+where+", keeping the newest "+
 		strconv.Itoa(keep)+".")
 }
 
@@ -282,7 +301,10 @@ func (a *App) backupProps(ctx context.Context, site *store.Site) (any, map[strin
 
 	for _, backup := range backups {
 		list = append(list, backup.Summary())
-		total += backup.SizeBytes
+
+		if !backup.Remote() {
+			total += backup.SizeBytes
+		}
 	}
 
 	schedule := site.BackupSchedule
@@ -305,6 +327,14 @@ func (a *App) backupProps(ctx context.Context, site *store.Site) (any, map[strin
 		// would not, and the tab says so rather than leaving somebody to wonder
 		// what happened to it.
 		"database": nil,
+
+		// Where its backups go, and whether remote storage exists to choose.
+		"destination": site.BackupDestination,
+		"remote":      nil,
+	}
+
+	if remote := sites.RemoteConfig(a.Store); remote.Ready() {
+		settings["remote"] = map[string]any{"bucket": remote.Bucket, "endpoint": remote.Endpoint}
 	}
 
 	if schedule != "off" && site.BackupNextAt > 0 {

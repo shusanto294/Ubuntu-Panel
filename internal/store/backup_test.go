@@ -129,7 +129,7 @@ func TestOnlyTheSitesWhoseBackupIsDueAreOffered(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		st.SetSiteBackupSchedule(id, schedule, 7, next)
+		st.SetSiteBackupSchedule(id, schedule, 7, next, "local")
 
 		return id
 	}
@@ -162,5 +162,34 @@ func TestOnlyTheSitesWhoseBackupIsDueAreOffered(t *testing.T) {
 	if due[0].BackupSchedule != "daily" || due[0].BackupKeep != 7 {
 		t.Errorf("the schedule came back as %q keeping %d",
 			due[0].BackupSchedule, due[0].BackupKeep)
+	}
+}
+
+// A remote backup remembers where it went, and a local one says it is local
+// even though the column was empty before remote storage existed.
+func TestBackupDestination(t *testing.T) {
+	st := backupStore(t)
+	ctx := context.Background()
+
+	id, err := st.CreateBackup(ctx, &Backup{SiteID: 1, Kind: "manual", HasFiles: true, Destination: "s3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st.StartBackup(id, "/var/backups/ubuntu-panel/sites/example.com/x-1")
+	st.MarkBackupUploaded(id, "servers/one/example.com/x-1")
+
+	backup, err := st.FindBackup(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !backup.Remote() || backup.RemoteKey != "servers/one/example.com/x-1" || backup.Path != "" {
+		t.Fatalf("remote backup not recorded: %+v", backup)
+	}
+
+	local, _ := st.FindBackup(ctx, newBackup(t, st, 1, "manual", "complete"))
+	if local.Remote() || local.Destination != "local" {
+		t.Fatalf("a backup with no destination should be local: %+v", local)
 	}
 }

@@ -857,6 +857,10 @@ const refetch = () =>
 const backupNote = ref('');
 const backupSchedule = ref(props.backup.schedule ?? 'off');
 const backupKeep = ref(props.backup.keep ?? 7);
+// "local" or "s3". Remote is only offered once storage is set up in Settings.
+const backupDestination = ref(props.backup.destination ?? 'local');
+const remoteBackups = computed(() => props.backup.destination === 's3' && props.backup.remote);
+const localBackupCount = computed(() => props.backups.filter((entry) => entry.destination !== 's3').length);
 
 // A backup that is still being written, or a restore that is still running.
 // Either one means the page has to keep looking, because neither finishes in
@@ -882,7 +886,7 @@ const takeBackup = () => {
 const saveBackupSchedule = () =>
     router.post(
         route('sites.backups.schedule', props.site.id),
-        { schedule: backupSchedule.value, keep: backupKeep.value },
+        { schedule: backupSchedule.value, keep: backupKeep.value, destination: backupDestination.value },
         { preserveScroll: true },
     );
 
@@ -915,7 +919,9 @@ const restoreBackup = async (entry) => {
 const deleteBackup = async (entry) => {
     const go = await confirmDanger(
         `Delete the backup of ${entry.created_at}?`,
-        'Its files and its database dump are removed from the server. The site itself is untouched.',
+        entry.destination === 's3'
+            ? 'Its files and its database dump are deleted from the remote storage. The site itself is untouched.'
+            : 'Its files and its database dump are removed from the server. The site itself is untouched.',
         'Delete',
     );
 
@@ -2370,9 +2376,15 @@ const destroy = async () => {
                                     and the
                                     <span class="font-mono">{{ backup.database }}</span>
                                     database</template
-                                >, kept on this server under
-                                <span class="font-mono">{{ backup.root }}</span
-                                >.
+                                ><template v-if="remoteBackups"
+                                    >, uploaded to
+                                    <span class="font-mono">{{ backup.remote.bucket }}</span>
+                                    and removed from this server once it is there.</template
+                                ><template v-else
+                                    >, kept on this server under
+                                    <span class="font-mono">{{ backup.root }}</span
+                                    >.</template
+                                >
                             </p>
                         </div>
                         <button
@@ -2425,6 +2437,13 @@ const destroy = async () => {
                                     >
                                         {{ entry.kind }}
                                     </span>
+                                    <span
+                                        class="rounded-full px-2 py-0.5 text-[11px] uppercase tracking-wide"
+                                        :class="entry.destination === 's3' ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-500'"
+                                        :title="entry.destination === 's3' ? 'Kept in remote storage' : 'Kept on this server'"
+                                    >
+                                        {{ entry.destination === 's3' ? 'remote' : 'this server' }}
+                                    </span>
                                 </div>
                                 <p class="mt-1 text-xs text-slate-500">
                                     {{ backupContents(entry) }} ·
@@ -2474,12 +2493,36 @@ const destroy = async () => {
 
             <div class="space-y-6">
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-                    <h3 class="font-semibold text-slate-800">Automatic backups</h3>
+                    <h3 class="font-semibold text-slate-800">Where and how often</h3>
                     <p class="mt-1 text-sm text-slate-500">
-                        The panel takes one on this schedule and keeps the newest few.
+                        Where this site's backups are kept, and the schedule the panel takes them on.
                     </p>
 
                     <div class="mt-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700"
+                                >Keep backups on</label
+                            >
+                            <select
+                                v-model="backupDestination"
+                                class="mt-1 block w-full rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            >
+                                <option value="local">This server</option>
+                                <option value="s3" :disabled="!backup.remote">
+                                    Remote storage{{ backup.remote ? ` (${backup.remote.bucket})` : ' — not set up' }}
+                                </option>
+                            </select>
+                            <p v-if="!backup.remote" class="mt-1 text-xs text-slate-500">
+                                Add an S3-compatible bucket in
+                                <a :href="route('settings')" class="text-brand-600 hover:underline">Settings</a>
+                                to keep backups off this server.
+                            </p>
+                            <p v-else-if="backupDestination === 's3'" class="mt-1 text-xs text-slate-500">
+                                Each backup is built here, uploaded, then removed from this server.
+                                Backups you take with "Back up now" go there too.
+                            </p>
+                        </div>
+
                         <div>
                             <label class="block text-sm font-medium text-slate-700"
                                 >How often</label
@@ -2523,7 +2566,7 @@ const destroy = async () => {
                             @click="saveBackupSchedule"
                             class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
                         >
-                            Save schedule
+                            Save
                         </button>
 
                         <p v-if="backup.next_at" class="text-xs text-slate-500">
@@ -2534,6 +2577,9 @@ const destroy = async () => {
 
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                     <h3 class="font-semibold text-slate-800">What a restore does</h3>
+                    <p v-if="backups.some((entry) => entry.destination === 's3')" class="mt-1 text-xs text-slate-500">
+                        A remote backup is downloaded to this server first, and the download is removed afterwards.
+                    </p>
                     <ul class="mt-3 space-y-2 text-sm text-slate-600">
                         <li>
                             Every file under
@@ -2553,9 +2599,12 @@ const destroy = async () => {
                     </ul>
 
                     <p class="mt-4 text-xs text-slate-500">
-                        All of it on disk here:
+                        On disk here:
                         {{ formatBytes(backup.total) }} across
-                        {{ backups.length }} backup{{ backups.length === 1 ? '' : 's' }}.
+                        {{ localBackupCount }} backup{{ localBackupCount === 1 ? '' : 's' }}<template
+                            v-if="backups.length > localBackupCount"
+                            >, plus {{ backups.length - localBackupCount }} in remote storage</template
+                        >.
                     </p>
                 </div>
             </div>

@@ -277,7 +277,7 @@ func (a *App) mcpSiteBackupSchedule() *mcp.Tool {
 				next = sites.NextBackupAt(schedule, time.Now())
 			}
 
-			a.Store.SetSiteBackupSchedule(site.ID, schedule, keep, next)
+			a.Store.SetSiteBackupSchedule(site.ID, schedule, keep, next, site.BackupDestination)
 
 			fresh, err := a.Store.FindSite(ctx, site.ID)
 			if err != nil {

@@ -273,6 +273,11 @@ func (a *App) routes() *router {
 	rt.patch("/settings/smtp", "settings.smtp", authenticated, a.smtpUpdate)
 	rt.post("/settings/smtp/test", "settings.smtp.test", authenticated, a.smtpTest)
 	rt.delete("/settings/smtp", "settings.smtp.destroy", authenticated, a.smtpDestroy)
+	rt.patch("/settings/backup-storage", "settings.backup-storage", authenticated, a.backupStorageUpdate)
+	rt.post("/settings/backup-storage/test", "settings.backup-storage.test", authenticated,
+		a.backupStorageTest)
+	rt.delete("/settings/backup-storage", "settings.backup-storage.destroy", authenticated,
+		a.backupStorageDestroy)
 
 	// Profile
 	rt.get("/profile", "profile.edit", authenticated, a.editProfile)

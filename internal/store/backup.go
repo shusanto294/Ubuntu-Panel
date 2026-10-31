@@ -38,21 +38,29 @@ type Backup struct {
 	LastError  string
 	CreatedAt  string
 	FinishedAt string
+
+	// Destination is "local" or "s3". RemoteKey is the folder in the bucket
+	// holding a remote backup's parts, set once they are all uploaded.
+	Destination string
+	RemoteKey   string
 }
+
+// Remote is whether this backup's parts live in remote storage.
+func (backup *Backup) Remote() bool { return backup.Destination == "s3" }
 
 const backupColumns = `id, site_id, user_id, kind, status, path, note, size_bytes,
 	has_files, has_database, database_engine, database_name, last_error,
-	created_at, finished_at`
+	created_at, finished_at, destination, remote_key`
 
 func (s *Store) scanBackup(row siteScanner) (*Backup, error) {
 	backup := &Backup{}
 
 	var userID nullInt
-	var note, engine, name, lastError, finishedAt text
+	var note, engine, name, lastError, finishedAt, destination, remoteKey text
 
 	err := row.Scan(&backup.ID, &backup.SiteID, &userID, &backup.Kind, &backup.Status,
 		&backup.Path, &note, &backup.SizeBytes, &backup.HasFiles, &backup.HasDatabase,
-		&engine, &name, &lastError, &backup.CreatedAt, &finishedAt)
+		&engine, &name, &lastError, &backup.CreatedAt, &finishedAt, &destination, &remoteKey)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -63,6 +71,8 @@ func (s *Store) scanBackup(row siteScanner) (*Backup, error) {
 	backup.DatabaseName = name.String()
 	backup.LastError = lastError.String()
 	backup.FinishedAt = finishedAt.String()
+	backup.Destination = orDefault(destination.String(), "local")
+	backup.RemoteKey = remoteKey.String()
 
 	return backup, nil
 }
@@ -71,11 +81,11 @@ func (s *Store) scanBackup(row siteScanner) (*Backup, error) {
 func (s *Store) CreateBackup(ctx context.Context, backup *Backup) (int64, error) {
 	result, err := s.db.ExecContext(ctxOrBackground(ctx),
 		`INSERT INTO site_backups (site_id, user_id, kind, status, path, note,
-			has_files, has_database, database_engine, database_name)
-		 VALUES (?, ?, ?, 'pending', '', ?, ?, ?, ?, ?)`,
+			has_files, has_database, database_engine, database_name, destination)
+		 VALUES (?, ?, ?, 'pending', '', ?, ?, ?, ?, ?, ?)`,
 		backup.SiteID, nullableID(backup.UserID), orDefault(backup.Kind, "manual"),
 		backup.Note, backup.HasFiles, backup.HasDatabase,
-		backup.DatabaseEngine, backup.DatabaseName)
+		backup.DatabaseEngine, backup.DatabaseName, orDefault(backup.Destination, "local"))
 	if err != nil {
 		return 0, err
 	}
@@ -126,6 +136,12 @@ func (s *Store) FinishBackup(id int64, status, message string, size int64) {
 		finished_at = datetime('now') WHERE id = ?`, status, message, size, id)
 }
 
+// MarkBackupUploaded records that a backup's parts are in the bucket under key
+// and no longer on this server.
+func (s *Store) MarkBackupUploaded(id int64, key string) {
+	s.db.Exec(`UPDATE site_backups SET path = '', remote_key = ? WHERE id = ?`, key, id)
+}
+
 // DeleteBackup forgets the row. Its directory is removed by the caller, which
 // is the only thing that knows whether the removal worked.
 func (s *Store) DeleteBackup(id int64) { s.db.Exec(`DELETE FROM site_backups WHERE id = ?`, id) }
@@ -169,9 +185,11 @@ func (s *Store) PrunableBackups(ctx context.Context, siteID int64, keep int) ([]
 
 // SetSiteBackupSchedule stores how often a site backs itself up and when the
 // next one is due.
-func (s *Store) SetSiteBackupSchedule(siteID int64, schedule string, keep int, nextAt int64) {
-	s.db.Exec(`UPDATE sites SET backup_schedule = ?, backup_keep = ?, backup_next_at = ? WHERE id = ?`,
-		schedule, keep, nextAt, siteID)
+func (s *Store) SetSiteBackupSchedule(siteID int64, schedule string, keep int, nextAt int64,
+	destination string) {
+	s.db.Exec(`UPDATE sites SET backup_schedule = ?, backup_keep = ?, backup_next_at = ?,
+		backup_destination = ? WHERE id = ?`,
+		schedule, keep, nextAt, orDefault(destination, "local"), siteID)
 }
 
 // SetSiteBackupNext moves the due time on, after a scheduled run.
@@ -224,6 +242,7 @@ func (backup *Backup) Summary() map[string]any {
 		"last_error":   backup.LastError,
 		"created_at":   backup.CreatedAt,
 		"finished_at":  nullableText(backup.FinishedAt),
+		"destination":  backup.Destination,
 	}
 }
 
@@ -249,4 +268,28 @@ func orDefault(value, fallback string) string {
 	}
 
 	return value
+}
+
+// CountSitesBackingUpTo is how many live sites keep their backups at
+// destination.
+func (s *Store) CountSitesBackingUpTo(destination string) int {
+	var count int
+
+	s.db.QueryRow(`SELECT count(*) FROM sites WHERE deleted_at IS NULL AND backup_destination = ?`,
+		destination).Scan(&count)
+
+	return count
+}
+
+// MoveSiteBackups points every site keeping its backups at from to to, and
+// says how many it moved.
+func (s *Store) MoveSiteBackups(from, to string) int64 {
+	result, err := s.db.Exec(`UPDATE sites SET backup_destination = ? WHERE backup_destination = ?`, to, from)
+	if err != nil {
+		return 0
+	}
+
+	moved, _ := result.RowsAffected()
+
+	return moved
 }
