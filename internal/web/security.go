@@ -538,6 +538,7 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 			"enabled": a.sshTrapEnabled(),
 			"status":  snap.Trap,
 		},
+		"bans":      a.bans(r.Context(), snap),
 		"users":     a.sshUsers(snap),
 		"firewall":  snap.Firewall,
 		"panelPort": a.panelPort(),
@@ -715,6 +716,20 @@ func (a *App) securityBan(w http.ResponseWriter, r *http.Request) {
 
 	if address == session.ClientIP(r) {
 		a.securityBack(w, r, "That is the address you are using the panel from.", true)
+		return
+	}
+
+	// The whole server is a ufw block: it outlives fail2ban and the trap, and
+	// is refused on every port whatever else is on.
+	if input["scope"] == "server" {
+		if err := security.BlockAddress(address, strings.TrimSpace(input["comment"])); err != nil {
+			a.securityBack(w, r, err.Error(), true)
+			return
+		}
+
+		a.Log.Warn("banned from the server by hand", "ip", address)
+		a.securityBack(w, r, address+" is banned from the whole server.", false)
+
 		return
 	}
 

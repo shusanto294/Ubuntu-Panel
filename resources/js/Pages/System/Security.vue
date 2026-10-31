@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
+import Banned from '@/Components/Security/Banned.vue';
 import SshProtection from '@/Components/Security/SshProtection.vue';
 import SshUsers from '@/Components/Security/SshUsers.vue';
 import LoginActivity from '@/Components/Security/LoginActivity.vue';
@@ -22,6 +23,7 @@ const props = defineProps({
     hardening: Object,
     sshService: Object,
     sshTrap: Object,
+    bans: Object,
     firewall: Object,
     panelPort: Number,
     updates: Object,
@@ -39,6 +41,7 @@ const props = defineProps({
 // the same one.
 const tabs = [
     { key: 'overview', name: 'Overview' },
+    { key: 'bans', name: 'Banned IPs' },
     { key: 'ssh', name: 'SSH protection' },
     { key: 'users', name: 'SSH users' },
     { key: 'logins', name: 'Panel logins' },
@@ -103,10 +106,10 @@ const tiles = computed(() => [
         tab: 'ssh',
     },
     {
-        label: 'Banned from SSH',
-        value: props.ssh.status.currently_banned,
-        detail: props.ssh.status.running ? 'fail2ban is running' : 'fail2ban is not running',
-        tab: 'ssh',
+        label: 'Banned addresses',
+        value: props.bans.counts.total,
+        detail: props.ssh.status.running ? 'all sources · fail2ban is running' : 'all sources · fail2ban is not running',
+        tab: 'bans',
     },
     {
         label: 'Failed panel logins, 24 h',
@@ -167,9 +170,9 @@ const tiles = computed(() => [
                 >
                     {{ t.name }}
                     <span
-                        v-if="t.key === 'ssh' && ssh.status.currently_banned"
+                        v-if="t.key === 'bans' && bans.counts.total"
                         class="ml-1 rounded-full bg-rose-50 px-1.5 text-xs text-rose-700"
-                        >{{ ssh.status.currently_banned }}</span
+                        >{{ bans.counts.total }}</span
                     >
                     <span
                         v-if="t.key === 'users'"
@@ -260,7 +263,14 @@ const tiles = computed(() => [
             </div>
         </div>
 
-        <SshProtection v-else-if="tab === 'ssh'" :ssh="ssh" :my-ip="myIp" />
+        <Banned v-else-if="tab === 'bans'" :bans="bans" :my-ip="myIp" @open="tab = $event" />
+        <SshProtection
+            v-else-if="tab === 'ssh'"
+            :ssh="ssh"
+            :banned-ips="bans.list.map((b) => b.ip)"
+            :my-ip="myIp"
+            @open="tab = $event"
+        />
         <SshUsers v-else-if="tab === 'users'" :users="users" :hardening="hardening" :service="sshService" />
         <LoginActivity v-else-if="tab === 'logins'" :logins="logins" />
         <Firewall
@@ -275,6 +285,7 @@ const tiles = computed(() => [
             :hardening="hardening"
             :service="sshService"
             :trap="sshTrap"
+            @open="tab = $event"
             :never-ban="ssh.jail?.ignore_ips ?? []"
             :my-ip="myIp"
         />

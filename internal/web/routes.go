@@ -234,6 +234,7 @@ func (a *App) routes() *router {
 		a.securityInstallFail2ban)
 	rt.post("/security/bans", "security.bans.store", authenticated, a.securityBan)
 	rt.post("/security/bans/remove", "security.bans.destroy", authenticated, a.securityUnban)
+	rt.post("/security/bans/release", "security.bans.release", authenticated, a.securityRelease)
 	rt.post("/security/trust", "security.trust", authenticated, a.securityTrust)
 	rt.post("/security/login-protection", "security.login-protection", authenticated,
 		a.securityLoginProtection)

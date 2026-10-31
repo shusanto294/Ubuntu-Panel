@@ -15,6 +15,8 @@ const props = defineProps({
     myIp: { type: String, default: '' },
 });
 
+const emit = defineEmits(['open']);
+
 // SSH itself, on or off — either lasts until it is changed here. Off stops
 // and masks sshd, so the port closes and stays closed through reboots and
 // package upgrades, and disconnects everybody logged in.
@@ -72,9 +74,6 @@ const setTrap = async (enabled) => {
         onFinish: () => (switching.value = false),
     });
 };
-
-const releaseTrapped = (ip) =>
-    router.post(route('security.ssh-trap.unban'), { ip }, { preserveScroll: true });
 
 const form = useForm({
     permit_root_login: props.hardening.permit_root_login || 'prohibit-password',
@@ -176,27 +175,12 @@ const save = async () => {
                 </button>
             </div>
 
-            <div v-if="trap.enabled && trapped.length" class="mt-4">
-                <p class="text-xs font-medium text-slate-500">
-                    Caught {{ trapped.length }} address{{ trapped.length === 1 ? '' : 'es' }}
-                </p>
-                <ul class="mt-2 flex flex-wrap gap-2">
-                    <li
-                        v-for="ip in trapped"
-                        :key="ip"
-                        class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 font-mono text-xs text-slate-700"
-                    >
-                        {{ ip }}
-                        <button
-                            type="button"
-                            class="font-sans font-medium text-brand-600 hover:underline"
-                            @click="releaseTrapped(ip)"
-                        >
-                            unban
-                        </button>
-                    </li>
-                </ul>
-            </div>
+            <p v-if="trap.enabled && trapped.length" class="mt-4 text-sm text-slate-600">
+                Caught {{ trapped.length }} address{{ trapped.length === 1 ? '' : 'es' }} —
+                <button type="button" class="font-medium text-brand-600 hover:underline" @click="emit('open', 'bans')">
+                    see and unban them on the Banned IPs tab
+                </button>
+            </p>
         </div>
     </div>
 

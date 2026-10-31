@@ -5,14 +5,17 @@ import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import { usePagination } from '@/Composables/usePagination';
-import { confirmAction, confirmDanger } from '@/dialog';
+import { confirmAction } from '@/dialog';
 import { ago, card, field, smallButton, when } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     ssh: Object,
+    bannedIps: { type: Array, default: () => [] },
     myIp: String,
 });
+
+const emit = defineEmits(['open']);
 
 const jail = props.ssh.jail;
 
@@ -52,22 +55,15 @@ const install = () => router.post(route('security.ssh-protection.install'), {}, 
 
 const trustMe = () => router.post(route('security.trust'), { ip: props.myIp }, { preserveScroll: true });
 
-const banForm = useForm({ ip: '' });
-const ban = () => banForm.post(route('security.bans.store'), { preserveScroll: true, onSuccess: () => banForm.reset() });
-
 const ban1 = async (ip) => {
     if (!(await confirmAction('Ban this address?', `${ip} will be refused on the SSH port ${jail.ban_time === -1 ? 'permanently' : 'for the ban time'}.`, 'Ban')))
         return;
     router.post(route('security.bans.store'), { ip }, { preserveScroll: true });
 };
 
-const unban = async (ip) => {
-    if (!(await confirmDanger('Unban this address?', `${ip} will be able to try SSH logins again.`, 'Unban')))
-        return;
-    router.post(route('security.bans.destroy'), { ip }, { preserveScroll: true });
-};
-
-const banned = computed(() => new Set(props.ssh.status.banned));
+// Banned by anything — this jail, the trap or a firewall block — is refused on
+// the SSH port all the same.
+const banned = computed(() => new Set(props.bannedIps));
 
 const filter = ref('all');
 const search = ref('');
@@ -84,14 +80,6 @@ const events = computed(() =>
 const { page, pages, total, perPage, visible: visibleEvents } = usePagination(events, 25);
 
 watch([filter, search], () => (page.value = 1));
-
-const {
-    page: bannedPage,
-    pages: bannedPages,
-    total: bannedTotal,
-    perPage: bannedPerPage,
-    visible: visibleBanned,
-} = usePagination(() => props.ssh.status.banned, 10);
 
 const kindStyle = {
     accepted: 'bg-emerald-50 text-emerald-700',
@@ -194,43 +182,15 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                 </form>
             </div>
 
-            <div :class="card">
-                <div class="flex items-center justify-between">
-                    <h3 class="font-semibold text-slate-900">Banned addresses</h3>
-                    <span class="text-sm text-slate-500">
-                        {{ ssh.status.currently_banned }} now · {{ ssh.status.total_banned }} since fail2ban started
-                    </span>
+            <div :class="card" class="flex flex-col">
+                <h3 class="font-semibold text-slate-900">Banned addresses</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    Every ban — from this protection, the SSH trap, firewall blocks and panel lockouts — is
+                    listed, counted and managed together on the Banned IPs tab.
+                </p>
+                <div class="mt-auto pt-6">
+                    <PrimaryButton type="button" @click="emit('open', 'bans')">Open Banned IPs</PrimaryButton>
                 </div>
-
-                <form class="mt-4 flex gap-2" @submit.prevent="ban">
-                    <input v-model="banForm.ip" type="text" placeholder="Ban an IP address" :class="field" class="!mt-0 font-mono text-sm" />
-                    <button
-                        type="submit"
-                        class="shrink-0 rounded-lg bg-rose-600 px-3 text-sm font-medium text-white hover:bg-rose-700"
-                        :disabled="banForm.processing || !banForm.ip"
-                    >
-                        Ban
-                    </button>
-                </form>
-
-                <ul class="mt-4 divide-y divide-slate-100">
-                    <li v-for="ip in visibleBanned" :key="ip" class="flex items-center justify-between py-2">
-                        <IpAddress :ip="ip" class="text-sm text-slate-700" />
-                        <button type="button" :class="smallButton" class="text-slate-700" @click="unban(ip)">
-                            Unban
-                        </button>
-                    </li>
-                    <li v-if="!ssh.status.banned.length" class="py-6 text-center text-sm text-slate-400">
-                        Nobody is banned right now.
-                    </li>
-                </ul>
-                <Pagination
-                    v-model="bannedPage"
-                    :pages="bannedPages"
-                    :total="bannedTotal"
-                    :per-page="bannedPerPage"
-                    class="-mx-6 -mb-6 mt-2"
-                />
             </div>
         </div>
 
