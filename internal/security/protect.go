@@ -3,6 +3,7 @@ package security
 import (
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -433,8 +434,14 @@ func NginxFile(p Protection, env NginxEnv) string {
 
 	file.WriteString("\n# Addresses that are never rate limited.\n")
 	file.WriteString("geo $panel_limit_exempt {\n    default 0;\n    127.0.0.0/8 1;\n    ::1 1;\n")
+	listed := map[string]bool{}
 	for _, address := range env.IgnoreIPs {
-		if ValidAddress(address) {
+		// Loopback is in the block already; nginx warns about a network twice.
+		if ip := net.ParseIP(address); ip != nil && ip.IsLoopback() {
+			continue
+		}
+		if ValidAddress(address) && !listed[address] {
+			listed[address] = true
 			fmt.Fprintf(&file, "    %s 1;\n", address)
 		}
 	}

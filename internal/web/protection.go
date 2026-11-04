@@ -49,7 +49,7 @@ func (a *App) saveProtection(p security.Protection) {
 // the hostnames whose clients are busy by design — the panel itself, and the
 // applications that sync or poll.
 func (a *App) nginxEnv(ctx context.Context) security.NginxEnv {
-	env := security.NginxEnv{IgnoreIPs: a.jailConfig().IgnoreIPs}
+	env := security.NginxEnv{IgnoreIPs: a.trustedList(ctx)}
 
 	if domain := a.Store.Setting("panel_domain", ""); domain != "" {
 		env.ExemptHosts = append(env.ExemptHosts, domain)
@@ -70,7 +70,7 @@ func (a *App) nginxEnv(ctx context.Context) security.NginxEnv {
 // settings are applied by their own switch, because turning them off needs
 // the values they replaced.
 func (a *App) applyProtection(ctx context.Context, p security.Protection) error {
-	if err := security.ApplyJails(p, a.jailConfig().IgnoreIPs); err != nil {
+	if err := security.ApplyJails(p, a.trustedList(ctx)); err != nil {
 		return err
 	}
 
@@ -100,8 +100,8 @@ func (a *App) EnsureProtection(ctx context.Context) {
 			}
 		}
 
-		if p.AnyJail() && proc.Which("fail2ban-client") && !security.JailsCurrent(p, a.jailConfig().IgnoreIPs) {
-			if err := security.ApplyJails(p, a.jailConfig().IgnoreIPs); err != nil {
+		if p.AnyJail() && proc.Which("fail2ban-client") && !security.JailsCurrent(p, a.trustedList(ctx)) {
+			if err := security.ApplyJails(p, a.trustedList(ctx)); err != nil {
 				a.Log.Error("could not apply the fail2ban protections", "error", err)
 			}
 			a.Store.SetSetting(accessLogsSetting, security.AccessLogs())
@@ -131,6 +131,9 @@ func (a *App) checkProtection(ctx context.Context) {
 	}
 	lastProtectionCheck.at = time.Now()
 	lastProtectionCheck.Unlock()
+
+	// An address that signed in, or one aged out of the thirty days.
+	a.syncTrusted(ctx)
 
 	p := a.protection()
 

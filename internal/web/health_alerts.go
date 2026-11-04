@@ -188,10 +188,10 @@ func (a *App) cpuAlert(ctx context.Context, minutes int) string {
 		fmt.Fprintf(&body, "  %-18s %6.0f%%  %d process(es)\n", group.Name, group.CPU, group.Processes)
 	}
 
-	report := a.traffic(ctx, findTrafficWindow("15m"))
+	report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
 
 	if len(report.Sites) > 0 {
-		body.WriteString("\nRequests to PHP or the app, last 15 minutes:\n")
+		body.WriteString("\nRequests to PHP or the app, last hour:\n")
 		for i, site := range report.Sites {
 			if i == 5 {
 				break

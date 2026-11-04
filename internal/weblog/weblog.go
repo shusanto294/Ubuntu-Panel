@@ -173,6 +173,11 @@ var probes = []string{
 
 // Threat classifies a request as one of the kinds above, or "" for one that
 // looks like an ordinary visitor.
+//
+// A request for one of the probe paths only counts when it was refused or
+// not there. Some of them are real on this machine — the panel serves
+// phpMyAdmin at /phpmyadmin — and the owner using one is answered with a
+// page, where a scanner guessing at it gets a 404.
 func Threat(entry Entry) string {
 	p := strings.ToLower(entry.Path)
 
@@ -186,9 +191,11 @@ func Threat(entry Entry) string {
 		return ThreatProbe
 	}
 
-	for _, probe := range probes {
-		if strings.Contains(p, probe) {
-			return ThreatProbe
+	if entry.Status == 0 || entry.Status >= 400 {
+		for _, probe := range probes {
+			if strings.Contains(p, probe) {
+				return ThreatProbe
+			}
 		}
 	}
 
@@ -234,6 +241,10 @@ type Analyzer struct {
 	From, To time.Time
 	buckets  int
 	width    time.Duration
+
+	// Trusted are addresses whose requests are never read as an attack: the
+	// owner's, the never-ban list's, the server's own.
+	Trusted map[string]bool
 
 	sites    map[string]*siteTotals
 	ips      map[string]*ipTotals
@@ -340,6 +351,9 @@ func (a *Analyzer) Add(site string, entry Entry) {
 
 	dynamic := !Static(entry.Path) && entry.Status != 304
 	threat := Threat(entry)
+	if a.Trusted[entry.IP] {
+		threat = ""
+	}
 	class := entry.Status / 100
 	if class < 1 || class > 5 {
 		class = 0
@@ -384,7 +398,12 @@ func (a *Analyzer) Add(site string, entry Entry) {
 	}
 
 	ip := a.ips[entry.IP]
-	if ip == nil {
+	if ip == nil && len(a.ips) >= maxAddresses {
+		// Past the cap an address is counted in the totals but not followed
+		// on its own: a month of a botnet is millions of addresses, and each
+		// one followed is a few maps of memory.
+		ip = a.overflow()
+	} else if ip == nil {
 		ip = &ipTotals{sites: map[string]int{}, paths: map[string]int{},
 			threats: map[string]int{}, minutes: map[int64]int{}}
 		a.ips[entry.IP] = ip
@@ -453,6 +472,22 @@ func (a *Analyzer) Add(site string, entry Entry) {
 	}
 }
 
+// maxAddresses is how many addresses are followed one by one.
+const maxAddresses = 50000
+
+// overflowAddress is what the addresses past the cap are counted as.
+const overflowAddress = "(other addresses)"
+
+func (a *Analyzer) overflow() *ipTotals {
+	ip := a.ips[overflowAddress]
+	if ip == nil {
+		ip = &ipTotals{sites: map[string]int{}, paths: map[string]int{},
+			threats: map[string]int{}, minutes: map[int64]int{}}
+		a.ips[overflowAddress] = ip
+	}
+	return ip
+}
+
 // ------------------------------------------------------------------ report
 
 // Report is what the page shows.
@@ -509,6 +544,11 @@ type IPStat struct {
 	// remarkable, or why it stands out.
 	Verdict string `json:"verdict"`
 	Danger  bool   `json:"danger"`
+
+	// Trusted says why this address is never flagged or banned: "you", "the
+	// never-ban list", "signed in to the panel", "this server". Set by the
+	// page, which knows who is looking.
+	Trusted string `json:"trusted,omitempty"`
 }
 
 type PathStat struct {
@@ -614,19 +654,12 @@ func (a *Analyzer) Report() Report {
 			Sites: top(ip.sites, 3), Paths: top(ip.paths, 5), Threats: ip.threats,
 			Agent: ip.agent, Bot: Bot(ip.agent), Last: ip.last.Unix(),
 		}
-		stat.Verdict, stat.Danger = verdict(stat, minutes)
+		if address != overflowAddress && !a.Trusted[address] {
+			stat.Verdict, stat.Danger = verdict(stat, minutes)
+		}
 		report.TopIPs = append(report.TopIPs, stat)
 	}
-	sort.Slice(report.TopIPs, func(i, j int) bool {
-		// The ones worth acting on first, then by volume.
-		if report.TopIPs[i].Danger != report.TopIPs[j].Danger {
-			return report.TopIPs[i].Danger
-		}
-		if report.TopIPs[i].Requests != report.TopIPs[j].Requests {
-			return report.TopIPs[i].Requests > report.TopIPs[j].Requests
-		}
-		return report.TopIPs[i].IP < report.TopIPs[j].IP
-	})
+	SortIPs(report.TopIPs)
 	if len(report.TopIPs) > 200 {
 		report.TopIPs = report.TopIPs[:200]
 	}
@@ -663,6 +696,19 @@ func (a *Analyzer) Report() Report {
 	}
 
 	return report
+}
+
+// SortIPs puts the addresses worth acting on first, then the busiest.
+func SortIPs(list []IPStat) {
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Danger != list[j].Danger {
+			return list[i].Danger
+		}
+		if list[i].Requests != list[j].Requests {
+			return list[i].Requests > list[j].Requests
+		}
+		return list[i].IP < list[j].IP
+	})
 }
 
 // verdict reads one address: whether it is doing something worth banning it

@@ -12,6 +12,7 @@ import (
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
@@ -53,7 +54,7 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 	switch view {
 	case "server":
 		extras = append(extras,
-			a.logsTrafficProps(r.Context(), query.Get("window")),
+			a.logsTrafficProps(r.Context(), query.Get("window"), session.ClientIP(r)),
 			a.logsEventsProps(r.Context(), flat, "server"))
 	case "panel":
 		extras = append(extras, a.logsEventsProps(r.Context(), flat, "panel"))

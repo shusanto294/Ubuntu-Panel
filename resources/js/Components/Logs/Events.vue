@@ -24,7 +24,7 @@ const props = defineProps({
 });
 
 const form = ref({
-    range: props.filters.range ?? '24h',
+    range: props.filters.range ?? '1h',
     source: props.filters.source ?? '',
     level: props.filters.level ?? '',
     site: props.filters.site ?? '',
@@ -35,7 +35,7 @@ watch(
     () => props.filters,
     (filters) => {
         form.value = {
-            range: filters.range ?? '24h',
+            range: filters.range ?? '1h',
             source: filters.source ?? '',
             level: filters.level ?? '',
             site: filters.site ?? '',

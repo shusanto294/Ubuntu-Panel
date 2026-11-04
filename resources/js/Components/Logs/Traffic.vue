@@ -13,14 +13,16 @@ import { router } from '@inertiajs/vue3';
  * whether that is an attack — and a button to ban the address that is.
  */
 const props = defineProps({
-    window: { type: String, default: '15m' },
-    windows: { type: Array, default: () => ['15m', '1h', '6h', '24h'] },
+    window: { type: String, default: '1h' },
+    windows: { type: Array, default: () => ['1h', '24h', '7d', '30d'] },
     traffic: { type: Object, default: null },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
+    // Why each trusted address is trusted: they are never offered a Ban button.
+    trustedIps: { type: Object, default: () => ({}) },
 });
 
-const WINDOW_LABEL = { '15m': 'Last 15 minutes', '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours' };
+const WINDOW_LABEL = { '1h': 'Last hour', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 
 const THREAT_LABEL = {
     'wp-login': 'WordPress login',
@@ -43,7 +45,7 @@ const setWindow = (key) =>
     router.get(
         route('logs.index'),
         { ...Object.fromEntries(new URLSearchParams(window.location.search)), window: key },
-        { preserveScroll: true, preserveState: true, only: ['window', 'traffic', 'processes', 'fpm'] },
+        { preserveScroll: true, preserveState: true, only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'] },
     );
 
 const logHref = (site, q) => {
@@ -63,7 +65,7 @@ const refresh = () => {
     if (refreshing.value || document.hidden) return;
 
     router.reload({
-        only: ['traffic', 'processes', 'fpm'],
+        only: ['traffic', 'trustedIps', 'processes', 'fpm'],
         preserveScroll: true,
         preserveState: true,
         onStart: () => (refreshing.value = true),
@@ -262,7 +264,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                 >
                     <span class="min-w-0 flex-1">{{ f.text }}</span>
                     <button
-                        v-if="f.ip"
+                        v-if="f.ip && !trustedIps[f.ip]"
                         type="button"
                         class="rounded-lg bg-rose-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-rose-700"
                         @click="ban(f.ip, f.reason)"
@@ -539,6 +541,12 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                             >
                                 <td class="whitespace-nowrap px-5 py-2.5">
                                     <IpAddress :ip="ip.ip" class="text-slate-900" />
+                                    <span
+                                        v-if="ip.trusted"
+                                        class="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                                        :title="`Never flagged or banned: ${ip.trusted}`"
+                                        >trusted · {{ ip.trusted }}</span
+                                    >
                                     <p class="max-w-[16rem] truncate text-xs text-slate-400" :title="ip.agent">
                                         {{ ip.bot ? '🤖 ' : '' }}{{ ip.agent || 'no user agent' }}
                                     </p>
@@ -577,6 +585,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                         Lines
                                     </a>
                                     <button
+                                        v-if="!ip.trusted && !trustedIps[ip.ip]"
                                         type="button"
                                         class="rounded-lg px-2.5 py-1 text-xs font-medium ring-1 transition"
                                         :class="
@@ -618,7 +627,9 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                             <IpAddress :ip="ip.name" class="text-slate-700" />
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
+                                <span v-if="trustedIps[ip.name]" class="text-emerald-700">trusted</span>
                                 <button
+                                    v-else
                                     type="button"
                                     class="font-medium text-rose-600 hover:underline"
                                     @click="ban(ip.name, `${number(ip.count)} ${th.label.toLowerCase()}`)"

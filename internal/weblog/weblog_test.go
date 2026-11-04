@@ -51,6 +51,7 @@ func TestThreat(t *testing.T) {
 		{"GET", "/wp-login.php", ""},
 		{"POST", "/xmlrpc.php", ThreatXMLRPC},
 		{"GET", "/.env", ThreatProbe},
+		{"GET", "/phpmyadmin/index.php", ""}, // answered: the panel's own phpMyAdmin
 		{"GET", "/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", ThreatProbe},
 		{"GET", "/static/../../etc/passwd", ThreatProbe},
 		{"POST", "/user/login", ThreatLogin},
@@ -60,7 +61,11 @@ func TestThreat(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if got := Threat(Entry{Method: c.method, Path: c.path}); got != c.want {
+		status := 404
+		if strings.HasPrefix(c.path, "/phpmyadmin") {
+			status = 200
+		}
+		if got := Threat(Entry{Method: c.method, Path: c.path, Status: status}); got != c.want {
 			t.Errorf("Threat(%s %s) = %q, want %q", c.method, c.path, got, c.want)
 		}
 	}
@@ -144,5 +149,36 @@ func TestReportFindsTheBruteForce(t *testing.T) {
 	}
 	if total != report.Requests || len(report.Timeline) != 15 {
 		t.Fatalf("timeline holds %d of %d in %d buckets", total, report.Requests, len(report.Timeline))
+	}
+}
+
+func TestTrustedAddressesAreNeverFlagged(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	a := New(now.Add(-time.Hour), now, 30)
+	a.Trusted = map[string]bool{"103.91.52.3": true}
+
+	for i := 0; i < 50; i++ {
+		at := now.Add(-time.Duration(i) * time.Second)
+		a.Line("(server)", line("103.91.52.3", at, "GET", "/.env", 404, "Mozilla"))
+		a.Line("(server)", line("203.0.113.9", at, "GET", "/.env", 404, "zgrab"))
+	}
+
+	report := a.Report()
+
+	for _, ip := range report.TopIPs {
+		switch ip.IP {
+		case "103.91.52.3":
+			if ip.Danger || ip.Verdict != "" || len(ip.Threats) != 0 {
+				t.Errorf("the trusted address was flagged: %+v", ip)
+			}
+		case "203.0.113.9":
+			if !ip.Danger {
+				t.Errorf("the scanner was not flagged: %+v", ip)
+			}
+		}
+	}
+
+	if len(report.Threats) != 1 || report.Threats[0].IPs != 1 {
+		t.Fatalf("threats = %+v", report.Threats)
 	}
 }

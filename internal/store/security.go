@@ -548,3 +548,25 @@ func (s *Store) SaveIPCountries(ctx context.Context, countries map[string]string
 			ip, country, now)
 	}
 }
+
+// SignInAddresses are the addresses an account signed in to the panel from
+// since a time: the owner's, as far as the panel can tell.
+func (s *Store) SignInAddresses(ctx context.Context, since int64) []string {
+	addresses := []string{}
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT DISTINCT ip_address FROM login_attempts WHERE success = 1 AND created_at >= ?`, since)
+	if err != nil {
+		return addresses
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var address string
+		if rows.Scan(&address) == nil && address != "" {
+			addresses = append(addresses, address)
+		}
+	}
+
+	return addresses
+}

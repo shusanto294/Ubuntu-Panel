@@ -87,12 +87,24 @@ func (a *App) jailConfig() security.JailConfig {
 	return config
 }
 
+// effectiveJail is the SSH jail as fail2ban is given it: the saved settings,
+// with every trusted address (trusted.go) as its ignore list rather than the
+// never-ban list alone.
+func (a *App) effectiveJail(ctx context.Context) security.JailConfig {
+	config := a.jailConfig()
+	config.IgnoreIPs = a.trustedList(ctx)
+
+	return config
+}
+
 // applySSHProtection writes the jail fail2ban runs. It is the catalogue's last
 // step for fail2ban as well as what the Security page calls on save.
 func (a *App) applySSHProtection(runner *tasks.Runner) error {
-	if err := security.Apply(a.jailConfig(), security.SSHPorts()); err != nil {
+	if err := security.Apply(a.effectiveJail(context.Background()), security.SSHPorts()); err != nil {
 		return err
 	}
+
+	a.Store.SetSetting(trustedSetting, strings.Join(a.trustedList(context.Background()), " "))
 
 	// The optional jails and rate limits share the never-ban list.
 	if p := a.protection(); p.AnyJail() || p.RateLogin.Enabled || p.RateFlood.Enabled {
@@ -154,7 +166,7 @@ func (a *App) EnsureSSHProtection(ctx context.Context) {
 	current, _ := proc.ReadFile(security.JailPath, true)
 	journal := !proc.Ok("sudo test -s /var/log/auth.log")
 
-	if current == security.JailFile(a.jailConfig(), security.SSHPorts(), journal) {
+	if current == security.JailFile(a.effectiveJail(ctx), security.SSHPorts(), journal) {
 		return
 	}
 
@@ -720,6 +732,11 @@ func (a *App) securityBan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if refusal := a.refuseBan(r.Context(), address, session.ClientIP(r)); refusal != "" {
+		a.securityBack(w, r, refusal, true)
+		return
+	}
+
 	// The whole server is a ufw block: it outlives fail2ban and the trap, and
 	// is refused on every port whatever else is on.
 	if input["scope"] == "server" {
@@ -988,6 +1005,11 @@ func (a *App) securityFirewallBlock(w http.ResponseWriter, r *http.Request) {
 
 	if address == session.ClientIP(r) {
 		a.securityBack(w, r, "That is the address you are using the panel from.", true)
+		return
+	}
+
+	if refusal := a.refuseBan(r.Context(), address, session.ClientIP(r)); refusal != "" {
+		a.securityBack(w, r, refusal, true)
 		return
 	}
 

@@ -135,6 +135,7 @@ func (a *App) collectServerLogs(ctx context.Context) {
 	}
 
 	events := []store.ServerEvent{}
+	trusted := a.trustedSet(ctx)
 
 	for _, file := range files {
 		current, ok := stats[file.Path]
@@ -147,7 +148,7 @@ func (a *App) collectServerLogs(ctx context.Context) {
 		// Rotated since the last read: the rest of the old file first.
 		if known && inode != current.inode {
 			if old, ok := stats[file.Path+".1"]; ok && old.inode == inode && old.size > offset {
-				events = append(events, a.readLogBytes(ctx, file, file.Path+".1", offset, old.size, false)...)
+				events = append(events, a.readLogBytes(ctx, file, file.Path+".1", offset, old.size, trusted)...)
 			}
 			offset = 0
 		}
@@ -166,7 +167,7 @@ func (a *App) collectServerLogs(ctx context.Context) {
 			continue
 		}
 
-		read, consumed := a.readLogFile(ctx, file, start, current.size, skipFirst)
+		read, consumed := a.readLogFile(ctx, file, start, current.size, skipFirst, trusted)
 		events = append(events, read...)
 
 		a.Store.SetLogCursor(ctx, file.Path, current.inode, start+consumed)
@@ -178,10 +179,10 @@ func (a *App) collectServerLogs(ctx context.Context) {
 }
 
 // readLogBytes reads a rotated file's tail, where the cursor is not moved.
-func (a *App) readLogBytes(ctx context.Context, file serverlog.File, path string, from, to int64, skipFirst bool) []store.ServerEvent {
+func (a *App) readLogBytes(ctx context.Context, file serverlog.File, path string, from, to int64, trusted map[string]bool) []store.ServerEvent {
 	copied := file
 	copied.Path = path
-	events, _ := a.readLogFile(ctx, copied, from, to, skipFirst)
+	events, _ := a.readLogFile(ctx, copied, from, to, false, trusted)
 
 	return events
 }
@@ -189,10 +190,11 @@ func (a *App) readLogBytes(ctx context.Context, file serverlog.File, path string
 // readLogFile reads [from, to) of a file and returns its events and how many
 // bytes of whole lines were read — a line still being written is left for the
 // next minute.
-func (a *App) readLogFile(ctx context.Context, file serverlog.File, from, to int64, skipFirst bool) ([]store.ServerEvent, int64) {
+func (a *App) readLogFile(ctx context.Context, file serverlog.File, from, to int64, skipFirst bool, trusted map[string]bool) ([]store.ServerEvent, int64) {
 	length := min(to-from, collectMaxBytes)
 
-	reader := &serverlog.Reader{File: file, Location: time.Local, Now: time.Now(), PanelUser: a.Config.SystemUser}
+	reader := &serverlog.Reader{File: file, Location: time.Local, Now: time.Now(), PanelUser: a.Config.SystemUser,
+		Trusted: trusted}
 	sink := &cursorWriter{skip: skipFirst, line: reader.Line}
 
 	command := fmt.Sprintf("sudo tail -c +%d %s | head -c %d", from+1, proc.Quote(file.Path), length)
@@ -278,7 +280,6 @@ var eventRanges = []struct {
 	{"24h", "Last 24 hours", 24 * time.Hour},
 	{"7d", "Last 7 days", 7 * 24 * time.Hour},
 	{"30d", "Last 30 days", 30 * 24 * time.Hour},
-	{"all", "Everything kept", 0},
 }
 
 const eventsPerPage = 20
@@ -299,8 +300,8 @@ func (a *App) logsEventsProps(ctx context.Context, query map[string]string, scop
 		}
 	}
 	if !found {
-		rangeKey = "24h"
-		since = time.Now().Add(-24 * time.Hour).Unix()
+		rangeKey = "1h"
+		since = time.Now().Add(-time.Hour).Unix()
 	}
 
 	search := strings.TrimSpace(query["q"])

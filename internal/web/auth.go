@@ -191,6 +191,9 @@ func (a *App) completeLogin(w http.ResponseWriter, r *http.Request, user *store.
 
 	a.Log.Info("signed in", "email", user.Email, "ip", attempt.IP)
 
+	// The owner's address is let out of any ban and never banned again.
+	go a.trustSignIn(attempt.IP)
+
 	// Back to whatever they were reaching for before being asked to sign in.
 	target := sess.Pull("intended")
 	if target == "" {

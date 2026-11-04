@@ -84,6 +84,9 @@ type Reader struct {
 	Now       time.Time
 	PanelUser string
 
+	// Trusted addresses' requests are never kept as an attack.
+	Trusted map[string]bool
+
 	Events []Event
 }
 
@@ -148,6 +151,9 @@ func (r *Reader) access(line string) (Event, bool) {
 	}
 
 	threat := weblog.Threat(entry)
+	if r.Trusted[entry.IP] {
+		threat = ""
+	}
 
 	var lvl, why string
 

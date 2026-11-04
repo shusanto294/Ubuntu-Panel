@@ -33,18 +33,22 @@ import (
 
 // trafficWindow is one of the periods the page can be read over.
 type trafficWindow struct {
-	key      string
-	span     time.Duration
-	buckets  int
-	lines    int  // how far back each site's log is read, at most
-	previous bool // whether yesterday's rotated file is read too
+	key     string
+	span    time.Duration
+	buckets int
+	lines   int           // how far back each site's log is read, at most
+	rotated int           // how many rotated files are read too: .1, then .2.gz and on
+	keep    time.Duration // how long a read is reused
 }
 
+// The same periods as the log lists. logrotate turns nginx's logs over daily
+// and keeps two weeks by default, compressed from the second day; a month
+// reads whatever of it is still there.
 var trafficWindows = []trafficWindow{
-	{"15m", 15 * time.Minute, 15, 40000, false},
-	{"1h", time.Hour, 30, 100000, false},
-	{"6h", 6 * time.Hour, 36, 250000, true},
-	{"24h", 24 * time.Hour, 48, 500000, true},
+	{"1h", time.Hour, 30, 150000, 1, 20 * time.Second},
+	{"24h", 24 * time.Hour, 48, 600000, 1, 2 * time.Minute},
+	{"7d", 7 * 24 * time.Hour, 56, 1500000, 8, 10 * time.Minute},
+	{"30d", 30 * 24 * time.Hour, 60, 3000000, 31, 10 * time.Minute},
 }
 
 func findTrafficWindow(key string) trafficWindow {
@@ -86,7 +90,7 @@ var trafficCache struct {
 // machine is a few seconds of work nobody needs done twice in a row.
 func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 	trafficCache.Lock()
-	if at, ok := trafficCache.at[window.key]; ok && time.Since(at) < 20*time.Second {
+	if at, ok := trafficCache.at[window.key]; ok && time.Since(at) < window.keep {
 		report := trafficCache.reports[window.key]
 		trafficCache.Unlock()
 		return report
@@ -97,6 +101,7 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 	now := time.Now()
 
 	analyzer := weblog.New(now.Add(-window.span), now, window.buckets)
+	analyzer.Trusted = a.trustedSet(ctx)
 
 	sources := map[string]string{unmatchedSite: "/var/log/nginx/access.log"}
 
@@ -122,10 +127,15 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 			slots <- struct{}{}
 			defer func() { <-slots }()
 
-			files := proc.Quote(path)
-			if window.previous {
-				files = proc.Quote(path+".1") + " " + files
+			// Oldest first, so tail keeps the newest when the cap is reached.
+			files := []string{}
+			for n := window.rotated; n >= 2; n-- {
+				files = append(files, path+"."+strconv.Itoa(n)+".gz")
 			}
+			if window.rotated >= 1 {
+				files = append(files, path+".1")
+			}
+			files = append(files, path)
 
 			read := 0
 
@@ -137,9 +147,15 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 				locked.Unlock()
 			}}
 
-			command := fmt.Sprintf("sudo cat %s 2>/dev/null | tail -n %d", files, window.lines)
+			quoted := make([]string, len(files))
+			for i, file := range files {
+				quoted[i] = proc.Quote(file)
+			}
 
-			if err := proc.Pipe(ctx, command, 2*time.Minute, nil, sink); err != nil {
+			script := "for f in " + strings.Join(quoted, " ") + `; do [ -e "$f" ] && zcat -f -- "$f"; done`
+			command := fmt.Sprintf("sudo sh -c %s 2>/dev/null | tail -n %d", proc.Quote(script), window.lines)
+
+			if err := proc.Pipe(ctx, command, 5*time.Minute, nil, sink); err != nil {
 				a.Log.Debug("could not read an access log", "path", path, "error", err)
 			}
 			sink.Flush()
@@ -381,7 +397,7 @@ func readServerLog(path string, page int, search string) (string, int) {
 // logsTrafficProps are the Traffic view's: the access logs read over the
 // window, and what the processor is doing now. Lazy, so the Activity view —
 // and a partial reload that does not ask for them — never pays for the read.
-func (a *App) logsTrafficProps(ctx context.Context, windowKey string) map[string]any {
+func (a *App) logsTrafficProps(ctx context.Context, windowKey, viewer string) map[string]any {
 	window := findTrafficWindow(windowKey)
 
 	windows := make([]string, 0, len(trafficWindows))
@@ -406,7 +422,14 @@ func (a *App) logsTrafficProps(ctx context.Context, windowKey string) map[string
 		"windows": windows,
 		"traffic": inertia.Lazy(func() any {
 			sample()
-			return a.traffic(context.WithoutCancel(ctx), window)
+			report, _ := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
+			return report
+		}),
+		// Why each trusted address on the page is trusted, so it is offered no
+		// Ban button anywhere.
+		"trustedIps": inertia.Lazy(func() any {
+			_, reasons := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
+			return reasons
 		}),
 		"processes": inertia.Lazy(func() any { return sample() }),
 		"fpm":       inertia.Lazy(func() any { return fpmPressure() }),

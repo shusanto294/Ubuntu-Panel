@@ -19,8 +19,9 @@ const props = defineProps({
     clearSources: { type: Array, default: () => [] },
 
     // Traffic.
-    window: { type: String, default: '15m' },
-    windows: { type: Array, default: () => ['15m', '1h', '6h', '24h'] },
+    window: { type: String, default: '1h' },
+    windows: { type: Array, default: () => ['1h', '24h', '7d', '30d'] },
+    trustedIps: { type: Object, default: () => ({}) },
     traffic: { type: Object, default: null },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
@@ -211,6 +212,7 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
                 :traffic="traffic"
                 :processes="processes"
                 :fpm="fpm"
+                :trusted-ips="trustedIps"
             />
 
             <section>
