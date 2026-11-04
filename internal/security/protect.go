@@ -133,13 +133,18 @@ var CloudflareRanges = []string{
 const (
 	JailWebLogin = "panel-web-login"
 	JailWebScan  = "panel-web-scan"
-	JailMail     = "panel-mail-smtp"
-	JailMailIMAP = "panel-mail-imap"
-	JailRecidive = "recidive"
+
+	// JailWebSecret bans on the first request for a secret file — .env, .git,
+	// keys. It runs whenever the scanner jail does, with its ban time.
+	JailWebSecret = "panel-web-secret"
+	JailMail      = "panel-mail-smtp"
+	JailMailIMAP  = "panel-mail-imap"
+	JailRecidive  = "recidive"
 
 	protectJailPath   = "/etc/fail2ban/jail.d/ubuntu-panel-protect.local"
 	webLoginFilter    = "/etc/fail2ban/filter.d/ubuntu-panel-web-login.conf"
 	webScanFilterPath = "/etc/fail2ban/filter.d/ubuntu-panel-web-scan.conf"
+	webSecretFilter   = "/etc/fail2ban/filter.d/ubuntu-panel-web-secret.conf"
 )
 
 // ProtectJails are the jails a protection setting runs, for status and unban.
@@ -150,7 +155,7 @@ func (p Protection) ProtectJails() []string {
 		jails = append(jails, JailWebLogin)
 	}
 	if p.WebScan.Enabled {
-		jails = append(jails, JailWebScan)
+		jails = append(jails, JailWebScan, JailWebSecret)
 	}
 	if p.Mail.Enabled {
 		jails = append(jails, JailMail, JailMailIMAP)
@@ -196,12 +201,14 @@ var scanTargets = []string{
 	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`,
 	`vendor/phpunit`, `eval-stdin\.php`, `cgi-bin/`, `boaform`, `HNAP1`,
 	`actuator/`, `solr/`, `manager/html`, `telescope/`, `_ignition/`, `server-status`, `phpinfo\.php`,
-	`(?:backup|dump|database|db)\.sql`, `(?:shell|wso|c99|r57|alfa|xleet)\.php`,
+	`\w\.sql\b`, `wp-content/debug\.log`, `(?:shell|wso|c99|r57|alfa|xleet)\.php`,
 	scanDot + scanDot + scanSlash,
 }
 
-// webScanFilterFile counts requests for those files that were refused or not
-// there — a 200 is a file the site does have, and is not this jail's business.
+// webScanFilterFile counts requests for those files that were refused, not
+// there, or redirected — a scanner sweeping http:// is answered with a redirect
+// to https:// it never follows. A 200 is a file the site does have, and is not
+// this jail's business.
 //
 // Only the path is looked at, never the query string: the panel's own file
 // manager asks for /sites/1/files?path=.env, and this jail also reads the log
@@ -209,7 +216,26 @@ var scanTargets = []string{
 var webScanFilterFile = "# Managed by Ubuntu Panel: vulnerability scanners.\n" +
 	"[Definition]\n" +
 	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
-	strings.Join(scanTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" [45]\d\d ` + "\n" +
+	strings.Join(scanTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" [345]\d\d ` + "\n" +
+	"ignoreregex =\n"
+
+// secretTargets are files that hold passwords and keys. No visitor, search
+// engine or application asks a web server for one, so a single request is
+// banned, whatever the answer — a .env a site does serve is a leak, and whoever
+// fetched it is the last address that should keep its access.
+var secretTargets = []string{
+	scanDot + `env`, scanDot + `git` + scanSlash, scanDot + `git-credentials`, scanDot + `gitconfig`,
+	scanDot + `aws` + scanSlash, scanDot + `ssh` + scanSlash, scanDot + `docker` + scanSlash,
+	scanDot + `htpasswd`, scanDot + `npmrc`, scanDot + `pgpass`,
+	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`, `sftp-config\.json`,
+}
+
+// webSecretFilterFile counts requests for those files, by path only — the
+// panel's file manager names files in the query string.
+var webSecretFilterFile = "# Managed by Ubuntu Panel: requests for secret files (.env, .git, keys).\n" +
+	"[Definition]\n" +
+	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
+	strings.Join(secretTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" \d{3} ` + "\n" +
 	"ignoreregex =\n"
 
 // JailEnv is what the jail file needs to know about the machine.
@@ -268,6 +294,10 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 
 		section(JailWebScan, p.WebScan, "filter   = ubuntu-panel-web-scan",
 			"port     = http,https", logs, "backend  = auto")
+
+		// One request for a secret file is enough.
+		section(JailWebSecret, JailRule{MaxRetry: 1, FindTime: p.WebScan.FindTime, BanTime: p.WebScan.BanTime},
+			"filter   = ubuntu-panel-web-secret", "port     = http,https", logs, "backend  = auto")
 	}
 
 	if p.Mail.Enabled {
@@ -340,6 +370,7 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 	for path, contents := range map[string]string{
 		webLoginFilter:    webLoginFilterFile,
 		webScanFilterPath: webScanFilterFile,
+		webSecretFilter:   webSecretFilterFile,
 		protectJailPath:   ProtectJailFile(p, env),
 	} {
 		if err := proc.PutFile(path, contents, true); err != nil {
@@ -382,8 +413,10 @@ func JailsCurrent(p Protection, ignoreIPs []string) bool {
 	jail, _ := proc.ReadFile(protectJailPath, true)
 	login, _ := proc.ReadFile(webLoginFilter, true)
 	scan, _ := proc.ReadFile(webScanFilterPath, true)
+	secret, _ := proc.ReadFile(webSecretFilter, true)
 
-	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile
+	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile &&
+		secret == webSecretFilterFile
 }
 
 // ProtectStatus asks fail2ban about each optional jail that is on.

@@ -262,6 +262,21 @@ func Ban(address string) error {
 	return nil
 }
 
+// BanIn bans an address in one of the optional jails now, for that jail's ban
+// time, whether or not its filter has matched anything.
+func BanIn(jail, address string) error {
+	if !ValidIP(address) {
+		return errors.New("that is not an IP address")
+	}
+
+	if result := proc.Run("sudo fail2ban-client set "+proc.Quote(jail)+" banip "+proc.Quote(address),
+		30*time.Second); !result.OK() {
+		return fmt.Errorf("fail2ban refused: %s", lastLines(result.Output, 3))
+	}
+
+	return nil
+}
+
 // Unban lets an address back in.
 func Unban(address string) error {
 	return unban(Jail, address)

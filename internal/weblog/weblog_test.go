@@ -50,7 +50,13 @@ func TestThreat(t *testing.T) {
 		{"POST", "/wp-login.php", ThreatWPLogin},
 		{"GET", "/wp-login.php", ""},
 		{"POST", "/xmlrpc.php", ThreatXMLRPC},
-		{"GET", "/.env", ThreatProbe},
+		{"GET", "/.env", ThreatSecret},
+		{"GET", "/%2eenv", ThreatSecret},
+		{"GET", "/%2f%2eaws%2fcredentials", ThreatSecret},
+		{"GET", "/website/.env.bak", ThreatSecret},
+		{"GET", "/.git/config", ThreatSecret},
+		{"GET", "/.github/workflows/ci.yml", ThreatProbe}, // a probe, not a secret
+		{"GET", "/environment-tips/", ""},
 		{"GET", "/phpmyadmin/index.php", ""}, // answered: the panel's own phpMyAdmin
 		{"GET", "/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", ThreatProbe},
 		{"GET", "/static/../../etc/passwd", ThreatProbe},
@@ -68,6 +74,35 @@ func TestThreat(t *testing.T) {
 		if got := Threat(Entry{Method: c.method, Path: c.path, Status: status}); got != c.want {
 			t.Errorf("Threat(%s %s) = %q, want %q", c.method, c.path, got, c.want)
 		}
+	}
+}
+
+// A secret file counts whatever the answer was; a probe counts when it was
+// refused, missing or redirected — a scanner on http:// never follows the
+// redirect to https://.
+func TestThreatAnswers(t *testing.T) {
+	if Threat(Entry{Method: "GET", Path: "/.env", Status: 200}) != ThreatSecret {
+		t.Error("a secret file served is still an attacker asking for it")
+	}
+	if Threat(Entry{Method: "GET", Path: "/vendor/phpunit/x", Status: 301}) != ThreatProbe {
+		t.Error("a redirected probe should count")
+	}
+	if Threat(Entry{Method: "GET", Path: "/vendor/phpunit/x", Status: 200}) != "" {
+		t.Error("a probe path the site has is not a probe")
+	}
+}
+
+func TestSecretVerdict(t *testing.T) {
+	ip := IPStat{Requests: 3, Threats: map[string]int{ThreatSecret: 1}}
+	verdictText, danger := verdict(ip, 60)
+	if !danger || !strings.Contains(verdictText, "secret files") || attackKind(ip) != "scan" {
+		t.Errorf("one request for a secret file is an attacker: %q %v %q", verdictText, danger, attackKind(ip))
+	}
+
+	// Not even a useful bot asks for .env.
+	ip.GoodBot = &GoodBot{}
+	if _, danger := verdict(ip, 60); !danger {
+		t.Error("a useful bot's name does not excuse asking for secrets")
 	}
 }
 

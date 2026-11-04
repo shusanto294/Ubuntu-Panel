@@ -353,11 +353,12 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 // protectJailKinds are what the Banned IPs tab calls each optional jail's
 // bans.
 var protectJailKinds = map[string]string{
-	security.JailWebLogin: "web_login",
-	security.JailWebScan:  "web_scan",
-	security.JailMail:     "mail",
-	security.JailMailIMAP: "mail",
-	security.JailRecidive: "recidive",
+	security.JailWebLogin:  "web_login",
+	security.JailWebScan:   "web_scan",
+	security.JailWebSecret: "web_scan",
+	security.JailMail:      "mail",
+	security.JailMailIMAP:  "mail",
+	security.JailRecidive:  "recidive",
 }
 
 func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[string]any {

@@ -69,3 +69,23 @@ func TestNewestFirst(t *testing.T) {
 		t.Errorf("order = %v, want %s", got, want)
 	}
 }
+
+func TestAutoBanJail(t *testing.T) {
+	p := security.ProtectionDefaults
+
+	for _, attack := range []string{"login", "scan", "flood"} {
+		if jail := autoBanJail(p, attack); jail != "" {
+			t.Errorf("%s with every protection off went to %q", attack, jail)
+		}
+	}
+
+	p.WebLogin.Enabled = true
+	p.WebScan.Enabled = true
+
+	want := map[string]string{"login": security.JailWebLogin, "scan": security.JailWebScan, "flood": security.JailWebScan}
+	for attack, jail := range want {
+		if got := autoBanJail(p, attack); got != jail {
+			t.Errorf("%s went to %q, want %q", attack, got, jail)
+		}
+	}
+}

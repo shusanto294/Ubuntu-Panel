@@ -95,6 +95,12 @@ func TestWebScanFilter(t *testing.T) {
 		`203.0.113.9 - - [] "GET /.env.bak?x=1 HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
 		`203.0.113.9 - - [] "GET /actuator/env HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
 
+		// http:// on the bare IP is answered with a redirect it never follows.
+		`203.0.113.9 - - [] "GET /website/.env HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`:         "203.0.113.9",
+		`203.0.113.9 - - [] "GET /wp-content/mysql.sql HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`: "203.0.113.9",
+		`203.0.113.9 - - [] "GET /wp-content/debug.log HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`: "203.0.113.9",
+		`203.0.113.9 - - [] "GET /blog/sql-tips/ HTTP/1.1" 301 162 "-" "Mozilla"`:                     "",
+
 		// The panel's file manager names files in the query string, and this
 		// jail reads the log the panel's requests are in.
 		`198.51.100.4 - - [] "GET /sites/3/files?path=.env HTTP/1.1" 404 1 "-" "Mozilla"`:            "",
@@ -252,5 +258,43 @@ func TestScanJailReadsTheBareIPLog(t *testing.T) {
 
 	if strings.Contains(ProtectJailFile(p, JailEnv{}), "/var/log/nginx/access.log") {
 		t.Error("a log that does not exist would stop fail2ban loading the jail")
+	}
+}
+
+func TestWebSecretFilter(t *testing.T) {
+	expressions := failRegexes(t, webSecretFilterFile)
+
+	cases := map[string]string{
+		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "x"`:                        "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 200 1 "-" "x"`:                        "203.0.113.9", // served is still asked
+		`203.0.113.9 - - [] "GET /website/.env HTTP/1.1" 301 1 "-" "x"`:                "203.0.113.9",
+		`203.0.113.9 - - [] "GET /%2f%2eaws%2fcredentials HTTP/1.1" 301 1 "-" "x"`:     "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.git/config HTTP/1.1" 403 1 "-" "x"`:                 "203.0.113.9",
+		`203.0.113.9 - - [] "GET /wp-config.php.bak HTTP/1.1" 404 1 "-" "x"`:           "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.github/funding.yml HTTP/1.1" 404 1 "-" "x"`:         "",
+		`198.51.100.4 - - [] "GET /sites/3/files?path=.env HTTP/1.1" 200 1 "-" "x"`:    "",
+		`198.51.100.4 - - [] "GET /blog/environment/ HTTP/1.1" 200 1 "-" "Mozilla"`:    "",
+		`198.51.100.4 - - [] "GET /wp-content/themes/x/app.js HTTP/1.1" 200 1 "-" "x"`: "",
+	}
+
+	for line, want := range cases {
+		if got := matches(expressions, line); got != want {
+			t.Errorf("%s\n  matched %q, want %q", line, got, want)
+		}
+	}
+}
+
+func TestSecretJailRunsWithTheScanner(t *testing.T) {
+	p := ProtectionDefaults
+	p.WebScan.Enabled = true
+
+	file := ProtectJailFile(p, JailEnv{DefaultLog: true})
+	_, secret, found := strings.Cut(file, "[panel-web-secret]")
+	if !found || !strings.Contains(secret, "maxretry = 1") || !strings.Contains(secret, "/var/log/nginx/access.log") {
+		t.Errorf("the secret-file jail should ban on one request, reading the bare IP's log too:\n%s", file)
+	}
+
+	if jails := p.ProtectJails(); len(jails) != 2 || jails[1] != JailWebSecret {
+		t.Errorf("jails = %v", jails)
 	}
 }

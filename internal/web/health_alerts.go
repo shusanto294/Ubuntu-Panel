@@ -14,6 +14,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
+	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
 
 // The alerts about the machine rather than about who signed in: a CPU that
@@ -149,7 +150,9 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 		}
 	}
 
-	if a.healthAlert(alertAttacksSetting) {
+	// Every five minutes: ban what the last hour says is attacking, when the
+	// protection for it is on, and tell about it when the alert is on.
+	if p := a.protection(); a.healthAlert(alertAttacksSetting) || p.WebLogin.Enabled || p.WebScan.Enabled {
 		health.Lock()
 		due := time.Since(health.attacksAt) >= 5*time.Minute
 		if due {
@@ -158,8 +161,13 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 		health.Unlock()
 
 		if due {
-			if text, ips := a.attackAlert(ctx); text != "" {
-				alerts = append(alerts, newAlert("attacks", levelWarning, "/logs", text).with("ips", ips))
+			report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
+			banned := a.autoBan(report.TopIPs)
+
+			if a.healthAlert(alertAttacksSetting) {
+				if text, ips := a.attackAlert(report, banned); text != "" {
+					alerts = append(alerts, newAlert("attacks", levelWarning, "/logs", text).with("ips", ips))
+				}
 			}
 		}
 	}
@@ -176,12 +184,73 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 	return alerts
 }
 
+// autoBanJail is the protection jail that bans an attack of a kind, or "" when
+// that protection is off. Floods go to the scanner jail: both are a script
+// hammering the sites, and a flood is often a scanner in a hurry.
+func autoBanJail(p security.Protection, attack string) string {
+	switch attack {
+	case "login":
+		if p.WebLogin.Enabled {
+			return security.JailWebLogin
+		}
+	case "scan", "flood":
+		if p.WebScan.Enabled {
+			return security.JailWebScan
+		}
+	}
+
+	return ""
+}
+
+// autoBan bans the addresses the traffic says are attacking — what "What
+// stands out" flags and the attack alert names — through the protection jail
+// for what they did, when that protection is on.
+//
+// fail2ban's own filters catch most of these on their own; this catches the
+// rest: a flood of redirects nginx answers before its rate limit runs, a
+// scanner asking for files no pattern names. Trusted addresses and useful bots
+// are never flagged, so never banned. The answer is the jail each was put in.
+func (a *App) autoBan(ips []weblog.IPStat) map[string]string {
+	p := a.protection()
+	banned := map[string]string{}
+
+	var already map[string]security.JailStatus
+
+	for _, ip := range ips {
+		if !ip.Danger || ip.Trusted != "" || !security.ValidIP(ip.IP) {
+			continue
+		}
+
+		jail := autoBanJail(p, ip.Attack)
+		if jail == "" {
+			continue
+		}
+
+		// Asked once, and only when there is someone to ban.
+		if already == nil {
+			already = security.ProtectStatus(p)
+		}
+		if containsString(already[jail].Banned, ip.IP) {
+			banned[ip.IP] = jail
+			continue
+		}
+
+		if err := security.BanIn(jail, ip.IP); err != nil {
+			a.Log.Warn("could not ban an attacking address", "ip", ip.IP, "jail", jail, "error", err)
+			continue
+		}
+
+		banned[ip.IP] = jail
+		a.Log.Info("banned an attacking address", "ip", ip.IP, "jail", jail, "why", ip.Verdict)
+	}
+
+	return banned
+}
+
 // attackAlert is the addresses the last hour of traffic says are attacking —
 // the ones the Logs page's "What stands out" names — that have not been
 // emailed about in the last day. Trusted addresses are never in it.
-func (a *App) attackAlert(ctx context.Context) (string, []string) {
-	report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
-
+func (a *App) attackAlert(report trafficReport, banned map[string]string) (string, []string) {
 	var seen map[string]int64
 	json.Unmarshal([]byte(a.Store.Setting(alertAttacksSeenSetting, "{}")), &seen)
 	if seen == nil {
@@ -211,7 +280,11 @@ func (a *App) attackAlert(ctx context.Context) (string, []string) {
 		if len(ip.Sites) > 0 {
 			site = " on " + ip.Sites[0].Name
 		}
-		fresh = append(fresh, fmt.Sprintf("  %s — %s%s (%d requests in the last hour)", ip.IP, ip.Verdict, site, ip.Requests))
+		outcome := ""
+		if banned[ip.IP] != "" {
+			outcome = " — banned automatically"
+		}
+		fresh = append(fresh, fmt.Sprintf("  %s — %s%s (%d requests in the last hour)%s", ip.IP, ip.Verdict, site, ip.Requests, outcome))
 		addresses = append(addresses, ip.IP)
 	}
 
@@ -238,7 +311,7 @@ func (a *App) attackAlert(ctx context.Context) (string, []string) {
 		advice = append(advice, "login rate limits")
 	}
 
-	next := "Logs → Server logs on the panel has the detail, with a button to ban each address."
+	next := "Logs → Server logs on the panel has the detail, with a button to ban each address that was not banned automatically."
 	if len(advice) > 0 {
 		next += " To have addresses like these banned automatically, turn on " + strings.Join(advice, ", ") +
 			" in Security → Protection."

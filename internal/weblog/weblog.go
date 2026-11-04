@@ -144,6 +144,7 @@ const (
 	ThreatXMLRPC  = "xmlrpc"
 	ThreatLogin   = "login"
 	ThreatProbe   = "probe"
+	ThreatSecret  = "secret"
 )
 
 // ThreatLabels are what the page calls each kind.
@@ -152,6 +153,35 @@ var ThreatLabels = map[string]string{
 	ThreatXMLRPC:  "XML-RPC calls",
 	ThreatLogin:   "Login form posts",
 	ThreatProbe:   "Vulnerability scanning",
+	ThreatSecret:  "Asking for secret files",
+}
+
+// secrets are files that hold passwords and keys — and that no visitor, no
+// search engine and no application ever asks a web server for. One request is
+// an attacker looking for a leak, whatever the answer was.
+var secrets = []string{
+	"/.env", "/.git/", "/.git-credentials", "/.gitconfig", "/.aws/", "/.ssh/", "/.docker/",
+	"/.htpasswd", "/.npmrc", "/.pgpass", "/wp-config.php.", "/wp-config.bak", "/wp-config.old",
+	"/wp-config.txt", "/wp-config.save", "/wp-config.orig", "/sftp-config.json",
+}
+
+// decodePath undoes the percent-encoding scanners use to slip past patterns
+// that look for a plain dot or slash: /%2eenv, /%2f%2eaws%2fcredentials.
+func decodePath(path string) string {
+	return strings.NewReplacer("%2e", ".", "%2f", "/", "%5c", "/", `\`, "/").Replace(path)
+}
+
+// IsSecret is whether a request asked for a secret file.
+func IsSecret(path string) bool {
+	p := decodePath(strings.ToLower(path))
+
+	for _, secret := range secrets {
+		if strings.Contains(p, secret) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // probes are paths nobody visits except something looking for a weakness:
@@ -181,6 +211,10 @@ var probes = []string{
 func Threat(entry Entry) string {
 	p := strings.ToLower(entry.Path)
 
+	if IsSecret(p) {
+		return ThreatSecret
+	}
+
 	switch {
 	case p == "/wp-login.php" && entry.Method == "POST":
 		return ThreatWPLogin
@@ -191,7 +225,10 @@ func Threat(entry Entry) string {
 		return ThreatProbe
 	}
 
-	if entry.Status == 0 || entry.Status >= 400 {
+	// 3xx as well: a scanner sweeping http:// is answered with a redirect to
+	// https:// it never follows.
+	if entry.Status == 0 || entry.Status >= 300 {
+		p = decodePath(p)
 		for _, probe := range probes {
 			if strings.Contains(p, probe) {
 				return ThreatProbe
@@ -549,6 +586,11 @@ type IPStat struct {
 	Verdict string `json:"verdict"`
 	Danger  bool   `json:"danger"`
 
+	// Attack is what kind of attack a dangerous address is making — "login"
+	// (brute force), "scan" (vulnerable files, or crawling for missing ones)
+	// or "flood" — which decides the protection that bans it.
+	Attack string `json:"attack,omitempty"`
+
 	// Trusted says why this address is never flagged or banned: "you", "the
 	// never-ban list", "signed in to the panel", "this server". Set by the
 	// page, which knows who is looking.
@@ -660,6 +702,9 @@ func (a *Analyzer) Report() Report {
 		}
 		if address != overflowAddress && !a.Trusted[address] {
 			stat.Verdict, stat.Danger = verdict(stat, minutes)
+			if stat.Danger {
+				stat.Attack = attackKind(stat)
+			}
 		}
 		report.TopIPs = append(report.TopIPs, stat)
 	}
@@ -718,9 +763,25 @@ func SortIPs(list []IPStat) {
 // verdict reads one address: whether it is doing something worth banning it
 // for, and what. The thresholds are deliberately high — a busy visitor on a
 // slow connection reloading a page is not an attack.
+// attackKind is which of the protections a dangerous address's verdict
+// belongs to, in the order verdict tries its rules.
+func attackKind(ip IPStat) string {
+	switch {
+	case ip.Threats[ThreatWPLogin] >= 10, ip.Threats[ThreatXMLRPC] >= 10, ip.Threats[ThreatLogin] >= 10:
+		return "login"
+	case ip.Threats[ThreatSecret] >= 1, ip.Threats[ThreatProbe] >= 5:
+		return "scan"
+	case ip.NotFound >= 50 && ip.NotFound*2 >= ip.Requests:
+		return "scan"
+	default:
+		return "flood"
+	}
+}
+
 func verdict(ip IPStat, minutes int) (string, bool) {
 	wp, rpc, login, probe := ip.Threats[ThreatWPLogin], ip.Threats[ThreatXMLRPC],
 		ip.Threats[ThreatLogin], ip.Threats[ThreatProbe]
+	secret := ip.Threats[ThreatSecret]
 
 	switch {
 	case wp >= 10:
@@ -729,6 +790,8 @@ func verdict(ip IPStat, minutes int) (string, bool) {
 		return strconv.Itoa(rpc) + " XML-RPC calls — brute force or pingback abuse", true
 	case login >= 10:
 		return strconv.Itoa(login) + " login form posts — brute force", true
+	case secret >= 1:
+		return strconv.Itoa(secret) + " requests for secret files (.env, .git, keys) — an attacker", true
 	case probe >= 5:
 		return strconv.Itoa(probe) + " requests for known-vulnerable files — a scanner", true
 
@@ -746,7 +809,7 @@ func verdict(ip IPStat, minutes int) (string, bool) {
 		return strconv.Itoa(ip.PeakMinute) + " requests in one minute", true
 	case ip.Bot && ip.Dynamic >= 30*minutes:
 		return "A bot, crawling dynamic pages heavily", false
-	case wp+rpc+login+probe > 0:
+	case wp+rpc+login+probe+secret > 0:
 		return "Some suspicious requests", false
 	}
 

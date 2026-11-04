@@ -58,8 +58,8 @@ const FEATURES = {
     web_scan: {
         kind: 'jail',
         title: 'Ban vulnerability scanners',
-        text: 'Bans an address asking for files only an attacker looks for — .env, .git, phpunit, backup.sql, web shells — and getting refused.',
-        jails: ['panel-web-scan'],
+        text: 'Bans an address asking for files only an attacker looks for — phpunit, backup.sql, web shells — on the sites and on the server’s bare IP address. One request for a secret file (.env, .git, .aws, SSH keys, wp-config backups) is enough. Floods and anything else the Logs page flags as an attack are banned here too.',
+        jails: ['panel-web-scan', 'panel-web-secret'],
         needs: 'fail2ban',
         unit: 'probes',
     },
