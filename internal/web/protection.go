@@ -651,27 +651,49 @@ func (a *App) webHostnames(ctx context.Context) []string {
 
 // syncNginxBans has nginx refuse every banned address itself — the only thing
 // that stops one whose requests arrive through Cloudflare. Every minute, so a
-// ban fail2ban makes and one it lets expire both reach nginx within one.
-func (a *App) syncNginxBans(ctx context.Context) {
+// ban fail2ban makes and one it lets expire both reach nginx within one; and
+// with fresh at once, from what the machine says this moment, after the owner
+// bans or lets an address go on the Security page.
+//
+// The website jails reach nginx sooner still, through their own action (see
+// security/instant.go); what that leaves behind once it is banned no longer is
+// pruned here.
+func (a *App) syncNginxBans(ctx context.Context, fresh bool) {
 	if !a.Store.ServiceInstalled("nginx") {
 		return
 	}
 
-	if err := security.ApplyNginxBans(a.webBannedIPs(ctx)); err != nil {
+	ips, ok := a.webBannedIPs(ctx, fresh)
+	if !ok {
+		return
+	}
+
+	if err := security.ApplyNginxBans(ips); err != nil {
 		a.Log.Warn("could not give nginx the banned addresses", "error", err)
+	}
+
+	// Older than the oldest copy of the state the minute's sync can be
+	// reading, so a ban that is newer than the copy is never taken away.
+	if contents, err := proc.ReadFile(security.InstantBansPath, true); err == nil {
+		for _, address := range security.StaleInstantBans(contents, ips, time.Now(), securityStaleAfter+5*time.Minute) {
+			if err := security.ReleaseInstant(address); err != nil {
+				a.Log.Warn("could not take an address off nginx's instant bans", "ip", address, "error", err)
+			}
+		}
 	}
 }
 
 // webBannedIPs are the banned addresses the sites should refuse: a firewall
 // block, or a website, mail or repeat-offender ban. Not an SSH-only ban — the
 // Ban form promises that one can still load the sites — nor a panel lockout,
-// which is about signing in to the panel and expires.
-func (a *App) webBannedIPs(ctx context.Context) []string {
+// which is about signing in to the panel and expires. ok is false when the
+// list could not be read, which is not the same as nobody being banned.
+func (a *App) webBannedIPs(ctx context.Context, fresh bool) ([]string, bool) {
 	ips := []string{}
 
-	list, ok := a.bans(ctx, a.snapshot(false))["list"].([]bannedAddress)
+	list, ok := a.bans(ctx, a.snapshot(fresh))["list"].([]bannedAddress)
 	if !ok {
-		return ips
+		return ips, false
 	}
 
 	for _, row := range list {
@@ -683,5 +705,5 @@ func (a *App) webBannedIPs(ctx context.Context) []string {
 		}
 	}
 
-	return ips
+	return ips, true
 }

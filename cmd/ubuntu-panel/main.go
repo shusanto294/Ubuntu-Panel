@@ -21,6 +21,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/assets"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
+	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
@@ -37,6 +38,8 @@ func main() {
 		"update the apps already on this machine and exit")
 	verifiedBot := flag.String("verified-bot", "",
 		"exit 0 when the address is a search engine's crawler, by forward-confirmed reverse DNS")
+	nginxBan := flag.String("nginx-ban", "", "have nginx refuse the address now (fail2ban's action; run as root)")
+	nginxUnban := flag.String("nginx-unban", "", "take the address off nginx's instant ban list (run as root)")
 
 	flag.Parse()
 
@@ -52,6 +55,22 @@ func main() {
 			os.Exit(0)
 		}
 		os.Exit(1)
+	}
+
+	// fail2ban's action for the website jails: nginx refuses the address the
+	// moment it is banned, which is what stops one coming through Cloudflare.
+	if *nginxBan != "" || *nginxUnban != "" {
+		address, ban := *nginxBan, true
+		if address == "" {
+			address, ban = *nginxUnban, false
+		}
+
+		if err := security.InstantBan(address, ban); err != nil {
+			fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
+			os.Exit(1)
+		}
+
+		return
 	}
 
 	// One-shot: the installer runs this before it starts the service, so the

@@ -321,10 +321,15 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 	// banning, fail2ban asks the panel, which looks the address up in DNS — a
 	// name of the engine's own that resolves back to it — and remembers the
 	// answer for a day.
+	//
+	// And nginx refuses what they ban the moment they ban it, through the
+	// panel's binary as one more action (see instant.go): the firewall ban
+	// alone cannot stop a visitor coming through Cloudflare.
 	web := []string{"port     = http,https", "backend  = auto"}
 	if env.BotCheck {
 		web = append(web, "ignorecommand = "+BotCheckBinary+" --verified-bot <ip>",
-			`ignorecache = key="<ip>", max-count=10000, max-time=86400`)
+			`ignorecache = key="<ip>", max-count=10000, max-time=86400`,
+			"action   = %(action_)s\n           "+NginxActionName)
 	}
 
 	if p.WebLogin.Enabled {
@@ -414,6 +419,7 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 		webLoginFilter:    webLoginFilterFile,
 		webScanFilterPath: webScanFilterFile(p.Scans()),
 		webSecretFilter:   webSecretFilterFile(p.Secrets()),
+		nginxActionPath:   nginxActionFile,
 		protectJailPath:   ProtectJailFile(p, env),
 	} {
 		if err := proc.PutFile(path, contents, true); err != nil {
@@ -452,9 +458,10 @@ func JailsCurrent(p Protection, ignoreIPs []string) bool {
 	login, _ := proc.ReadFile(webLoginFilter, true)
 	scan, _ := proc.ReadFile(webScanFilterPath, true)
 	secret, _ := proc.ReadFile(webSecretFilter, true)
+	action, _ := proc.ReadFile(nginxActionPath, true)
 
 	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile(p.Scans()) &&
-		secret == webSecretFilterFile(p.Secrets())
+		secret == webSecretFilterFile(p.Secrets()) && action == nginxActionFile
 }
 
 func jailEnv(ignoreIPs []string) JailEnv {

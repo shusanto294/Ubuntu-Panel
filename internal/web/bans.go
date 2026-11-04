@@ -325,6 +325,11 @@ func (a *App) securityRelease(w http.ResponseWriter, r *http.Request) {
 		}
 
 		a.Store.ClearLoginFailures(r.Context(), address)
+
+		// Off nginx's instant list as well, whichever jail put it there.
+		if err := security.ReleaseInstant(address); err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
 
 	// Highest number first: deleting a ufw rule renumbers the ones after it.

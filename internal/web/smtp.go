@@ -252,7 +252,7 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		case <-ticker.C:
 			a.recordSSHEvents(ctx)
 			a.checkProtection(ctx)
-			a.syncNginxBans(ctx)
+			a.syncNginxBans(ctx, false)
 			go a.collectServerLogs(ctx)
 			a.checkAlerts(ctx)
 		}

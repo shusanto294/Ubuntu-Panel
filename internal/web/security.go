@@ -651,6 +651,11 @@ func (a *App) securityCountries(w http.ResponseWriter, r *http.Request) {
 func (a *App) securityBack(w http.ResponseWriter, r *http.Request, message string, failed bool) {
 	securityCache.forget()
 
+	// A ban or an unban reaches nginx now rather than at the next minute:
+	// for a site behind Cloudflare, nginx is what refuses or lets in. The
+	// fresh read is the one the page is about to show, so it costs nothing.
+	a.syncNginxBans(r.Context(), true)
+
 	if sess := session.FromContext(r.Context()); sess != nil {
 		if failed {
 			sess.Flash("error", message)

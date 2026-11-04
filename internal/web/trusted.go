@@ -252,7 +252,10 @@ func (a *App) trustSignIn(address string) {
 				security.UnbanFrom(jail, address)
 			}
 		}
+		security.ReleaseInstant(address)
 	}
 
 	a.syncTrusted(ctx)
+	securityCache.forget()
+	a.syncNginxBans(ctx, true)
 }
