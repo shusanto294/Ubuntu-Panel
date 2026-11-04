@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
 
 // Protection is the optional protections on the Security page's Protection
@@ -40,6 +42,11 @@ type Protection struct {
 
 	// EdgeOnly lets only Cloudflare reach ports 80 and 443. See edge.go.
 	EdgeOnly bool `json:"edge_only"`
+
+	// SecretPaths and ScanPaths are the scanner protection's lists, as the
+	// owner edited them; nil is the defaults. See paths.go.
+	SecretPaths []string `json:"secret_paths"`
+	ScanPaths   []string `json:"scan_paths"`
 }
 
 // JailRule is one optional fail2ban jail: so many matches within FindTime seconds
@@ -196,22 +203,11 @@ const (
 	scanSlash = `(?:/|%%2[fF])`
 )
 
-// scanTargets are files nobody but a vulnerability scanner asks for.
-var scanTargets = []string{
-	scanDot + `env`, scanDot + `git` + scanSlash, scanDot + `git-credentials`,
-	scanDot + `aws` + scanSlash, scanDot + `ssh` + scanSlash, scanDot + `docker` + scanSlash,
-	scanDot + `svn` + scanSlash, scanDot + `hg` + scanSlash, scanDot + `htpasswd`, scanDot + `DS_Store`,
-	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`,
-	`vendor/phpunit`, `eval-stdin\.php`, `cgi-bin/`, `boaform`, `HNAP1`,
-	`actuator/`, `solr/`, `manager/html`, `telescope/`, `_ignition/`, `server-status`, `phpinfo\.php`,
-	`\w\.sql\b`, `wp-content/debug\.log`, `(?:shell|wso|c99|r57|alfa|xleet)\.php`,
-	scanDot + scanDot + scanSlash,
-}
-
-// webScanFilterFile counts requests for those files that were refused, not
-// there, or redirected — a scanner sweeping http:// is answered with a redirect
-// to https:// it never follows. A 200 is a file the site does have, and is not
-// this jail's business.
+// webScanFilterFile counts requests for the scanner paths that were refused,
+// not there, or redirected — a scanner sweeping http:// is answered with a
+// redirect to https:// it never follows. A 200 is a file the site does have,
+// and is not this jail's business; nor is a 304, a browser checking a copy it
+// already has.
 //
 // Only the path is looked at, never the query string: the panel's own file
 // manager asks for /sites/1/files?path=.env, and this jail also reads the log
@@ -219,53 +215,72 @@ var scanTargets = []string{
 //
 // An .xml or .txt file that is not there or is refused counts too: that is a
 // script guessing at what a site might have. Not .php — people follow old links
-// to pages that moved. Not the files every crawler
-// asks for whether or not a site has them — robots.txt, sitemaps, feeds,
-// ads.txt — and not a search engine following a dead link to an .xml or .txt.
-var webScanFilterFile = "# Managed by Ubuntu Panel: vulnerability scanners.\n" +
-	"[Definition]\n" +
-	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
-	strings.Join(scanTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" [345]\d\d ` + "\n" +
-	"            " + accessPrefix + `(?:GET|POST|HEAD) /[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
-	"ignoreregex = " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:robots|ads|app-ads|security|humans|llms|llms-full)\.txt(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
-	"              " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:crossdomain|browserconfig|BingSiteAuth|opensearch|wlwmanifest)\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
-	"              " + anyPrefix + `\S+ /[^\s?]*(?:sitemap|feed|rss|atom)[^\s?/]*\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
-	"              " + anyPrefix + `\S+ /[^\s?]*\.well-known/[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
-	"              " + anyPrefix + `\S+ /[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] \S+ "[^"]*" "[^"]*(?:` + goodBotAgents + `)` + "\n"
+// to pages that moved. Not the files every crawler asks for whether or not a
+// site has them — robots.txt, sitemaps, feeds, ads.txt.
+//
+// Nothing a useful bot asks for counts: search engines and AI crawlers follow
+// links to pages that are gone, and to whatever odd paths other sites link to.
+// One only claiming to be Google is caught by the panel's own check, which
+// asks Google's DNS (see autoBan), and by the secret jail, which counts bots.
+func webScanFilterFile(scans []string) string {
+	failregex := ""
+	if targets := fail2banPatterns(scans); targets != "" {
+		failregex = accessPrefix + targets + `/[^"]*" (?:30[0-35-9]|[45]\d\d) ` + "\n            "
+	}
+
+	return "# Managed by Ubuntu Panel: vulnerability scanners.\n" +
+		"[Definition]\n" +
+		"failregex = " + failregex +
+		accessPrefix + `(?:GET|POST|HEAD) /[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+		"ignoreregex = " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:robots|ads|app-ads|security|humans|llms|llms-full)\.txt(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+		"              " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:crossdomain|browserconfig|BingSiteAuth|opensearch|wlwmanifest|[aA]utodiscover)\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+		"              " + anyPrefix + `\S+ /[^\s?]*(?:sitemap|feed|rss|atom)[^\s?/]*\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+		"              " + anyPrefix + `\S+ /[^\s?]*\.well-known/[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+		"              " + anyPrefix + `[^"]*" \d{3} \S+ "[^"]*" "[^"]*(?i:` + goodBotAgents() + `)` + "\n"
+}
 
 // anyPrefix is accessPrefix without the address, for ignoreregex.
 const anyPrefix = `^\S+ \S+ \S+ \[[^\]]*\] "`
 
-// goodBotAgents are the crawlers that follow a dead link to an .xml or .txt
-// file without being a scanner.
-const goodBotAgents = `Googlebot|bingbot|Applebot|DuckDuckBot|YandexBot|Baiduspider|GPTBot|ClaudeBot|` +
-	`PerplexityBot|facebookexternalhit|Twitterbot|LinkedInBot|AhrefsBot|SemrushBot|UptimeRobot`
-
-// secretTargets are files that hold passwords and keys. No visitor, search
-// engine or application asks a web server for one, so a single request is
-// banned, whatever the answer — a .env a site does serve is a leak, and whoever
-// fetched it is the last address that should keep its access.
-var secretTargets = []string{
-	scanDot + `env`, scanDot + `git` + scanSlash, scanDot + `git-credentials`, scanDot + `gitconfig`,
-	scanDot + `aws` + scanSlash, scanDot + `ssh` + scanSlash, scanDot + `docker` + scanSlash,
-	scanDot + `htpasswd`, scanDot + `npmrc`, scanDot + `pgpass`,
-	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`, `sftp-config\.json`,
-	// WordPress's installer: the panel installs from the command line, so only
-	// a bot hoping for an unfinished WordPress to take over opens it.
-	`wp-admin/install\.php`, `wp-admin/setup-config\.php`,
+// goodBotAgents are the useful bots' user agents — search engines, AI
+// crawlers, link previews, uptime monitors — as a regular expression, for
+// fail2ban and nginx alike.
+func goodBotAgents() string {
+	markers := weblog.GoodBotMarkers()
+	for i, marker := range markers {
+		markers[i] = regexp.QuoteMeta(marker)
+	}
+	return strings.Join(markers, "|")
 }
 
-// webSecretFilterFile counts requests for those files, by path only — the
-// panel's file manager names files in the query string.
-var webSecretFilterFile = "# Managed by Ubuntu Panel: requests for secret files (.env, .git, keys).\n" +
-	"[Definition]\n" +
-	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
-	strings.Join(secretTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" \d{3} ` + "\n" +
-	"ignoreregex =\n"
+// webSecretFilterFile counts requests for the secret paths, by path only —
+// the panel's file manager names files in the query string — whatever the
+// answer: a .env a site does serve is a leak, and whoever fetched it is the
+// last address that should keep its access. Useful bots are counted too: none
+// asks for one, and a scanner calling itself Googlebot is still a scanner. A
+// real search engine's crawler is let off by the jail's ignorecommand, which
+// asks the engine's DNS.
+func webSecretFilterFile(secrets []string) string {
+	// An emptied list: a jail needs a failregex, and this one matches nothing.
+	failregex := accessPrefix + `ubuntu-panel-no-secret-paths$`
+	if targets := fail2banPatterns(secrets); targets != "" {
+		failregex = accessPrefix + targets + `/[^"]*" \d{3} `
+	}
+
+	return "# Managed by Ubuntu Panel: requests for secret files (.env, .git, keys).\n" +
+		"[Definition]\n" +
+		"failregex = " + failregex + "\n" +
+		"ignoreregex =\n"
+}
+
+// BotCheckBinary is the panel's binary, which fail2ban runs to ask whether an
+// address about to be banned is a search engine's crawler (--verified-bot).
+const BotCheckBinary = "/opt/ubuntu-panel/bin/ubuntu-panel"
 
 // JailEnv is what the jail file needs to know about the machine.
 type JailEnv struct {
 	IgnoreIPs  []string
+	BotCheck   bool // BotCheckBinary is there, for the web jails' ignorecommand
 	MailLog    bool // /var/log/mail.log is written; otherwise the journal
 	Fail2ban   bool // /var/log/fail2ban.log is written
 	DefaultLog bool // nginx's own access.log exists
@@ -302,9 +317,18 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 	// are posts to /login.
 	nginxLogs := "logpath  = " + SiteAccessLogs
 
+	// A real search engine's crawler is never banned from the sites: before
+	// banning, fail2ban asks the panel, which looks the address up in DNS — a
+	// name of the engine's own that resolves back to it — and remembers the
+	// answer for a day.
+	web := []string{"port     = http,https", "backend  = auto"}
+	if env.BotCheck {
+		web = append(web, "ignorecommand = "+BotCheckBinary+" --verified-bot <ip>",
+			`ignorecache = key="<ip>", max-count=10000, max-time=86400`)
+	}
+
 	if p.WebLogin.Enabled {
-		section(JailWebLogin, p.WebLogin, "filter   = ubuntu-panel-web-login",
-			"port     = http,https", nginxLogs, "backend  = auto")
+		section(JailWebLogin, p.WebLogin, append([]string{"filter   = ubuntu-panel-web-login", nginxLogs}, web...)...)
 	}
 
 	// The scanner jail reads nginx's own access.log as well: it is where
@@ -317,12 +341,11 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 			logs += "\n           " + DefaultAccessLog
 		}
 
-		section(JailWebScan, p.WebScan, "filter   = ubuntu-panel-web-scan",
-			"port     = http,https", logs, "backend  = auto")
+		section(JailWebScan, p.WebScan, append([]string{"filter   = ubuntu-panel-web-scan", logs}, web...)...)
 
 		// One request for a secret file is enough.
 		section(JailWebSecret, JailRule{MaxRetry: 1, FindTime: p.WebScan.FindTime, BanTime: p.WebScan.BanTime},
-			"filter   = ubuntu-panel-web-secret", "port     = http,https", logs, "backend  = auto")
+			append([]string{"filter   = ubuntu-panel-web-secret", logs}, web...)...)
 	}
 
 	if p.Mail.Enabled {
@@ -383,19 +406,14 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 		return errors.New("mail login protection needs the mail server, which is not installed")
 	}
 
-	env := JailEnv{
-		IgnoreIPs:  ignoreIPs,
-		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
-		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
-		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
-	}
+	env := jailEnv(ignoreIPs)
 
 	previous, _ := proc.ReadFile(protectJailPath, true)
 
 	for path, contents := range map[string]string{
 		webLoginFilter:    webLoginFilterFile,
-		webScanFilterPath: webScanFilterFile,
-		webSecretFilter:   webSecretFilterFile,
+		webScanFilterPath: webScanFilterFile(p.Scans()),
+		webSecretFilter:   webSecretFilterFile(p.Secrets()),
 		protectJailPath:   ProtectJailFile(p, env),
 	} {
 		if err := proc.PutFile(path, contents, true); err != nil {
@@ -428,20 +446,25 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 // JailsCurrent is whether the files on disk are what ApplyJails would write,
 // so a panel start does not reload fail2ban for nothing.
 func JailsCurrent(p Protection, ignoreIPs []string) bool {
-	env := JailEnv{
-		IgnoreIPs:  ignoreIPs,
-		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
-		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
-		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
-	}
+	env := jailEnv(ignoreIPs)
 
 	jail, _ := proc.ReadFile(protectJailPath, true)
 	login, _ := proc.ReadFile(webLoginFilter, true)
 	scan, _ := proc.ReadFile(webScanFilterPath, true)
 	secret, _ := proc.ReadFile(webSecretFilter, true)
 
-	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile &&
-		secret == webSecretFilterFile
+	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile(p.Scans()) &&
+		secret == webSecretFilterFile(p.Secrets())
+}
+
+func jailEnv(ignoreIPs []string) JailEnv {
+	return JailEnv{
+		IgnoreIPs:  ignoreIPs,
+		BotCheck:   proc.Ok("test -x " + BotCheckBinary),
+		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
+		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
+	}
 }
 
 // ProtectStatus asks fail2ban about each optional jail that is on.
@@ -573,10 +596,20 @@ func NginxFile(p Protection, env NginxEnv) string {
 		}
 		file.WriteString("}\n")
 
+		// Search engines, AI crawlers, link previews and uptime monitors crawl
+		// fast and in bursts; a 429 tells them the site is failing. They are
+		// recognised by user agent, so one pretending to be Google floods
+		// unthrottled — until the panel's check of Google's DNS has it banned
+		// (see autoBan).
+		file.WriteString("\n# Useful bots, by user agent.\n")
+		file.WriteString("map $http_user_agent $panel_limit_bot {\n    default 0;\n")
+		file.WriteString(`    "~*(?:` + goodBotAgents() + `)" 1;` + "\n")
+		file.WriteString("}\n")
+
 		file.WriteString("\n# Everything that reaches PHP or an app, per address.\n")
-		file.WriteString("map \"$panel_limit_exempt$panel_limit_host_exempt $uri\" $panel_limit_flood {\n")
+		file.WriteString("map \"$panel_limit_exempt$panel_limit_host_exempt$panel_limit_bot $uri\" $panel_limit_flood {\n")
 		file.WriteString("    default $binary_remote_addr;\n")
-		file.WriteString(`    "~^(?:1.|.1) " "";` + "\n")
+		file.WriteString(`    "~^(?:1..|.1.|..1) " "";` + "\n")
 		file.WriteString(`    "~*` + staticPattern + `" "";` + "\n")
 		file.WriteString("}\n")
 		fmt.Fprintf(&file, "limit_req_zone $panel_limit_flood zone=panel_flood:20m rate=%dr/s;\n", p.RateFlood.Rate)

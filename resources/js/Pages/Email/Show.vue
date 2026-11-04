@@ -147,7 +147,7 @@ const deleteDomain = async () => {
                     class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                 >
                     <div class="min-w-0">
-                        <p class="text-sm font-medium text-slate-800">
+                        <p class="break-all text-sm font-medium text-slate-800">
                             <Link
                                 :href="route('email.accounts.show', account.id)"
                                 class="hover:text-brand-600 hover:underline"
@@ -251,13 +251,13 @@ const deleteDomain = async () => {
                 <dl class="mt-3 space-y-1 text-sm text-slate-600">
                     <div class="flex justify-between gap-3">
                         <dt>Host</dt>
-                        <dd class="font-mono text-slate-800">
+                        <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                             {{ domain.client_settings.smtp.host }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-3">
                         <dt>Port</dt>
-                        <dd class="font-mono text-slate-800">
+                        <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                             {{ domain.client_settings.smtp.port }} ({{
                                 domain.client_settings.smtp.security
                             }})
@@ -265,7 +265,7 @@ const deleteDomain = async () => {
                     </div>
                     <div class="flex justify-between gap-3">
                         <dt>or</dt>
-                        <dd class="font-mono text-slate-800">
+                        <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                             {{ domain.client_settings.smtp_ssl.port }} ({{
                                 domain.client_settings.smtp_ssl.security
                             }})
@@ -292,13 +292,13 @@ const deleteDomain = async () => {
                 <dl class="mt-3 space-y-1 text-sm text-slate-600">
                     <div class="flex justify-between gap-3">
                         <dt>Host</dt>
-                        <dd class="font-mono text-slate-800">
+                        <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                             {{ domain.client_settings.imap.host }}
                         </dd>
                     </div>
                     <div class="flex justify-between gap-3">
                         <dt>Port</dt>
-                        <dd class="font-mono text-slate-800">
+                        <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                             {{ domain.client_settings.imap.port }} ({{
                                 domain.client_settings.imap.security
                             }})

@@ -33,7 +33,7 @@ const numbers = computed(() => {
 });
 
 const button =
-    'min-w-[2rem] rounded-lg px-2.5 py-1.5 font-medium ring-1 transition disabled:cursor-not-allowed disabled:opacity-40';
+    'min-w-[2.25rem] rounded-lg px-2.5 py-2 font-medium sm:min-w-[2rem] sm:py-1.5 ring-1 transition disabled:cursor-not-allowed disabled:opacity-40';
 </script>
 
 <template>

@@ -89,7 +89,7 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
         <!-- The tabs and Clear logs live in the top bar: no title, more room. -->
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <nav class="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1" aria-label="Logs">
+                <nav class="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap rounded-xl bg-slate-100 p-1" aria-label="Logs">
                     <Link
                         v-for="v in VIEWS"
                         :key="v.key"

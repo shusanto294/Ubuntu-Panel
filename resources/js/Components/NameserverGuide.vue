@@ -403,7 +403,7 @@ const steps = computed(() => [
                         <p
                             v-for="check in status.glue"
                             :key="check.name"
-                            class="text-sm"
+                            class="break-words text-sm"
                             :class="
                                 check.matches
                                     ? 'text-emerald-700'

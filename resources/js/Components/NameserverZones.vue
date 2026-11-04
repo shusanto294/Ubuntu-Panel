@@ -89,7 +89,7 @@ const check = async (zone) => {
             @submit.prevent="submit"
             class="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4"
         >
-            <div class="min-w-64 flex-1">
+            <div class="min-w-[12rem] flex-1 sm:min-w-64">
                 <InputLabel for="zone" value="Domain" />
                 <TextInput
                     id="zone"
@@ -123,7 +123,7 @@ const check = async (zone) => {
             <li v-for="zone in visibleZones" :key="zone.id" class="px-5 py-4">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="min-w-0">
-                        <p class="font-medium text-slate-800">
+                        <p class="break-all font-medium text-slate-800">
                             {{ zone.name }}
                             <span
                                 v-if="zone.holds_the_ns"
@@ -143,7 +143,7 @@ const check = async (zone) => {
                         <!-- What the public DNS says -->
                         <p
                             v-if="checks[zone.id]"
-                            class="mt-1 text-xs"
+                            class="mt-1 break-words text-xs"
                             :class="
                                 checks[zone.id].delegated
                                     ? 'text-emerald-700'

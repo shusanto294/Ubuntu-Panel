@@ -3,13 +3,13 @@
  * made of, and the two ways the server writes a time — Unix seconds for the
  * panel's own rows, RFC 3339 for lines read out of sshd's log.
  */
-export const card = 'rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5';
+export const card = 'rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5 sm:p-6';
 
 export const field =
     'mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500';
 
 export const smallButton =
-    'rounded-lg px-2.5 py-1 text-xs font-medium ring-1 ring-slate-900/10 transition hover:bg-slate-50';
+    'rounded-lg px-2.5 py-2 text-xs font-medium ring-1 ring-slate-900/10 transition hover:bg-slate-50 sm:py-1';
 
 const toDate = (value) => {
     if (value === null || value === undefined || value === '') return null;

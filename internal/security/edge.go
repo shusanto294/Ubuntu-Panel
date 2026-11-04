@@ -35,7 +35,9 @@ func NginxBansFile(ips []string) string {
 
 	for _, ip := range ips {
 		ip = strings.TrimSpace(ip)
-		if ValidAddress(ip) && !seen[ip] {
+		// Cloudflare's own addresses never: a site behind it would refuse
+		// every visitor.
+		if ValidAddress(ip) && !seen[ip] && !FromCloudflare(ip) {
 			seen[ip] = true
 			list = append(list, ip)
 		}

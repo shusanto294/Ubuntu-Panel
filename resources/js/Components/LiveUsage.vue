@@ -218,7 +218,7 @@ const loadTone = computed(() => {
                     type="button"
                     @click="range = option.key"
                     :aria-pressed="range === option.key"
-                    class="rounded-md px-2.5 py-1 text-xs font-medium transition"
+                    class="rounded-md px-2.5 py-1.5 text-xs font-medium transition sm:py-1"
                     :class="
                         range === option.key
                             ? 'bg-slate-900 text-white'

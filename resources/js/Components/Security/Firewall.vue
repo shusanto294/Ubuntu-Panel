@@ -69,7 +69,7 @@ const actionStyle = {
 <template>
     <div class="space-y-6">
         <div :class="card" class="flex flex-wrap items-center justify-between gap-4">
-            <div>
+            <div class="min-w-0">
                 <h3 class="flex items-center gap-2 font-semibold text-slate-900">
                     Firewall (ufw)
                     <span
@@ -110,10 +110,11 @@ const actionStyle = {
 
         <div v-if="firewall.active" class="grid gap-6 lg:grid-cols-3">
             <div :class="card" class="!p-0 lg:col-span-2">
+                <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
-                            <th class="px-6 py-3">#</th>
+                            <th class="px-4 py-3 sm:px-6">#</th>
                             <th class="px-2 py-3">Port / service</th>
                             <th class="px-2 py-3">Action</th>
                             <th class="px-2 py-3">From</th>
@@ -123,10 +124,10 @@ const actionStyle = {
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="rule in visibleRules" :key="rule.number">
-                            <td class="px-6 py-2 text-slate-400">{{ rule.number }}</td>
-                            <td class="px-2 py-2 font-mono">{{ rule.to }}</td>
+                            <td class="px-4 py-2 text-slate-400 sm:px-6">{{ rule.number }}</td>
+                            <td class="break-all px-2 py-2 font-mono">{{ rule.to }}</td>
                             <td class="px-2 py-2">
-                                <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="actionStyle[rule.action]">
+                                <span class="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" :class="actionStyle[rule.action]">
                                     {{ rule.action }} {{ rule.direction }}
                                 </span>
                             </td>
@@ -141,6 +142,7 @@ const actionStyle = {
                         </tr>
                     </tbody>
                 </table>
+                </div>
                 <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
             </div>
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
@@ -106,12 +108,16 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 	analyzer.Trusted = a.trustedSet(ctx)
 
 	sources := map[string]string{unmatchedSite: "/var/log/nginx/access.log"}
+	domains := []string{}
 
 	if sites, err := a.Store.Sites(ctx); err == nil {
 		for _, site := range sites {
 			sources[site.Domain] = "/var/log/nginx/" + site.Domain + "-access.log"
+			domains = append(domains, site.Domain)
 		}
 	}
+
+	analyzer.Proxied = proxiedSites(domains)
 
 	var (
 		locked  sync.Mutex
@@ -547,4 +553,50 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.Render.Render(w, r, "Logs/Stats", props)
+}
+
+var proxiedCache struct {
+	sync.Mutex
+	at    map[string]time.Time
+	known map[string]bool
+}
+
+// proxiedSites are the sites whose domain resolves to Cloudflare alone: their
+// visitors arrive through it. Asked of DNS at most every ten minutes a site;
+// the bare IP is never one.
+func proxiedSites(domains []string) map[string]bool {
+	proxied := map[string]bool{}
+
+	proxiedCache.Lock()
+	if proxiedCache.known == nil {
+		proxiedCache.at, proxiedCache.known = map[string]time.Time{}, map[string]bool{}
+	}
+	stale := []string{}
+	for _, domain := range domains {
+		if at, ok := proxiedCache.at[domain]; ok && time.Since(at) < 10*time.Minute {
+			proxied[domain] = proxiedCache.known[domain]
+		} else {
+			stale = append(stale, domain)
+		}
+	}
+	proxiedCache.Unlock()
+
+	for _, domain := range stale {
+		lookup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		addresses, err := net.DefaultResolver.LookupHost(lookup, domain)
+		cancel()
+		behind := err == nil && len(addresses) > 0
+		for _, address := range addresses {
+			if !security.FromCloudflare(address) {
+				behind = false
+			}
+		}
+
+		proxiedCache.Lock()
+		proxiedCache.at[domain], proxiedCache.known[domain] = time.Now(), behind
+		proxiedCache.Unlock()
+		proxied[domain] = behind
+	}
+
+	return proxied
 }

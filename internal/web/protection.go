@@ -14,6 +14,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
+	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
 
 // The Protection tab: the optional protections in security/protect.go, each
@@ -89,7 +90,39 @@ func (a *App) protection() security.Protection {
 		}
 	}
 
+	syncPathRules(p)
+
 	return p
+}
+
+var pathRulesKey struct {
+	sync.Mutex
+	key string
+}
+
+// syncPathRules gives the traffic reader the scanner protection's lists, so
+// the Logs page and the automatic bans flag what the jails ban.
+func syncPathRules(p security.Protection) {
+	secrets, scans := p.Secrets(), p.Scans()
+	key := strings.Join(secrets, "\n") + "\x00" + strings.Join(scans, "\n")
+
+	pathRulesKey.Lock()
+	defer pathRulesKey.Unlock()
+	if key == pathRulesKey.key {
+		return
+	}
+	pathRulesKey.key = key
+
+	expressions := func(list []string) []string {
+		out := make([]string, 0, len(list))
+		for _, pattern := range list {
+			if security.ValidatePathPattern(pattern) == "" {
+				out = append(out, security.PathPatternRegexp(pattern))
+			}
+		}
+		return out
+	}
+	weblog.SetPaths(expressions(secrets), expressions(scans))
 }
 
 func (a *App) saveProtection(p security.Protection) {
@@ -279,6 +312,14 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		return next, true
 	}
 
+	// The scanner protection's lists: what is banned on the first request,
+	// and what counts as scanning. Saved whether or not the protection is on;
+	// applied at once when it is.
+	if feature == "scan_paths" {
+		a.saveScanPaths(w, r, p, input)
+		return
+	}
+
 	ok := true
 	label := ""
 
@@ -392,6 +433,54 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 	a.securityBack(w, r, message, false)
 }
 
+// saveScanPaths saves the two lists the form sends, one pattern a line. A
+// list the same as the default is stored as the default, so the patterns a
+// later version adds reach it.
+func (a *App) saveScanPaths(w http.ResponseWriter, r *http.Request, p security.Protection, input map[string]string) {
+	sess := session.FromContext(r.Context())
+	before := p
+
+	secrets, problem := security.CleanPathPatterns(input["secret_paths"])
+	if problem != "" {
+		sess.Error("secret_paths", problem)
+		inertia.Back(w, r, "/security?tab=protection")
+		return
+	}
+
+	scans, problem := security.CleanPathPatterns(input["scan_paths"])
+	if problem != "" {
+		sess.Error("scan_paths", problem)
+		inertia.Back(w, r, "/security?tab=protection")
+		return
+	}
+
+	p.SecretPaths, p.ScanPaths = secrets, scans
+	if security.SamePatterns(secrets, security.DefaultSecretPaths) {
+		p.SecretPaths = nil
+	}
+	if security.SamePatterns(scans, security.DefaultScanPaths) {
+		p.ScanPaths = nil
+	}
+
+	if p.WebScan.Enabled {
+		if err := a.applyProtection(r.Context(), p); err != nil {
+			a.applyProtection(r.Context(), before)
+			a.securityBack(w, r, err.Error(), true)
+			return
+		}
+	}
+
+	a.saveProtection(p)
+	syncPathRules(p)
+	a.Log.Info("scanner paths changed", "secret", len(secrets), "scan", len(scans), "ip", session.ClientIP(r))
+
+	message := "The scanner paths are saved."
+	if p.WebScan.Enabled {
+		message = "The scanner paths are saved and in force."
+	}
+	a.securityBack(w, r, message, false)
+}
+
 // ------------------------------------------------------------------ props
 
 // protectJailKinds are what the Banned IPs tab calls each optional jail's
@@ -435,6 +524,12 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 		"kernel_applied": p.Kernel && security.KernelApplied(),
 		"edge_applied":   p.EdgeOnly && security.EdgeOnlyApplied(),
 		"edge_sites":     edgeSites,
+		"paths": map[string]any{
+			"secret":         p.Secrets(),
+			"scan":           p.Scans(),
+			"default_secret": security.DefaultSecretPaths,
+			"default_scan":   security.DefaultScanPaths,
+		},
 	}
 }
 

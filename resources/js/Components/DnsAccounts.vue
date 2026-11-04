@@ -70,7 +70,7 @@ const remove = async (account) => {
                     class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                 >
                     <div class="min-w-0">
-                        <p class="font-medium text-slate-800">
+                        <p class="break-words font-medium text-slate-800">
                             {{ account.label }}
                             <span class="ml-2 text-xs font-normal text-slate-500">
                                 {{ account.provider_label }}

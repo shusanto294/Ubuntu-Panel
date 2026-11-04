@@ -107,7 +107,7 @@ const release = async (row) => {
                 :key="tile.key"
                 type="button"
                 :class="[card, source === tile.key ? 'ring-2 !ring-brand-500' : '']"
-                class="!p-5 text-left transition hover:shadow-md"
+                class="min-w-0 break-words !p-4 text-left transition hover:shadow-md sm:!p-5"
                 @click="source = tile.key"
             >
                 <p class="text-xs font-medium uppercase tracking-wide text-slate-400">{{ tile.label }}</p>
@@ -153,21 +153,21 @@ const release = async (row) => {
         </div>
 
         <div :class="card" class="!p-0">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-                <div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-900">Banned addresses</h3>
                     <p class="text-sm text-slate-500">
                         One row per address. Unban lets it go from everything that refuses it.
                     </p>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex w-full flex-wrap gap-2 sm:w-auto">
                     <input
                         v-model="search"
                         type="text"
                         placeholder="Filter by IP"
-                        class="rounded-lg border-slate-300 text-sm shadow-sm"
+                        class="min-w-0 flex-1 rounded-lg border-slate-300 text-sm shadow-sm sm:flex-none"
                     />
-                    <select v-model="source" class="rounded-lg border-slate-300 text-sm shadow-sm">
+                    <select v-model="source" class="min-w-0 rounded-lg border-slate-300 text-sm shadow-sm">
                         <option value="all">All sources</option>
                         <option v-for="(s, key) in sources" :key="key" :value="key">{{ s.label }}</option>
                     </select>
@@ -178,15 +178,15 @@ const release = async (row) => {
                 <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
-                            <th class="px-6 py-2">Address</th>
+                            <th class="px-4 py-2 sm:px-6">Address</th>
                             <th class="px-2 py-2">Banned by</th>
                             <th class="hidden px-2 py-2 md:table-cell">Details</th>
-                            <th class="px-6 py-2" />
+                            <th class="px-4 py-2 sm:px-6" />
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="row in visible" :key="row.ip">
-                            <td class="whitespace-nowrap px-6 py-2">
+                            <td class="whitespace-nowrap px-4 py-2 sm:px-6">
                                 <Link :href="route('logs.ip', row.ip)" class="hover:underline" title="What this address did">
                                     <IpAddress :ip="row.ip" class="text-slate-700" />
                                 </Link>
@@ -234,7 +234,7 @@ const release = async (row) => {
                                           : 'Refused at panel sign-in'
                                 }}</span>
                             </td>
-                            <td class="px-6 py-2 text-right">
+                            <td class="px-4 py-2 text-right sm:px-6">
                                 <button type="button" :class="smallButton" class="text-slate-700" @click="release(row)">
                                     Unban
                                 </button>

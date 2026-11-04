@@ -119,7 +119,7 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
         <template #header>
             <div>
                 <h2 class="text-xl font-semibold text-slate-900">Settings</h2>
-                <p class="text-sm text-slate-500">{{ system.hostname }}</p>
+                <p class="break-all text-sm text-slate-500">{{ system.hostname }}</p>
             </div>
         </template>
 
@@ -142,7 +142,7 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     The panel currently answers on
                     <a
                         :href="panel.url"
-                        class="font-mono text-brand-600 hover:underline"
+                        class="break-all font-mono text-brand-600 hover:underline"
                         >{{ panel.url }}</a
                     >.
                 </p>

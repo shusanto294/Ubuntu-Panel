@@ -31,10 +31,10 @@ const base = {
     focusCancel: true,
     heightAuto: false,
     customClass: {
-        popup: 'rounded-2xl !p-6',
+        popup: 'rounded-2xl !p-5 sm:!p-6',
         icon: '!mx-auto !mt-0 !mb-5',
         title: '!p-0 !mb-2 text-lg font-semibold text-slate-900',
-        htmlContainer: '!m-0 !px-0 text-sm text-slate-600',
+        htmlContainer: '!m-0 !px-0 break-words text-sm text-slate-600',
         actions: '!mt-6 !mb-0 gap-2',
         confirmButton:
             'rounded-xl px-4 py-2.5 text-sm font-medium text-white shadow-sm transition',

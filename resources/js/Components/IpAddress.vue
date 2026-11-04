@@ -17,7 +17,7 @@ const code = computed(() => countryOf(props.ip));
 </script>
 
 <template>
-    <span class="inline-flex items-center gap-1.5">
+    <span class="inline-flex min-w-0 items-center gap-1.5">
         <span v-if="code" class="group relative inline-flex">
             <button
                 type="button"
@@ -33,6 +33,6 @@ const code = computed(() => countryOf(props.ip));
                 {{ countryName(code) }}
             </span>
         </span>
-        <span class="font-mono">{{ ip }}</span>
+        <span class="min-w-0 break-all font-mono">{{ ip }}</span>
     </span>
 </template>

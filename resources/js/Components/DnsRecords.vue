@@ -160,11 +160,11 @@ loadZones().then(loadRecords);
                 </p>
             </div>
 
-            <div class="flex items-center gap-2">
+            <div class="flex max-w-full flex-wrap items-center gap-2">
                 <select
                     v-model="zone"
                     :disabled="loadingZones || !zones.length"
-                    class="rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500 disabled:opacity-50"
+                    class="min-w-0 max-w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500 disabled:opacity-50"
                 >
                     <option v-for="z in zones" :key="z.id" :value="z.id">
                         {{ z.name }}
@@ -298,7 +298,7 @@ loadZones().then(loadRecords);
                         <th class="px-5 py-3">Type</th>
                         <th class="px-5 py-3">Name</th>
                         <th class="px-5 py-3">Value</th>
-                        <th class="px-5 py-3">TTL</th>
+                        <th class="hidden px-5 py-3 sm:table-cell">TTL</th>
                         <th class="px-5 py-3"></th>
                     </tr>
                 </thead>
@@ -317,7 +317,7 @@ loadZones().then(loadRecords);
                         <td class="whitespace-nowrap px-5 py-3 font-mono text-slate-800">
                             {{ shortName(record.name) }}
                         </td>
-                        <td class="max-w-md break-all px-5 py-3 font-mono text-xs text-slate-600">
+                        <td class="min-w-[10rem] max-w-md break-all px-5 py-3 font-mono text-xs text-slate-600">
                             {{ record.content }}
                             <span
                                 v-if="record.proxied"
@@ -325,7 +325,7 @@ loadZones().then(loadRecords);
                                 >proxied</span
                             >
                         </td>
-                        <td class="whitespace-nowrap px-5 py-3 text-slate-500">
+                        <td class="hidden whitespace-nowrap px-5 py-3 text-slate-500 sm:table-cell">
                             {{ record.ttl ?? 'auto' }}
                         </td>
                         <td class="whitespace-nowrap px-5 py-3 text-right">

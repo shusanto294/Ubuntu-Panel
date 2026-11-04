@@ -268,10 +268,10 @@ const destroy = async () => {
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex items-center gap-3">
-                    <AppIcon :app-key="database.engine" size="md" />
-                    <div>
-                        <h2 class="text-xl font-semibold text-slate-900">
+                <div class="flex min-w-0 items-center gap-3">
+                    <AppIcon :app-key="database.engine" size="md" class="shrink-0" />
+                    <div class="min-w-0">
+                        <h2 class="break-all text-xl font-semibold text-slate-900">
                             {{ database.name }}
                         </h2>
                         <p class="text-sm text-slate-500">
@@ -478,7 +478,7 @@ const destroy = async () => {
         <!-- Who can connect, and how an app off this server does. -->
         <div v-if="isMySQL && access" class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
             <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-800">Who can connect</h3>
                     <p class="mt-1 text-sm text-slate-500">
                         Where this database accepts connections from. The database accounts and the firewall

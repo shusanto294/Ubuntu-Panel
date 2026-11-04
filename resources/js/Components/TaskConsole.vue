@@ -240,12 +240,12 @@ defineExpose({ start, stop, refresh: fetchTask });
         <div
             class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-3"
         >
-            <div class="flex items-center gap-3">
+            <div class="flex min-w-0 items-center gap-3">
                 <span
-                    class="h-2.5 w-2.5 rounded-full"
+                    class="h-2.5 w-2.5 shrink-0 rounded-full"
                     :class="[statusColour, running ? 'animate-pulse' : '']"
                 />
-                <div>
+                <div class="min-w-0 break-words">
                     <p class="text-sm font-medium text-slate-100">
                         {{ title }} — {{ state.action }}
                     </p>

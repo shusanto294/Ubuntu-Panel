@@ -32,7 +32,7 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
 
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex items-center justify-between">
+            <div class="flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-xl font-semibold text-slate-800">Sites</h2>
                 <Link
                     :href="route('sites.create')"
@@ -53,23 +53,24 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
         </div>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+            <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-slate-200">
                 <thead class="bg-slate-50">
                     <tr
                         class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                     >
                         <th class="px-5 py-3">Domain</th>
-                        <th class="px-5 py-3">Type</th>
+                        <th class="hidden px-5 py-3 md:table-cell">Type</th>
                         <th class="px-5 py-3">Status</th>
-                        <th class="px-5 py-3">Runtime</th>
-                        <th class="px-5 py-3">SSL</th>
-                        <th class="px-5 py-3">DNS</th>
+                        <th class="hidden px-5 py-3 lg:table-cell">Runtime</th>
+                        <th class="hidden px-5 py-3 sm:table-cell">SSL</th>
+                        <th class="hidden px-5 py-3 lg:table-cell">DNS</th>
                         <th class="px-5 py-3"></th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-sm">
                     <tr v-for="site in visibleSites" :key="site.id">
-                        <td class="px-5 py-3">
+                        <td class="break-all px-5 py-3">
                             <!--
                                 The domain goes to the site's own page, not to
                                 the site. Leaving the panel is what the Visit
@@ -101,23 +102,23 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                                 + {{ site.aliases.join(', ') }}
                             </p>
                         </td>
-                        <td class="px-5 py-3 text-slate-600">
+                        <td class="hidden px-5 py-3 text-slate-600 md:table-cell">
                             {{ site.type_label }}
                         </td>
                         <td class="px-5 py-3">
                             <StatusBadge :status="site.status" />
                         </td>
-                        <td class="px-5 py-3 text-slate-600">
+                        <td class="hidden px-5 py-3 text-slate-600 lg:table-cell">
                             {{
                                 site.app_port
                                     ? 'port ' + site.app_port
                                     : 'PHP ' + site.php_version
                             }}
                         </td>
-                        <td class="px-5 py-3 text-slate-600">
+                        <td class="hidden px-5 py-3 text-slate-600 sm:table-cell">
                             {{ site.ssl ? 'yes' : 'no' }}
                         </td>
-                        <td class="px-5 py-3 text-slate-600">
+                        <td class="hidden px-5 py-3 text-slate-600 lg:table-cell">
                             {{ site.dns_provider ?? (site.manage_dns ? 'managed' : 'manual') }}
                         </td>
                         <td class="whitespace-nowrap px-5 py-3 text-right">
@@ -166,6 +167,7 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                     </tr>
                 </tbody>
             </table>
+            </div>
             <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
     </AuthenticatedLayout>

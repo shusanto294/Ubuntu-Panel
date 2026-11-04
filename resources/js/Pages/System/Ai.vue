@@ -270,8 +270,8 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
                                         :checked="settings.permissions.includes(capability.key)"
                                         @update:checked="toggle(capability.key)"
                                     />
-                                    <span>
-                                        <span class="flex items-center gap-2">
+                                    <span class="min-w-0">
+                                        <span class="flex flex-wrap items-center gap-x-2 gap-y-1">
                                             <span class="font-medium text-slate-800">
                                                 {{ capability.label }}
                                             </span>
@@ -397,7 +397,7 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
                         class="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                     >
                         <div class="min-w-0">
-                            <p class="font-medium text-slate-800">
+                            <p class="break-words font-medium text-slate-800">
                                 {{ token.name }}
                                 <!--
                                     The server this key was made for, by the name
@@ -517,7 +517,7 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
 
                     <div v-if="showing === 'prompt'" class="relative mt-3">
                         <pre
-                            class="overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-900 px-4 py-3 pe-24 font-mono text-xs leading-relaxed text-slate-100"
+                            class="overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-900 px-4 pb-3 pt-11 font-mono sm:pe-24 sm:pt-3 text-xs leading-relaxed text-slate-100"
                         >{{ prompt }}</pre>
                         <button
                             type="button"
@@ -547,7 +547,7 @@ const insecure = computed(() => props.endpoint.startsWith('http://') && !local.v
 
                         <div class="relative">
                             <pre
-                                class="overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 pe-24 font-mono text-xs leading-relaxed text-slate-100"
+                                class="overflow-x-auto rounded-xl bg-slate-900 px-4 pb-3 pt-11 font-mono sm:pe-24 sm:pt-3 text-xs leading-relaxed text-slate-100"
                             >{{ manual }}</pre>
                             <button
                                 type="button"

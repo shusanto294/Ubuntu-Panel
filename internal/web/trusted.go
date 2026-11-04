@@ -39,6 +39,7 @@ const (
 	trustNeverBan    = "on the never-ban list"
 	trustSignedIn    = "signed in to this panel"
 	trustThisServer  = "this server"
+	trustCloudflare  = "Cloudflare's proxy, which real visitors arrive through"
 	trustPrivate     = "a private network this server is on"
 	trustedSetting   = "security_trusted_applied"
 	trustedRecheckAt = 10 * time.Minute
@@ -111,6 +112,12 @@ func trustReason(reasons map[string]string, address, viewer string) string {
 		return reason
 	}
 
+	// Without real visitor addresses, every visitor to a site behind
+	// Cloudflare arrives from one of these: banning one refuses them all.
+	if security.FromCloudflare(address) {
+		return trustCloudflare
+	}
+
 	ip := net.ParseIP(address)
 	if ip == nil {
 		// A range being banned: refused when it holds a trusted address.
@@ -145,6 +152,12 @@ func (a *App) refuseBan(ctx context.Context, address, viewer string) string {
 	if reason == trustNeverBan {
 		return address + " is on the never-ban list, so it is never banned. Take it off the list on the " +
 			"SSH protection tab first if you really mean to."
+	}
+
+	if reason == trustCloudflare {
+		return address + " is one of Cloudflare's addresses. Every visitor to a site behind Cloudflare " +
+			"arrives from these, so banning it would refuse them all — turn on real visitor addresses on " +
+			"the Protection tab and ban the visitor instead."
 	}
 
 	return address + " is never banned — " + reason + ". The panel will not lock its owner out."

@@ -189,7 +189,7 @@ const hasRepository = computed(() => !!props.git.repository);
                     >
                         Pull now
                     </button>
-                    <span v-if="git.last_commit" class="text-xs text-slate-500">
+                    <span v-if="git.last_commit" class="min-w-0 break-all text-xs text-slate-500">
                         Serving
                         <span class="font-mono">{{ git.last_commit }}</span>
                     </span>
@@ -226,7 +226,7 @@ const hasRepository = computed(() => !!props.git.repository);
                             :value="method.key"
                             class="mt-0.5 border-slate-300 text-brand-600 focus:ring-brand-500"
                         />
-                        <span class="text-sm">
+                        <span class="min-w-0 text-sm">
                             <span class="font-medium text-slate-800">
                                 {{ method.label }}
                             </span>

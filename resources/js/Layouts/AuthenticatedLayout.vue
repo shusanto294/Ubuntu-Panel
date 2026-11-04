@@ -1,6 +1,6 @@
 <script setup>
 import NotificationBell from '@/Components/NotificationBell.vue';
-import { onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import SidebarLink from '@/Components/SidebarLink.vue';
@@ -24,12 +24,32 @@ const STORAGE_KEY = 'panel:sidebar-collapsed';
 
 // Read after mount rather than at setup: this component is server-rendered on
 // the first response, where there is no localStorage to ask.
+// The icon rail is a wide screen's choice only: on a phone the menu slides in
+// over the page, and always at full width with its labels.
+const wide = ref(false);
+let wideQuery = null;
+const onWide = (event) => (wide.value = event.matches);
+const rail = computed(() => collapsed.value && wide.value);
+
 onMounted(() => {
-    collapsed.value = window.localStorage.getItem(STORAGE_KEY) === '1';
+    try {
+        collapsed.value = window.localStorage.getItem(STORAGE_KEY) === '1';
+    } catch {
+        collapsed.value = false;
+    }
+    wideQuery = window.matchMedia('(min-width: 1024px)');
+    wide.value = wideQuery.matches;
+    wideQuery.addEventListener('change', onWide);
 });
 
+onBeforeUnmount(() => wideQuery?.removeEventListener('change', onWide));
+
 watch(collapsed, (value) => {
-    window.localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
+    try {
+        window.localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
+    } catch {
+        // Private windows may refuse; the menu still works for this visit.
+    }
 });
 
 // A count beside a menu row: an update waiting, notifications unread.
@@ -109,21 +129,21 @@ const sections = [
         <aside
             class="fixed inset-y-0 left-0 z-40 flex flex-col border-e border-slate-200 bg-white transition-[width,transform] duration-150 lg:translate-x-0"
             :class="[
-                collapsed ? 'w-20' : 'w-64',
+                rail ? 'w-20' : 'w-64',
                 showingMobileMenu ? 'translate-x-0' : '-translate-x-full',
             ]"
         >
             <Link
                 :href="route('dashboard')"
                 class="flex h-20 items-center gap-3 px-6"
-                :class="collapsed ? 'justify-center px-0' : ''"
+                :class="rail ? 'justify-center px-0' : ''"
             >
                 <img
                     :src="logo"
                     alt="Ubuntu Panel"
                     class="h-10 w-10 shrink-0 object-contain"
                 />
-                <span v-if="!collapsed" class="leading-tight">
+                <span v-if="!rail" class="leading-tight">
                     <span class="block font-semibold text-slate-900">
                         Ubuntu Panel
                     </span>
@@ -139,7 +159,7 @@ const sections = [
             >
                 <div v-for="section in sections" :key="section.heading">
                     <p
-                        v-if="!collapsed"
+                        v-if="!rail"
                         class="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400"
                     >
                         {{ section.heading }}
@@ -154,7 +174,7 @@ const sections = [
                             :icon="link.icon"
                             :label="link.name"
                             :active="route().current(link.pattern)"
-                            :collapsed="collapsed"
+                            :collapsed="rail"
                             :badge="badgeFor(link.route)"
                         />
                     </div>
@@ -164,12 +184,12 @@ const sections = [
             <button
                 type="button"
                 class="hidden items-center gap-3 border-t border-slate-200 py-4 text-xs font-medium text-slate-400 transition hover:text-slate-700 lg:flex"
-                :class="collapsed ? 'justify-center' : 'px-6'"
+                :class="rail ? 'justify-center' : 'px-6'"
                 @click="collapsed = !collapsed"
             >
                 <svg
                     class="h-4 w-4 shrink-0 transition-transform"
-                    :class="collapsed ? 'rotate-180' : ''"
+                    :class="rail ? 'rotate-180' : ''"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="2"
@@ -181,7 +201,7 @@ const sections = [
                         d="M15.75 19.5L8.25 12l7.5-7.5"
                     />
                 </svg>
-                <span v-if="!collapsed">Collapse menu</span>
+                <span v-if="!rail">Collapse menu</span>
             </button>
         </aside>
 
@@ -214,7 +234,7 @@ const sections = [
                     </svg>
                 </button>
 
-                <div class="min-w-0 flex-1">
+                <div class="min-w-0 flex-1 break-words">
                     <slot name="header" />
                 </div>
 
@@ -264,7 +284,7 @@ const sections = [
                 </Dropdown>
             </header>
 
-            <main class="px-4 py-6 sm:px-6 lg:px-8">
+            <main class="break-words px-4 py-6 sm:px-6 lg:px-8">
                 <FlashMessages />
                 <slot />
             </main>

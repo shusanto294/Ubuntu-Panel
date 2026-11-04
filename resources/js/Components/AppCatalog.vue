@@ -242,7 +242,7 @@ const toggle = (key) => {
         <!-- search and bulk actions -->
         <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
             <div class="flex flex-wrap items-center gap-3">
-                <div class="relative min-w-0 flex-1">
+                <div class="relative min-w-[12rem] flex-1">
                     <svg
                         class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
                         viewBox="0 0 24 24"

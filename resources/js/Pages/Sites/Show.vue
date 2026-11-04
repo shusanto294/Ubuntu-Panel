@@ -1010,8 +1010,8 @@ const destroy = async () => {
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 class="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-800">
+                <div class="min-w-0">
+                    <h2 class="flex flex-wrap items-center gap-2 break-all text-xl font-semibold text-slate-800">
                         {{ site.domain }}
                         <span
                             v-if="staging.is_staging"
@@ -1019,7 +1019,7 @@ const destroy = async () => {
                             >staging</span
                         >
                     </h2>
-                    <p class="text-sm text-slate-500">
+                    <p class="break-all text-sm text-slate-500">
                         {{ site.type_label }} · {{ site.document_root }}
                         <template v-if="staging.is_staging && staging.parent">
                             · a copy of {{ staging.parent.domain }}
@@ -1305,7 +1305,7 @@ const destroy = async () => {
         >
             <div class="min-w-0">
                 <dt class="text-xs uppercase tracking-wide text-slate-400">Domain</dt>
-                <dd class="mt-1 flex items-center gap-2 truncate font-medium text-slate-800">
+                <dd class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 break-all font-medium text-slate-800">
                     {{ site.domain }}
                     <a
                         :href="site.url"
@@ -1347,7 +1347,7 @@ const destroy = async () => {
             other four.
         -->
         <div v-if="!busy" class="mb-6 border-b border-slate-200">
-            <nav class="-mb-px flex flex-wrap gap-6" aria-label="Sections">
+            <nav class="-mb-px flex gap-6 overflow-x-auto whitespace-nowrap" aria-label="Sections">
                 <button
                     v-for="entry in tabs"
                     :key="entry.key"
@@ -1588,13 +1588,13 @@ const destroy = async () => {
                 <span
                     v-for="alias in aliases"
                     :key="alias"
-                    class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                    class="inline-flex max-w-full items-center gap-1 break-all rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
                 >
                     {{ alias }}
                     <button
                         type="button"
                         @click="removeAlias(alias)"
-                        class="text-slate-400 hover:text-rose-600"
+                        class="-my-1 -me-1 px-1 py-1 text-slate-400 hover:text-rose-600"
                     >
                         ×
                     </button>
@@ -1626,7 +1626,7 @@ const destroy = async () => {
             </p>
 
             <div class="mt-4 flex flex-wrap items-center gap-2">
-                <span class="font-mono text-sm text-slate-500">{{ site.root_path }}/</span>
+                <span class="break-all font-mono text-sm text-slate-500">{{ site.root_path }}/</span>
                 <input
                     v-model="webDirectory"
                     type="text"
@@ -2367,9 +2367,9 @@ const destroy = async () => {
             <div class="space-y-6 lg:col-span-2">
                 <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
                     <div class="flex flex-wrap items-start justify-between gap-3">
-                        <div>
+                        <div class="min-w-0">
                             <h3 class="font-semibold text-slate-800">Backups</h3>
-                            <p class="mt-1 text-sm text-slate-500">
+                            <p class="mt-1 break-words text-sm text-slate-500 [&_.font-mono]:break-all">
                                 A copy of
                                 <span class="font-mono">{{ site.root_path }}</span>
                                 <template v-if="backup.database">
@@ -2615,9 +2615,9 @@ const destroy = async () => {
             class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
         >
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-800">Cron jobs</h3>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-sm text-slate-500 [&_.font-mono]:break-all">
                         Run as <span class="font-mono">www-data</span>, from
                         <span class="font-mono">{{ site.root_path }}</span>.
                     </p>
@@ -2640,7 +2640,7 @@ const destroy = async () => {
                         <select
                             :value="presetFor(job)"
                             @change="pickPreset(job, $event.target.value)"
-                            class="w-56 rounded-xl border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            class="w-full rounded-xl sm:w-56 border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         >
                             <option
                                 v-for="entry in SCHEDULES"
@@ -2656,7 +2656,7 @@ const destroy = async () => {
                             v-model="job.command"
                             type="text"
                             placeholder="php artisan schedule:run"
-                            class="min-w-0 flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                            class="min-w-[12rem] flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
                         />
 
                         <button
@@ -2686,7 +2686,7 @@ const destroy = async () => {
                                 @input="setField(job, position, $event.target.value)"
                                 type="text"
                                 placeholder="*"
-                                class="mt-1 w-24 rounded-xl border-slate-300 text-center font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                                class="mt-1 w-16 rounded-xl border-slate-300 text-center font-mono sm:w-24 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
                             />
                         </div>
 
@@ -2730,8 +2730,8 @@ const destroy = async () => {
             @dragleave.prevent="dragging = false"
             @drop.prevent="onDrop"
         >
-            <div class="shrink-0 border-b border-slate-200 bg-slate-50/80 px-5 py-3">
-                <nav class="flex flex-wrap items-center gap-1 text-sm text-slate-500">
+            <div class="shrink-0 border-b border-slate-200 bg-slate-50/80 px-3 py-3 sm:px-5">
+                <nav class="flex flex-wrap items-center gap-1 break-all text-sm text-slate-500">
                     <template v-for="(crumb, index) in crumbs" :key="crumb.path">
                         <span v-if="index" class="text-slate-300">›</span>
                         <button
@@ -2868,10 +2868,10 @@ const destroy = async () => {
                             <tr
                                 class="border-b border-slate-200 text-left text-xs font-medium text-slate-500"
                             >
-                                <th class="px-5 py-2 font-medium">Name</th>
+                                <th class="px-3 py-2 font-medium sm:px-5">Name</th>
                                 <th class="w-28 px-3 py-2 font-medium">Size</th>
-                                <th class="w-44 px-3 py-2 font-medium">Date modified</th>
-                                <th class="w-32 px-5 py-2 font-medium">Permissions</th>
+                                <th class="hidden w-44 px-3 py-2 font-medium md:table-cell">Date modified</th>
+                                <th class="hidden w-32 px-5 py-2 font-medium sm:table-cell">Permissions</th>
                             </tr>
                         </thead>
                     <tbody>
@@ -2899,7 +2899,7 @@ const destroy = async () => {
                                       : 'hover:bg-slate-100'
                             "
                         >
-                            <td class="px-5 py-1.5">
+                            <td class="px-3 py-1.5 sm:px-5">
                                 <span class="flex items-center gap-2">
                                     <FileIcon
                                         :name="entry.name"
@@ -2917,13 +2917,13 @@ const destroy = async () => {
                                 {{ entry.directory ? '—' : humanSize(entry.size) }}
                             </td>
                             <td
-                                class="whitespace-nowrap px-3 py-1.5"
+                                class="hidden whitespace-nowrap px-3 py-1.5 md:table-cell"
                                 :class="isSelected(entry) ? 'text-white/80' : 'text-slate-500'"
                             >
                                 {{ entry.modified }}
                             </td>
                             <td
-                                class="whitespace-nowrap px-5 py-1.5 font-mono text-xs"
+                                class="hidden whitespace-nowrap px-5 py-1.5 font-mono text-xs sm:table-cell"
                                 :class="isSelected(entry) ? 'text-white/80' : 'text-slate-400'"
                             >
                                 {{ entry.mode }}
@@ -2962,11 +2962,11 @@ const destroy = async () => {
         <!-- The editor, for the text files a site is actually configured by. -->
         <div
             v-if="editing"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-2 sm:p-4"
             @click.self="editing = null"
         >
             <div
-                class="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/10"
+                class="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-4 shadow-xl ring-1 ring-slate-900/10 sm:max-h-[85vh] sm:p-6"
             >
                 <div class="flex items-start justify-between gap-4">
                     <h3 class="break-all font-mono text-sm font-medium text-slate-800">
@@ -2974,7 +2974,7 @@ const destroy = async () => {
                     </h3>
                     <button
                         @click="editing = null"
-                        class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                        class="-m-1 shrink-0 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                         aria-label="Close"
                     >
                         ✕
@@ -2994,7 +2994,7 @@ const destroy = async () => {
                     <textarea
                         v-model="editing.contents"
                         spellcheck="false"
-                        class="mt-4 min-h-[50vh] flex-1 rounded-xl border-slate-300 font-mono text-xs shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        class="mt-4 min-h-[40vh] flex-1 rounded-xl sm:min-h-[50vh] border-slate-300 font-mono text-xs shadow-sm focus:border-brand-500 focus:ring-brand-500"
                     />
                     <div class="mt-4 flex items-center justify-end gap-2">
                         <button
@@ -3119,7 +3119,7 @@ const destroy = async () => {
                                 <p class="text-sm font-medium text-slate-800">
                                     {{ log.action }}
                                 </p>
-                                <p class="text-xs text-slate-500">
+                                <p class="break-words text-xs text-slate-500">
                                     {{ log.message }}
                                 </p>
                             </div>

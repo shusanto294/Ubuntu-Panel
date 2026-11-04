@@ -118,29 +118,23 @@ func TestWebLoginFilter(t *testing.T) {
 }
 
 func TestWebScanFilter(t *testing.T) {
-	expressions := failRegexes(t, webScanFilterFile)
+	expressions := failRegexes(t, webScanFilterFile(DefaultScanPaths))
 
 	cases := map[string]string{
-		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 162 "-" "zgrab"`:                                         "203.0.113.9",
 		`203.0.113.9 - - [] "GET /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php HTTP/1.1" 404 1 "-" "x"`: "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.git/config HTTP/1.1" 403 1 "-" "x"`:                                        "203.0.113.9",
 		`203.0.113.9 - - [] "GET /static/../../etc/passwd HTTP/1.1" 400 1 "-" "x"`:                            "203.0.113.9",
 		`203.0.113.9 - - [] "GET /.well-known/acme-challenge/abc HTTP/1.1" 200 1 "-" "x"`:                     "",
 		`203.0.113.9 - - [] "GET /blog/environment-tips/ HTTP/1.1" 404 1 "-" "x"`:                             "",
-		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 200 1 "-" "x"`:                                               "", // a file it has
+		`203.0.113.9 - - [] "GET /.svn/entries HTTP/1.1" 200 1 "-" "x"`:                                       "", // a file it has
+		`203.0.113.9 - - [] "GET /.svn/entries HTTP/1.1" 404 1 "-" "x"`:                                       "203.0.113.9",
+		`203.0.113.9 - - [] "GET /cgi-bin/luci HTTP/1.1" 304 1 "-" "x"`:                                       "", // a browser's cached copy
+		`203.0.113.9 - - [] "GET /%2e%2e%2fetc/passwd HTTP/1.1" 400 1 "-" "x"`:                                "203.0.113.9",
+		`203.0.113.9 - - [] "GET /HNAP1/ HTTP/1.1" 404 1 "-" "x"`:                                             "203.0.113.9",
 		`203.0.113.9 - - [] "GET /%2e%2e/etc/passwd HTTP/1.1" 400 1 "-" "x"`:                                  "203.0.113.9",
 
-		// Encoded to slip past the plain patterns.
-		`203.0.113.9 - - [] "GET /%2eenv HTTP/1.1" 404 1 "-" "x"`:                  "203.0.113.9",
-		`203.0.113.9 - - [] "GET /%2f%2eaws%2fcredentials HTTP/1.1" 404 1 "-" "x"`: "203.0.113.9",
-		`203.0.113.9 - - [] "GET /%2fbackend%2f%2eenv HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.docker/config.json HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.git-credentials HTTP/1.1" 404 1 "-" "x"`:        "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.env.bak?x=1 HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
-		`203.0.113.9 - - [] "GET /actuator/env HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
+		`203.0.113.9 - - [] "GET /actuator/env HTTP/1.1" 404 1 "-" "x"`: "203.0.113.9",
 
 		// http:// on the bare IP is answered with a redirect it never follows.
-		`203.0.113.9 - - [] "GET /website/.env HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`:         "203.0.113.9",
 		`203.0.113.9 - - [] "GET /wp-content/mysql.sql HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`: "203.0.113.9",
 		`203.0.113.9 - - [] "GET /wp-content/debug.log HTTP/1.1" 301 162 "-" "TLM-Audit-Scanner/2.0"`: "203.0.113.9",
 		`203.0.113.9 - - [] "GET /blog/sql-tips/ HTTP/1.1" 301 162 "-" "Mozilla"`:                     "",
@@ -306,16 +300,25 @@ func TestScanJailReadsTheBareIPLog(t *testing.T) {
 }
 
 func TestWebSecretFilter(t *testing.T) {
-	expressions := failRegexes(t, webSecretFilterFile)
+	expressions := failRegexes(t, webSecretFilterFile(DefaultSecretPaths))
 
 	cases := map[string]string{
-		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "x"`:                        "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 200 1 "-" "x"`:                        "203.0.113.9", // served is still asked
-		`203.0.113.9 - - [] "GET /website/.env HTTP/1.1" 301 1 "-" "x"`:                "203.0.113.9",
-		`203.0.113.9 - - [] "GET /%2f%2eaws%2fcredentials HTTP/1.1" 301 1 "-" "x"`:     "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.git/config HTTP/1.1" 403 1 "-" "x"`:                 "203.0.113.9",
-		`203.0.113.9 - - [] "GET /wp-config.php.bak HTTP/1.1" 404 1 "-" "x"`:           "203.0.113.9",
-		`203.0.113.9 - - [] "GET /.github/funding.yml HTTP/1.1" 404 1 "-" "x"`:         "",
+		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "x"`:                    "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 200 1 "-" "x"`:                    "203.0.113.9", // served is still asked
+		`203.0.113.9 - - [] "GET /website/.env HTTP/1.1" 301 1 "-" "x"`:            "203.0.113.9",
+		`203.0.113.9 - - [] "GET /%2f%2eaws%2fcredentials HTTP/1.1" 301 1 "-" "x"`: "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.git/config HTTP/1.1" 403 1 "-" "x"`:             "203.0.113.9",
+		`203.0.113.9 - - [] "GET /wp-config.php.bak HTTP/1.1" 404 1 "-" "x"`:       "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.github/funding.yml HTTP/1.1" 404 1 "-" "x"`:     "",
+		`203.0.113.9 - - [] "GET /%2eenv HTTP/1.1" 404 1 "-" "x"`:                  "203.0.113.9",
+		`203.0.113.9 - - [] "GET /%2fbackend%2f%2eenv HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.docker/config.json HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.git-credentials HTTP/1.1" 404 1 "-" "x"`:        "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.env.bak?x=1 HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.ENV HTTP/1.1" 404 1 "-" "x"`:                    "203.0.113.9",
+		// A dot before "env" that is not a dotfile is a real file.
+		`198.51.100.4 - - [] "GET /static/main.env.js HTTP/1.1" 200 1 "-" "Mozilla"`:   "",
+		`198.51.100.4 - - [] "GET /docs/process.environment HTTP/1.1" 200 1 "-" "x"`:   "",
 		`198.51.100.4 - - [] "GET /sites/3/files?path=.env HTTP/1.1" 200 1 "-" "x"`:    "",
 		`198.51.100.4 - - [] "GET /blog/environment/ HTTP/1.1" 200 1 "-" "Mozilla"`:    "",
 		`198.51.100.4 - - [] "GET /wp-content/themes/x/app.js HTTP/1.1" 200 1 "-" "x"`: "",
@@ -344,7 +347,7 @@ func TestSecretJailRunsWithTheScanner(t *testing.T) {
 }
 
 func TestScanFilterMissingFiles(t *testing.T) {
-	fail, ignore := failRegexes(t, webScanFilterFile), ignoreRegexes(t, webScanFilterFile)
+	fail, ignore := failRegexes(t, webScanFilterFile(DefaultScanPaths)), ignoreRegexes(t, webScanFilterFile(DefaultScanPaths))
 	if len(ignore) != 5 {
 		t.Fatalf("want 5 ignoreregex lines, got %d", len(ignore))
 	}
@@ -355,6 +358,7 @@ func TestScanFilterMissingFiles(t *testing.T) {
 		`203.0.113.9 - - [] "GET /old-page.php HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                         "",
 		`203.0.113.9 - - [] "GET /index.php HTTP/1.1" 200 1 "-" "Mozilla/5.0"`:                            "",
 		`203.0.113.9 - - [] "GET /robots.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                           "",
+		`203.0.113.9 - - [] "POST /Autodiscover/Autodiscover.xml HTTP/1.1" 404 1 "-" "Microsoft Office"`:  "",
 		`203.0.113.9 - - [] "GET /ads.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                              "",
 		`203.0.113.9 - - [] "GET /sitemap_index.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                    "",
 		`203.0.113.9 - - [] "GET /blog/feed/atom.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                   "",
@@ -368,15 +372,24 @@ func TestScanFilterMissingFiles(t *testing.T) {
 		}
 	}
 
-	// The secret-file and vulnerable-file lines are never ignored, whatever
-	// the bot says it is.
-	if got := banned(fail, ignore, `203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "Googlebot"`); got == "" {
+	// A useful bot following a link to an odd path is not a scanner…
+	if got := banned(fail, ignore, `66.249.66.1 - - [] "GET /vendor/phpunit/x HTTP/1.1" 404 1 "-" "Mozilla/5.0 (compatible; GPTBot/1.2)"`); got != "" {
+		t.Error("a crawler following a dead link should not count")
+	}
+
+	// …but whatever the bot says it is, asking for .env is: the secret jail
+	// has no ignoreregex.
+	secret := failRegexes(t, webSecretFilterFile(DefaultSecretPaths))
+	if ignoreRegexes(t, webSecretFilterFile(DefaultSecretPaths)) != nil {
+		t.Error("the secret jail must not ignore anything")
+	}
+	if matches(secret, `203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "Googlebot"`) == "" {
 		t.Error("a Googlebot asking for .env is a scanner")
 	}
 }
 
 func TestInstallerIsASecret(t *testing.T) {
-	fail := failRegexes(t, webSecretFilterFile)
+	fail := failRegexes(t, webSecretFilterFile(DefaultSecretPaths))
 	for _, line := range []string{
 		`203.0.113.9 - - [] "GET /wp-admin/install.php?step=1 HTTP/1.1" 200 1 "http://tulibuilderonline.com/wp-admin/install.php?step=1" "x"`,
 		`203.0.113.9 - - [] "GET /wp-admin/install.php HTTP/1.1" 301 1 "-" "x"`,

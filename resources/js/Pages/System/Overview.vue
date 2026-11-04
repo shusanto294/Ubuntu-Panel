@@ -41,8 +41,8 @@ useLiveRefresh(busy, [
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 class="text-xl font-semibold text-slate-800">
+                <div class="min-w-0">
+                    <h2 class="break-all text-xl font-semibold text-slate-800">
                         {{ system.hostname }}
                     </h2>
                     <p class="font-mono text-sm text-slate-500">
@@ -238,14 +238,14 @@ useLiveRefresh(busy, [
                     <li
                         v-for="site in sites"
                         :key="site.id"
-                        class="flex items-center justify-between px-5 py-3"
+                        class="flex items-center justify-between gap-3 px-5 py-3"
                     >
                         <Link
                             :href="route('sites.show', site.id)"
-                            class="font-medium text-slate-800 hover:text-brand-600"
+                            class="min-w-0 break-all font-medium text-slate-800 hover:text-brand-600"
                             >{{ site.domain }}</Link
                         >
-                        <span class="flex items-center gap-3">
+                        <span class="flex shrink-0 items-center gap-3">
                             <span class="text-xs text-slate-500">{{
                                 site.type_label
                             }}</span>

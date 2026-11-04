@@ -204,8 +204,8 @@ const copy = async () => {
         :class="available ? 'border-brand-300' : 'border-slate-200'"
     >
         <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-                <div class="flex items-center gap-2">
+            <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
                     <p class="text-sm font-semibold text-slate-700">Panel version</p>
                     <span
                         v-if="available"
@@ -311,7 +311,7 @@ const copy = async () => {
                 <div
                     class="mt-2 flex items-center justify-between gap-3 rounded-md bg-slate-900 px-3 py-2"
                 >
-                    <code class="truncate font-mono text-xs text-slate-100">{{ command }}</code>
+                    <code class="min-w-0 truncate font-mono text-xs text-slate-100">{{ command }}</code>
                     <button
                         @click="copy"
                         class="shrink-0 text-xs text-slate-400 transition hover:text-white"
@@ -324,7 +324,7 @@ const copy = async () => {
 
         <!-- Automatic updates. Off unless somebody turns them on. -->
         <div class="mt-4 flex items-start justify-between gap-4 border-t border-slate-100 pt-4">
-            <div>
+            <div class="min-w-0">
                 <p class="text-sm font-medium text-slate-700">Update automatically</p>
                 <p class="mt-0.5 text-xs text-slate-500">
                     The panel checks for a new release every few hours. With this on, it

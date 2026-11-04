@@ -228,41 +228,8 @@ func verifyBot(ctx context.Context, ip string, bot *weblog.GoodBot) botCheck {
 }
 
 func checkBotDNS(ctx context.Context, ip string, domains []string) botCheck {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-
-	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
-	if err != nil || len(names) == 0 {
-		return botCheck{}
-	}
-
-	for _, name := range names {
-		host := strings.TrimSuffix(name, ".")
-
-		matched := false
-		for _, domain := range domains {
-			if strings.HasSuffix(host, domain) {
-				matched = true
-			}
-		}
-		if !matched {
-			continue
-		}
-
-		// Forward-confirmed: anybody can set a reverse record that says
-		// googlebot.com, nobody but Google can make that name resolve back.
-		addresses, err := net.DefaultResolver.LookupHost(ctx, host)
-		if err != nil {
-			continue
-		}
-		for _, address := range addresses {
-			if net.ParseIP(address).Equal(net.ParseIP(ip)) {
-				return botCheck{Verified: true, Host: host}
-			}
-		}
-	}
-
-	return botCheck{Host: strings.TrimSuffix(names[0], ".")}
+	host, verified := weblog.CheckDNS(ctx, ip, domains)
+	return botCheck{Verified: verified, Host: host}
 }
 
 // ------------------------------------------------------------------ pages

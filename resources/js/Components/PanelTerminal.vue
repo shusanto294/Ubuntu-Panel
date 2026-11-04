@@ -251,11 +251,11 @@ watch(
         <div
             class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-2.5"
         >
-            <div class="flex items-center gap-2">
-                <span class="h-3 w-3 rounded-full bg-rose-500/70" />
-                <span class="h-3 w-3 rounded-full bg-amber-500/70" />
-                <span class="h-3 w-3 rounded-full bg-emerald-500/70" />
-                <span class="ml-2 font-mono text-xs text-slate-400">
+            <div class="flex min-w-0 items-center gap-2">
+                <span class="h-3 w-3 shrink-0 rounded-full bg-rose-500/70" />
+                <span class="h-3 w-3 shrink-0 rounded-full bg-amber-500/70" />
+                <span class="h-3 w-3 shrink-0 rounded-full bg-emerald-500/70" />
+                <span class="ml-2 min-w-0 truncate font-mono text-xs text-slate-400">
                     {{ title }}
                 </span>
             </div>
@@ -293,21 +293,21 @@ watch(
                 <button
                     v-if="state === 'connected'"
                     @click="disconnect"
-                    class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+                    class="rounded border border-slate-700 px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 sm:px-2 sm:py-0.5"
                 >
                     Disconnect
                 </button>
                 <button
                     v-else
                     @click="reconnect"
-                    class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+                    class="rounded border border-slate-700 px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 sm:px-2 sm:py-0.5"
                 >
                     {{ state === 'connecting' ? 'Reconnect' : 'Connect' }}
                 </button>
             </div>
         </div>
 
-        <div ref="screen" class="h-[28rem] px-3 py-2" />
+        <div ref="screen" class="h-[24rem] min-w-0 px-2 py-2 sm:h-[28rem] sm:px-3" />
     </div>
 </template>
 

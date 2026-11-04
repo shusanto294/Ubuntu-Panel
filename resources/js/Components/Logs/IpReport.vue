@@ -150,7 +150,7 @@ const statusClass = (status) =>
                 </div>
                 <div>
                     <dt class="text-xs text-slate-500">Responses</dt>
-                    <dd class="text-slate-900">
+                    <dd class="break-words text-slate-900">
                         <span v-for="(count, cls) in r.statuses" :key="cls" class="mr-2">{{ cls }} {{ count }}</span>
                         <span v-if="!Object.keys(r.statuses).length">—</span>
                     </dd>
@@ -168,8 +168,8 @@ const statusClass = (status) =>
                 <h4 class="text-sm font-semibold text-slate-900">Sites it asked</h4>
                 <ul class="mt-2 space-y-1 text-sm">
                     <li v-for="s in r.sites" :key="s.name" class="flex justify-between gap-2">
-                        <span class="truncate text-slate-700">{{ s.name }}</span>
-                        <span class="text-slate-500">{{ s.count }}</span>
+                        <span class="min-w-0 truncate text-slate-700">{{ s.name }}</span>
+                        <span class="shrink-0 text-slate-500">{{ s.count }}</span>
                     </li>
                 </ul>
             </div>
@@ -177,7 +177,7 @@ const statusClass = (status) =>
                 <h4 class="text-sm font-semibold text-slate-900">What it asked for most</h4>
                 <ul class="mt-2 space-y-1 text-xs">
                     <li v-for="p in r.paths.slice(0, 10)" :key="p.name" class="flex justify-between gap-2">
-                        <span class="truncate font-mono text-slate-700" :title="p.name">{{ p.name }}</span>
+                        <span class="min-w-0 truncate font-mono text-slate-700" :title="p.name">{{ p.name }}</span>
                         <span class="shrink-0 text-slate-500">{{ p.count }}</span>
                     </li>
                 </ul>
@@ -214,7 +214,7 @@ const statusClass = (status) =>
                         <tr v-for="(line, i) in linePages.visible.value" :key="i" class="align-top">
                             <td class="whitespace-nowrap px-4 py-2 text-slate-500" :title="formatStamp(line.at)">{{ formatRelative(line.at) }}</td>
                             <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ line.site }}</td>
-                            <td class="max-w-xl px-4 py-2">
+                            <td class="min-w-[14rem] max-w-xl px-4 py-2">
                                 <span class="break-all font-mono text-slate-900">{{ line.method }} {{ line.path }}</span>
                                 <span v-if="line.threat" class="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
                                     {{ THREAT[line.threat] ?? line.threat }}
@@ -239,8 +239,8 @@ const statusClass = (status) =>
                 <p class="text-xs text-slate-500">The last 30 days: bans, sign-ins, SSH, errors.</p>
             </div>
             <ul class="mt-3 divide-y divide-slate-100 text-sm">
-                <li v-for="(entry, i) in r.events" :key="i" class="flex gap-4 px-5 py-2.5">
-                    <span class="w-28 shrink-0 text-xs text-slate-500">
+                <li v-for="(entry, i) in r.events" :key="i" class="flex gap-3 px-5 py-2.5 sm:gap-4">
+                    <span class="w-20 shrink-0 text-xs text-slate-500 sm:w-28">
                         {{ formatRelative(entry.event?.created_at ?? entry.login?.created_at ?? entry.ssh?.created_at ?? entry.task?.created_at) }}
                     </span>
                     <span class="min-w-0 break-all text-xs">

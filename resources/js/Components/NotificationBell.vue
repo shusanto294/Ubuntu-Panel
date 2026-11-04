@@ -84,7 +84,7 @@ const DOT = {
 </script>
 
 <template>
-    <div ref="root" class="relative">
+    <div ref="root" class="sm:relative">
         <button
             type="button"
             class="relative inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm ring-1 ring-slate-900/5 transition hover:text-slate-900"
@@ -108,7 +108,7 @@ const DOT = {
 
         <div
             v-if="open"
-            class="absolute right-0 z-40 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10"
+            class="absolute inset-x-4 top-full z-40 mt-1 overflow-hidden sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[calc(100vw-2rem)] rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10"
         >
             <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <p class="text-sm font-semibold text-slate-900">Notifications</p>

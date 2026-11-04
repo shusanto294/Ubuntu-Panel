@@ -221,7 +221,8 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
 
             <div :class="card" class="lg:col-span-2">
                 <h3 class="font-semibold text-slate-900">Who is trying hardest</h3>
-                <table class="mt-3 w-full text-sm">
+                <div class="mt-3 overflow-x-auto">
+                <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
                             <th class="py-1">Address</th>
@@ -236,7 +237,7 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                             <td class="py-2"><IpAddress :ip="attacker.ip" /></td>
                             <td class="py-2">{{ attacker.attempts }}</td>
                             <td class="hidden py-2 text-slate-500 sm:table-cell">{{ (attacker.users ?? []).join(', ') }}</td>
-                            <td class="py-2 text-slate-500">{{ ago(attacker.last_seen) }}</td>
+                            <td class="whitespace-nowrap py-2 text-slate-500">{{ ago(attacker.last_seen) }}</td>
                             <td class="py-2 text-right">
                                 <span v-if="banned.has(attacker.ip)" class="inline-flex items-center gap-2">
                                     <span class="text-xs font-medium text-rose-600">Banned</span>
@@ -254,29 +255,30 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                         </tr>
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
 
         <div :class="card" class="!p-0">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-                <div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-900">SSH login attempts</h3>
                     <p class="text-sm text-slate-500">From sshd's own log, newest first.</p>
                 </div>
-                <div class="flex gap-2">
-                    <input v-model="search" type="text" placeholder="Filter by IP or user" class="rounded-lg border-slate-300 text-sm shadow-sm" />
-                    <select v-model="filter" class="rounded-lg border-slate-300 text-sm shadow-sm">
+                <div class="flex w-full flex-wrap gap-2 sm:w-auto">
+                    <input v-model="search" type="text" placeholder="Filter by IP or user" class="min-w-0 flex-1 rounded-lg border-slate-300 text-sm shadow-sm sm:flex-none" />
+                    <select v-model="filter" class="min-w-0 rounded-lg border-slate-300 text-sm shadow-sm">
                         <option value="all">All</option>
                         <option value="failed">Failures</option>
                         <option value="accepted">Logins</option>
                     </select>
                 </div>
             </div>
-            <div>
+            <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
-                            <th class="px-6 py-2">Time</th>
+                            <th class="px-4 py-2 sm:px-6">Time</th>
                             <th class="px-2 py-2">Result</th>
                             <th class="px-2 py-2">User</th>
                             <th class="px-2 py-2">Address</th>
@@ -285,13 +287,13 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="(event, index) in visibleEvents" :key="`${page}-${index}`">
-                            <td class="whitespace-nowrap px-6 py-2 text-slate-500">{{ when(event.time) }}</td>
+                            <td class="whitespace-nowrap px-4 py-2 text-slate-500 sm:px-6">{{ when(event.time) }}</td>
                             <td class="px-2 py-2">
-                                <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="kindStyle[event.kind]">
+                                <span class="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" :class="kindStyle[event.kind]">
                                     {{ kindLabel[event.kind] }}
                                 </span>
                             </td>
-                            <td class="px-2 py-2 font-mono">{{ event.user || '—' }}</td>
+                            <td class="break-all px-2 py-2 font-mono">{{ event.user || '—' }}</td>
                             <td class="px-2 py-2">
                                 <IpAddress :ip="event.ip" />
                                 <span v-if="banned.has(event.ip)" class="ml-1 text-xs text-rose-600">banned</span>

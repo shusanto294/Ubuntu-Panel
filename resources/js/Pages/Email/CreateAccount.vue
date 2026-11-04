@@ -52,11 +52,11 @@ const submit = () => form.post(route('email.accounts.store', props.domain.id));
                     <TextInput
                         id="local_part"
                         v-model="form.local_part"
-                        class="block w-full rounded-r-none"
+                        class="block w-full min-w-0 rounded-r-none"
                         placeholder="info"
                     />
                     <span
-                        class="rounded-r-lg border border-l-0 border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                        class="max-w-[60%] shrink-0 truncate rounded-r-lg border border-l-0 border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500"
                         >@{{ domain.domain }}</span
                     >
                 </div>

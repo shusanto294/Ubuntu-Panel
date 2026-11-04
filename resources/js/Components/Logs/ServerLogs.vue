@@ -91,7 +91,7 @@ const shown = computed(() => (props.serverLog?.contents ? props.serverLog.conten
             class="flex flex-wrap items-end gap-3 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
             @submit.prevent="load()"
         >
-            <label class="block min-w-[16rem] flex-1 text-sm">
+            <label class="block min-w-[12rem] flex-1 text-sm sm:min-w-[16rem]">
                 <span class="text-xs font-medium text-slate-700">Log file</span>
                 <select v-model="source" class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm" @change="load()">
                     <optgroup v-for="[group, logs] in groups" :key="group" :label="group">
@@ -101,7 +101,7 @@ const shown = computed(() => (props.serverLog?.contents ? props.serverLog.conten
                     </optgroup>
                 </select>
             </label>
-            <label class="block min-w-[14rem] flex-1 text-sm">
+            <label class="block min-w-[12rem] flex-1 text-sm sm:min-w-[14rem]">
                 <span class="text-xs font-medium text-slate-700">Only lines containing</span>
                 <input
                     v-model="query"
@@ -135,11 +135,11 @@ const shown = computed(() => (props.serverLog?.contents ? props.serverLog.conten
         <div v-else-if="serverLog" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div class="flex flex-wrap items-center justify-between gap-2 p-5">
                 <div class="min-w-0">
-                    <p class="font-medium text-slate-900">{{ serverLog.group }} · {{ serverLog.label }}</p>
+                    <p class="break-words font-medium text-slate-900">{{ serverLog.group }} · {{ serverLog.label }}</p>
                     <p class="break-all font-mono text-xs text-slate-500">{{ serverLog.path }} · {{ size(serverLog.size) }}</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                    <span v-if="search">
+                    <span v-if="search" class="break-all">
                         {{ pagination.total.toLocaleString() }} lines match “{{ search }}”
                         <button type="button" class="ml-1 font-medium text-brand-600 hover:underline" @click="clearSearch">Clear</button>
                     </span>

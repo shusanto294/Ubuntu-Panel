@@ -134,7 +134,7 @@ const tiles = computed(() => [
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div class="min-w-0">
                     <h2 class="text-xl font-semibold text-slate-900">Security</h2>
                     <p class="text-sm text-slate-500">
                         You are connected from
@@ -188,8 +188,8 @@ const tiles = computed(() => [
         <!-- Overview -->
         <div v-if="tab === 'overview'" class="space-y-6">
             <div class="grid gap-6 lg:grid-cols-3">
-                <div :class="card" class="flex items-center gap-6">
-                    <svg viewBox="0 0 36 36" class="h-28 w-28 shrink-0 -rotate-90">
+                <div :class="card" class="flex items-center gap-4 sm:gap-6">
+                    <svg viewBox="0 0 36 36" class="h-24 w-24 shrink-0 -rotate-90 sm:h-28 sm:w-28">
                         <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e2e8f0" stroke-width="3" />
                         <circle
                             cx="18"
@@ -217,7 +217,7 @@ const tiles = computed(() => [
                         :key="tile.label"
                         type="button"
                         :class="card"
-                        class="!p-5 text-left transition hover:shadow-md"
+                        class="min-w-0 break-words !p-4 text-left transition hover:shadow-md sm:!p-5"
                         @click="tab = tile.tab"
                     >
                         <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -230,7 +230,7 @@ const tiles = computed(() => [
             </div>
 
             <div :class="card" class="!p-0">
-                <div class="border-b border-slate-100 px-6 py-4">
+                <div class="border-b border-slate-100 px-4 py-4 sm:px-6">
                     <h3 class="font-semibold text-slate-900">Checklist</h3>
                     <p class="text-sm text-slate-500">
                         What protects this server, and what is still open.
@@ -240,7 +240,7 @@ const tiles = computed(() => [
                     <li
                         v-for="item in checks"
                         :key="item.key"
-                        class="flex flex-wrap items-center gap-4 px-6 py-4"
+                        class="flex flex-wrap items-center gap-3 px-4 py-4 sm:gap-4 sm:px-6"
                     >
                         <span
                             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold"

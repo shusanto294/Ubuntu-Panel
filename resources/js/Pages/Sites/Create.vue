@@ -247,9 +247,9 @@ const submit = () => form.post(route('sites.store'));
                                 type="checkbox"
                                 class="mt-0.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
                             />
-                            <span class="text-sm text-slate-700">
+                            <span class="min-w-0 text-sm text-slate-700">
                                 Also answer on
-                                <span class="font-mono">www.{{ form.domain.trim().toLowerCase() }}</span>
+                                <span class="break-all font-mono">www.{{ form.domain.trim().toLowerCase() }}</span>
                                 <span class="mt-0.5 block text-xs text-slate-500">
                                     The record is published with the domain's
                                     and the certificate covers both. Unticked,
@@ -280,13 +280,13 @@ const submit = () => form.post(route('sites.store'));
                             <span
                                 v-for="alias in form.aliases"
                                 :key="alias"
-                                class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                                class="inline-flex max-w-full items-center gap-1 break-all rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
                             >
                                 {{ alias }}
                                 <button
                                     type="button"
                                     @click="removeAlias(alias)"
-                                    class="text-slate-400 hover:text-rose-600"
+                                    class="-my-1 -me-1 px-1 py-1 text-slate-400 hover:text-rose-600"
                                 >
                                     ×
                                 </button>
@@ -492,7 +492,7 @@ const submit = () => form.post(route('sites.store'));
 
             <!-- DNS -->
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
-                <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center justify-between gap-3">
                     <h3 class="font-semibold text-slate-800">DNS</h3>
                     <label class="flex items-center gap-2">
                         <Checkbox

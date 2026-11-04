@@ -191,13 +191,13 @@ const destroy = async () => {
                     <dl class="mt-3 space-y-1 text-sm text-slate-600">
                         <div class="flex justify-between gap-3">
                             <dt>Username</dt>
-                            <dd class="break-all font-mono text-slate-800">
+                            <dd class="min-w-0 break-all text-right font-mono text-slate-800">
                                 {{ mailbox.address }}
                             </dd>
                         </div>
                         <div class="flex justify-between gap-3">
                             <dt>IMAP</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                                 {{ domain.client_settings.imap.host }}:{{
                                     domain.client_settings.imap.port
                                 }}
@@ -206,7 +206,7 @@ const destroy = async () => {
                         </div>
                         <div class="flex justify-between gap-3">
                             <dt>SMTP</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                                 {{ domain.client_settings.smtp.host }}:{{
                                     domain.client_settings.smtp.port
                                 }}
@@ -215,7 +215,7 @@ const destroy = async () => {
                         </div>
                         <div class="flex justify-between gap-3">
                             <dt>or</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="min-w-0 break-words text-right font-mono text-slate-800">
                                 {{ domain.client_settings.smtp_ssl.port }} ({{
                                     domain.client_settings.smtp_ssl.security
                                 }})

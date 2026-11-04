@@ -22,7 +22,7 @@ const tabs = [
 
 <template>
     <div class="mb-6 border-b border-slate-200">
-        <nav class="-mb-px flex flex-wrap gap-6" aria-label="Sections">
+        <nav class="-mb-px flex gap-6 overflow-x-auto whitespace-nowrap" aria-label="Sections">
             <Link
                 v-for="tab in tabs"
                 :key="tab.key"

@@ -1,6 +1,11 @@
 package weblog
 
-import "strings"
+import (
+	"context"
+	"net"
+	"strings"
+	"time"
+)
 
 // Useful bots: the crawlers that put the sites in search engines and AI
 // answers, the previews a link gets when it is shared, and the monitors
@@ -50,6 +55,18 @@ var goodBots = []struct {
 	{"petalbot", GoodBot{"Petal Search", "search", []string{".petalsearch.com", ".aspiegel.com"}}},
 	{"qwantify", GoodBot{"Qwant", "search", nil}},
 	{"ecosia", GoodBot{"Ecosia", "search", nil}},
+	{"feedfetcher-google", GoodBot{"Google feeds", "search", []string{".googlebot.com", ".google.com"}}},
+	{"google-read-aloud", GoodBot{"Google Read Aloud", "search", []string{".google.com", ".googleusercontent.com"}}},
+	{"google-site-verification", GoodBot{"Google Search Console", "search", []string{".google.com"}}},
+	{"apis-google", GoodBot{"Google", "search", []string{".googlebot.com", ".google.com"}}},
+	{"slurp", GoodBot{"Yahoo", "search", []string{".crawl.yahoo.net"}}},
+	{"mojeekbot", GoodBot{"Mojeek", "search", nil}},
+	{"sogou", GoodBot{"Sogou", "search", nil}},
+	{"coccocbot", GoodBot{"Cốc Cốc", "search", nil}},
+	{"ahrefsbot", GoodBot{"Ahrefs", "search", nil}},
+	{"semrushbot", GoodBot{"Semrush", "search", nil}},
+	{"archive.org_bot", GoodBot{"Internet Archive", "search", nil}},
+	{"ia_archiver", GoodBot{"Internet Archive", "search", nil}},
 
 	// AI assistants and their crawlers.
 	{"gptbot", GoodBot{"OpenAI GPTBot", "ai", nil}},
@@ -70,6 +87,11 @@ var goodBots = []struct {
 	{"youbot", GoodBot{"You.com", "ai", nil}},
 	{"ccbot", GoodBot{"Common Crawl", "ai", nil}},
 	{"duckassist", GoodBot{"DuckDuckGo AI", "ai", nil}},
+	{"google-cloudvertexbot", GoodBot{"Google Vertex AI", "ai", []string{".google.com", ".googlebot.com"}}},
+	{"gemini-deep-research", GoodBot{"Google Gemini", "ai", []string{".google.com", ".googlebot.com"}}},
+	{"mistralai", GoodBot{"Mistral", "ai", nil}},
+	{"ai2bot", GoodBot{"Ai2", "ai", nil}},
+	{"diffbot", GoodBot{"Diffbot", "ai", nil}},
 
 	// Link previews.
 	{"facebookexternalhit", GoodBot{"Facebook preview", "preview", nil}},
@@ -114,4 +136,70 @@ func FindGoodBot(agent string) *GoodBot {
 	}
 
 	return found
+}
+
+// GoodBotMarkers are what a useful bot's user agent contains, lower case, for
+// the protections that let them through by user agent.
+func GoodBotMarkers() []string {
+	markers := make([]string, 0, len(goodBots))
+	for _, bot := range goodBots {
+		markers = append(markers, bot.marker)
+	}
+	return markers
+}
+
+// CrawlerDomains are every domain a verifiable crawler's reverse DNS ends in.
+func CrawlerDomains() []string {
+	seen := map[string]bool{}
+	domains := []string{}
+	for _, bot := range goodBots {
+		for _, domain := range bot.bot.Domains {
+			if !seen[domain] {
+				seen[domain] = true
+				domains = append(domains, domain)
+			}
+		}
+	}
+	return domains
+}
+
+// CheckDNS is whether an address is a crawler of one of domains: its reverse
+// DNS ends in one, and that name resolves back to the address. Forward-
+// confirmed, because anybody can set a reverse record saying googlebot.com;
+// nobody but Google can make that name resolve back. host is the reverse name
+// found, verified or not.
+func CheckDNS(ctx context.Context, ip string, domains []string) (host string, verified bool) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+	if err != nil || len(names) == 0 {
+		return "", false
+	}
+
+	for _, name := range names {
+		candidate := strings.ToLower(strings.TrimSuffix(name, "."))
+
+		matched := false
+		for _, domain := range domains {
+			if strings.HasSuffix(candidate, domain) {
+				matched = true
+			}
+		}
+		if !matched {
+			continue
+		}
+
+		addresses, err := net.DefaultResolver.LookupHost(ctx, candidate)
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			if net.ParseIP(address).Equal(net.ParseIP(ip)) {
+				return candidate, true
+			}
+		}
+	}
+
+	return strings.TrimSuffix(names[0], "."), false
 }

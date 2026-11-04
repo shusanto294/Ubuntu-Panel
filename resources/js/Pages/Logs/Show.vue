@@ -20,8 +20,8 @@ const duration = computed(() =>
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 class="text-xl font-semibold text-slate-900">
+                <div class="min-w-0">
+                    <h2 class="break-words text-xl font-semibold text-slate-900">
                         {{ task?.action ?? 'Log' }}
                     </h2>
                     <p class="text-sm text-slate-500">

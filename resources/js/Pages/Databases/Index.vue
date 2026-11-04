@@ -174,11 +174,11 @@ const copy = async (text, which) => {
         -->
         <div
             v-if="compass"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/50 p-4"
             @click.self="closeCompass"
         >
             <div
-                class="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/10"
+                class="my-auto w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-900/10 sm:p-6"
             >
                 <div class="flex items-start justify-between gap-4">
                     <div>
@@ -193,7 +193,7 @@ const copy = async (text, which) => {
                     </div>
                     <button
                         @click="closeCompass"
-                        class="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                        class="-m-1 shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                         aria-label="Close"
                     >
                         ✕
@@ -240,25 +240,25 @@ const copy = async (text, which) => {
                     >
                         <div>
                             <dt class="text-slate-500">Host</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="break-all font-mono text-slate-800">
                                 {{ compass.host }}
                             </dd>
                         </div>
                         <div>
                             <dt class="text-slate-500">Port</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="break-all font-mono text-slate-800">
                                 {{ compass.port }}
                             </dd>
                         </div>
                         <div>
                             <dt class="text-slate-500">User</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="break-all font-mono text-slate-800">
                                 {{ compass.username }}
                             </dd>
                         </div>
                         <div>
                             <dt class="text-slate-500">Auth database</dt>
-                            <dd class="font-mono text-slate-800">
+                            <dd class="break-all font-mono text-slate-800">
                                 {{ compass.auth_db }}
                             </dd>
                         </div>
@@ -368,7 +368,7 @@ const copy = async (text, which) => {
                             class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                         >
                             <th class="px-5 py-3">Name</th>
-                            <th class="px-5 py-3">Engine</th>
+                            <th class="hidden px-5 py-3 sm:table-cell">Engine</th>
                             <th class="px-5 py-3">Status</th>
                             <th class="px-5 py-3"></th>
                         </tr>
@@ -376,7 +376,7 @@ const copy = async (text, which) => {
                     <tbody class="divide-y divide-slate-100 text-sm">
                         <template v-for="database in visibleDatabases" :key="database.id">
                             <tr>
-                                <td class="px-5 py-3">
+                                <td class="break-all px-5 py-3">
                                     <Link
                                         :href="route('databases.show', database.id)"
                                         class="font-medium text-slate-800 hover:text-brand-600 hover:underline"
@@ -392,7 +392,7 @@ const copy = async (text, which) => {
                                         >
                                     </p>
                                 </td>
-                                <td class="px-5 py-3 text-slate-600">
+                                <td class="hidden px-5 py-3 text-slate-600 sm:table-cell">
                                     {{ database.engine_label }}
                                 </td>
                                 <td class="px-5 py-3">

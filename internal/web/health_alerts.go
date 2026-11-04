@@ -217,7 +217,27 @@ func (a *App) autoBan(ips []weblog.IPStat) map[string]string {
 	var already map[string]security.JailStatus
 
 	for _, ip := range ips {
-		if !ip.Danger || ip.Trusted != "" || !security.ValidIP(ip.IP) {
+		if ip.Trusted != "" || !security.ValidIP(ip.IP) {
+			continue
+		}
+
+		// A bot saying it is a search engine that publishes its crawlers' DNS
+		// is asked: the real one is never banned, whatever it fetched — a
+		// banned Googlebot drops the sites from Google — and one only using
+		// the name is judged like anybody else.
+		// DNS is only asked when the answer matters.
+		if ip.GoodBot != nil {
+			if judged := weblog.Reassess(ip, 60); judged.Danger || ip.Danger {
+				if len(ip.GoodBot.Domains) > 0 && verifyBot(context.Background(), ip.IP, ip.GoodBot).Verified {
+					continue
+				}
+				if len(ip.GoodBot.Domains) > 0 {
+					ip = judged
+				}
+			}
+		}
+
+		if !ip.Danger {
 			continue
 		}
 

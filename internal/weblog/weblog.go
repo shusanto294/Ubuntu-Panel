@@ -13,9 +13,11 @@ package weblog
 import (
 	"net"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -156,18 +158,48 @@ var ThreatLabels = map[string]string{
 	ThreatSecret:  "Asking for secret files",
 }
 
-// secrets are files that hold passwords and keys — and that no visitor, no
-// search engine and no application ever asks a web server for. One request is
-// an attacker looking for a leak, whatever the answer was.
-var secrets = []string{
-	"/.env", "/.git/", "/.git-credentials", "/.gitconfig", "/.aws/", "/.ssh/", "/.docker/",
-	"/.htpasswd", "/.npmrc", "/.pgpass", "/wp-config.php.", "/wp-config.bak", "/wp-config.old",
-	"/wp-config.txt", "/wp-config.save", "/wp-config.orig", "/sftp-config.json",
+// The paths that mark a request as an attack are the scanner protection's
+// lists, which the owner edits on the Protection tab (security/paths.go):
+// secret paths, one request for which is an attacker whatever the answer, and
+// scanner paths, which count as probing when refused, missing or redirected.
+// The panel hands them over with SetPaths; until it does, the defaults apply.
+type pathRules struct {
+	secrets []*regexp.Regexp
+	probes  []*regexp.Regexp
+}
 
-	// WordPress's installer. The panel installs WordPress from the command
-	// line, so nobody opens these — except a bot hoping to find a WordPress
-	// nobody finished setting up, and take it over.
-	"/wp-admin/install.php", "/wp-admin/setup-config.php",
+var rules atomic.Pointer[pathRules]
+
+// SetPaths is the lists in force, each pattern already a regular expression
+// for a lower-case, percent-decoded path (security.PathPatternRegexp).
+func SetPaths(secrets, probes []string) {
+	compile := func(list []string) []*regexp.Regexp {
+		out := make([]*regexp.Regexp, 0, len(list))
+		for _, expression := range list {
+			if re, err := regexp.Compile(expression); err == nil {
+				out = append(out, re)
+			}
+		}
+		return out
+	}
+
+	rules.Store(&pathRules{secrets: compile(secrets), probes: compile(probes)})
+}
+
+func currentRules() *pathRules {
+	if r := rules.Load(); r != nil {
+		return r
+	}
+	SetPaths(patternRegexps(DefaultSecretPaths), patternRegexps(DefaultScanPaths))
+	return rules.Load()
+}
+
+func patternRegexps(patterns []string) []string {
+	out := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		out = append(out, PatternRegexp(p))
+	}
+	return out
 }
 
 // publicFiles are .txt and .xml files a site is asked for by search engines,
@@ -176,6 +208,8 @@ var secrets = []string{
 var publicFiles = []string{
 	"robots.txt", "ads.txt", "app-ads.txt", "security.txt", "humans.txt", "llms.txt", "llms-full.txt",
 	"crossdomain.xml", "browserconfig.xml", "bingsiteauth.xml", "opensearch.xml", "wlwmanifest.xml",
+	// Outlook asks every mail domain's website for this one.
+	"autodiscover.xml",
 }
 
 // MissingScript is whether a request for an .xml or .txt file that was not
@@ -224,8 +258,8 @@ func decodePath(path string) string {
 func IsSecret(path string) bool {
 	p := decodePath(strings.ToLower(path))
 
-	for _, secret := range secrets {
-		if strings.Contains(p, secret) {
+	for _, re := range currentRules().secrets {
+		if re.MatchString(p) {
 			return true
 		}
 	}
@@ -233,21 +267,17 @@ func IsSecret(path string) bool {
 	return false
 }
 
-// probes are paths nobody visits except something looking for a weakness:
-// leaked secrets, a forgotten admin tool, a known exploitable file.
+// probes are paths nobody visits except something looking for a weakness — a
+// forgotten admin tool, a known exploitable appliance — beyond the scanner
+// list the owner edits. Each is specific enough that a real page does not
+// contain it: no "/shell" that would catch /shellfish, no /admin.php or
+// /install.php that a real application might redirect to its login, no
+// /autodiscover, which Outlook asks every mail domain's website for.
 var probes = []string{
-	"/.env", "/.git", "/.aws", "/.ssh", "/.svn", "/.hg", "/.ds_store", "/.htpasswd",
-	"/wp-config.php.", "/wp-config.bak", "/wp-config.old", "/wp-config.txt",
-	"phpmyadmin", "/pma/", "/myadmin", "/adminer",
-	"/vendor/phpunit", "eval-stdin.php", "/cgi-bin/", "/boaform", "/hnap1",
-	"/shell", "/wso", "/c99", "/r57", "/alfa", "/xleet", "/webshell",
-	"/actuator", "/solr/", "/console/", "/jenkins", "/manager/html",
-	"/owa/", "/autodiscover", "/remote/login", "/geoserver",
-	"/server-status", "/telescope", "/_ignition", "/debug/default",
-	"/config.json", "/sftp-config.json", "/backup.sql", "/dump.sql", "/database.sql",
-	"/.well-known/security.txt.php", "/wp-content/plugins/wp-file-manager",
-	"/setup.php", "/install.php", "/xmlrpc.php.", "/info.php", "/phpinfo",
-	"/admin.php", "/system/", "/cdn-cgi/trace.php",
+	"/phpmyadmin", "/pma/", "/myadmin/", "/adminer.php",
+	"/webshell", "/jenkins/", "/owa/auth", "/remote/login", "/geoserver/",
+	"/debug/default", "/.well-known/security.txt.php", "/wp-content/plugins/wp-file-manager/",
+	"/xmlrpc.php.", "/cdn-cgi/trace.php", "/backup.sql", "/dump.sql", "/database.sql",
 }
 
 // Threat classifies a request as one of the kinds above, or "" for one that
@@ -275,11 +305,17 @@ func Threat(entry Entry) string {
 	}
 
 	// 3xx as well: a scanner sweeping http:// is answered with a redirect to
-	// https:// it never follows.
-	if entry.Status == 0 || entry.Status >= 300 {
+	// https:// it never follows. Not 304, which is a browser checking a copy
+	// of a file it already has.
+	if entry.Status == 0 || entry.Status >= 300 && entry.Status != 304 {
 		p = decodePath(p)
 		for _, probe := range probes {
 			if strings.Contains(p, probe) {
+				return ThreatProbe
+			}
+		}
+		for _, re := range currentRules().probes {
+			if re.MatchString(p) {
 				return ThreatProbe
 			}
 		}
@@ -336,6 +372,12 @@ type Analyzer struct {
 	// owner's, the never-ban list's, the server's own.
 	Trusted map[string]bool
 
+	// Proxied are the sites whose visitors arrive through Cloudflare. What an
+	// address does there that only looks like an attack — many requests a
+	// minute, many pages not found — is left to Cloudflare, which sees every
+	// site it fronts and has far better ways to tell a visitor from a bot.
+	Proxied map[string]bool
+
 	sites    map[string]*siteTotals
 	ips      map[string]*ipTotals
 	paths    map[string]*pathTotals
@@ -358,6 +400,7 @@ type siteTotals struct {
 
 type ipTotals struct {
 	requests, dynamic, notFound, errors int
+	proxied                             int
 	sites                               map[string]int
 	paths                               map[string]int
 	threats                             map[string]int
@@ -499,6 +542,9 @@ func (a *Analyzer) Add(site string, entry Entry) {
 		a.ips[entry.IP] = ip
 	}
 	ip.requests++
+	if a.Proxied[site] {
+		ip.proxied++
+	}
 	ip.sites[site]++
 	ip.minutes[minute]++
 	if len(ip.paths) < 500 || ip.paths[entry.Path] > 0 {
@@ -617,11 +663,14 @@ type SiteStat struct {
 }
 
 type IPStat struct {
-	IP         string         `json:"ip"`
-	Requests   int            `json:"requests"`
-	Dynamic    int            `json:"dynamic"`
-	NotFound   int            `json:"not_found"`
-	Errors     int            `json:"errors"`
+	IP       string `json:"ip"`
+	Requests int    `json:"requests"`
+	Dynamic  int    `json:"dynamic"`
+	NotFound int    `json:"not_found"`
+	Errors   int    `json:"errors"`
+
+	// Proxied is how many of the requests went to a site behind Cloudflare.
+	Proxied    int            `json:"proxied"`
 	PeakMinute int            `json:"peak_per_minute"`
 	Sites      []Count        `json:"sites"`
 	Paths      []Count        `json:"paths"`
@@ -749,7 +798,7 @@ func (a *Analyzer) Report() Report {
 	for address, ip := range a.ips {
 		stat := IPStat{
 			IP: address, Requests: ip.requests, Dynamic: ip.dynamic,
-			NotFound: ip.notFound, Errors: ip.errors, PeakMinute: peak(ip.minutes),
+			NotFound: ip.notFound, Errors: ip.errors, Proxied: ip.proxied, PeakMinute: peak(ip.minutes),
 			Sites: top(ip.sites, 3), Paths: top(ip.paths, 5), Threats: ip.threats,
 			Agent: ip.agent, Bot: Bot(ip.agent), GoodBot: FindGoodBot(ip.agent), Last: ip.last.Unix(),
 		}
@@ -831,6 +880,19 @@ func attackKind(ip IPStat) string {
 	}
 }
 
+// Reassess judges an address again without its user agent's claim to be a
+// useful bot: one whose DNS says it is not the search engine it calls itself.
+// minutes is the length of the window the counts are over.
+func Reassess(ip IPStat, minutes int) IPStat {
+	ip.GoodBot = nil
+	ip.Verdict, ip.Danger = verdict(ip, max(1, minutes))
+	ip.Attack = ""
+	if ip.Danger {
+		ip.Attack = attackKind(ip)
+	}
+	return ip
+}
+
 func verdict(ip IPStat, minutes int) (string, bool) {
 	wp, rpc, login, probe := ip.Threats[ThreatWPLogin], ip.Threats[ThreatXMLRPC],
 		ip.Threats[ThreatLogin], ip.Threats[ThreatProbe]
@@ -845,15 +907,39 @@ func verdict(ip IPStat, minutes int) (string, bool) {
 		return strconv.Itoa(login) + " login form posts — brute force", true
 	case secret >= 1:
 		return strconv.Itoa(secret) + " requests for secret files (.env, .git, keys) — an attacker", true
-	case probe >= 5:
-		return strconv.Itoa(probe) + " requests for known-vulnerable files — a scanner", true
 
-	// A useful bot crawls, follows dead links and comes back often: none of
-	// the rules below is held against it. The ones above still are — no
-	// search engine guesses passwords or asks for .env.
+	// A useful bot crawls, follows dead links — including the odd paths other
+	// sites link to — and comes back often: none of the rules below is held
+	// against it. The ones above still are — no search engine guesses
+	// passwords or asks for .env.
 	case ip.GoodBot != nil:
 		return "", false
 
+	case probe >= 5:
+		return strconv.Itoa(probe) + " requests for known-vulnerable files — a scanner", true
+	}
+
+	// The rules above are what no visitor does. The ones below are guesses
+	// from volume — a busy visitor on a slow page, an office behind one
+	// address, a crawler nobody listed — and for an address that came mostly
+	// through Cloudflare they are Cloudflare's call: said, never banned.
+	if reason, danger := volumeVerdict(ip, minutes); reason != "" {
+		if danger && ip.Proxied > 0 && ip.Proxied*2 >= ip.Requests {
+			return reason + " — through Cloudflare, so left to Cloudflare", false
+		}
+		return reason, danger
+	}
+
+	if wp+rpc+login+probe+secret > 0 {
+		return "Some suspicious requests", false
+	}
+
+	return "", false
+}
+
+// volumeVerdict is what verdict says from how much an address asked for.
+func volumeVerdict(ip IPStat, minutes int) (string, bool) {
+	switch {
 	case ip.NotFound >= 50 && ip.NotFound*2 >= ip.Requests:
 		return strconv.Itoa(ip.NotFound) + " not-found requests — crawling for files that are not there", true
 	case ip.PeakMinute >= 120 && ip.Dynamic*2 >= ip.Requests:
@@ -862,8 +948,6 @@ func verdict(ip IPStat, minutes int) (string, bool) {
 		return strconv.Itoa(ip.PeakMinute) + " requests in one minute", true
 	case ip.Bot && ip.Dynamic >= 30*minutes:
 		return "A bot, crawling dynamic pages heavily", false
-	case wp+rpc+login+probe+secret > 0:
-		return "Some suspicious requests", false
 	}
 
 	return "", false

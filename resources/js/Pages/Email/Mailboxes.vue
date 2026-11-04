@@ -91,8 +91,8 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                 class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                             >
                                 <th class="px-5 py-3">Address</th>
-                                <th class="px-5 py-3">Domain</th>
-                                <th class="px-5 py-3">Quota</th>
+                                <th class="hidden px-5 py-3 md:table-cell">Domain</th>
+                                <th class="hidden px-5 py-3 sm:table-cell">Quota</th>
                                 <th class="px-5 py-3">Status</th>
                                 <th class="px-5 py-3"></th>
                             </tr>
@@ -115,14 +115,14 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                             >{{ mailbox.name }}</span
                                         >
                                     </td>
-                                    <td class="px-5 py-3">
+                                    <td class="hidden px-5 py-3 md:table-cell">
                                         <Link
                                             :href="route('email.domains.show', mailbox.domain_id)"
                                             class="text-slate-600 hover:text-brand-600 hover:underline"
                                             >{{ mailbox.domain }}</Link
                                         >
                                     </td>
-                                    <td class="whitespace-nowrap px-5 py-3 text-slate-600">
+                                    <td class="hidden whitespace-nowrap px-5 py-3 text-slate-600 sm:table-cell">
                                         {{ mailbox.quota_label }}
                                     </td>
                                     <td class="px-5 py-3">

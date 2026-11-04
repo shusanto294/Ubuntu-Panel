@@ -23,7 +23,7 @@ const revokeOthers = async () => {
 
 <template>
     <div :class="card" class="!p-0">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
             <div>
                 <h3 class="font-semibold text-slate-900">Signed-in browsers</h3>
                 <p class="text-sm text-slate-500">Every browser signed in to your panel account.</p>
@@ -38,7 +38,7 @@ const revokeOthers = async () => {
             </button>
         </div>
         <ul class="divide-y divide-slate-100">
-            <li v-for="entry in visibleSessions" :key="entry.key" class="flex items-center gap-4 px-6 py-4">
+            <li v-for="entry in visibleSessions" :key="entry.key" class="flex items-center gap-4 px-5 py-4 sm:px-6">
                 <div class="min-w-0 flex-1">
                     <p class="text-sm font-medium text-slate-900">
                         {{ browser(entry.user_agent) }}

@@ -101,7 +101,7 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
                                 class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                             >
                                 <th class="px-5 py-3">Domain</th>
-                                <th class="px-5 py-3">Mailboxes</th>
+                                <th class="hidden px-5 py-3 sm:table-cell">Mailboxes</th>
                                 <th class="px-5 py-3">Status</th>
                                 <th class="px-5 py-3"></th>
                             </tr>
@@ -109,7 +109,7 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
                         <tbody class="divide-y divide-slate-100 text-sm">
                             <template v-for="domain in visibleDomains" :key="domain.id">
                                 <tr>
-                                    <td class="px-5 py-3">
+                                    <td class="break-all px-5 py-3">
                                         <Link
                                             :href="route('email.domains.show', domain.id)"
                                             class="font-medium text-slate-800 hover:text-brand-600"
@@ -119,7 +119,7 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
                                             {{ domain.webmail_host }}
                                         </p>
                                     </td>
-                                    <td class="px-5 py-3 text-slate-600">
+                                    <td class="hidden px-5 py-3 text-slate-600 sm:table-cell">
                                         {{ domain.accounts.length }}
                                     </td>
                                     <td class="px-5 py-3">

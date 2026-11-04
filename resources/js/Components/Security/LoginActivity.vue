@@ -88,8 +88,8 @@ const reasonLabel = {
             <div :class="card">
                 <h3 class="font-semibold text-slate-900">Locked out now</h3>
                 <ul class="mt-3 divide-y divide-slate-100">
-                    <li v-for="entry in visibleLocked" :key="entry.ip" class="flex items-center justify-between py-2">
-                        <span>
+                    <li v-for="entry in visibleLocked" :key="entry.ip" class="flex items-center justify-between gap-3 py-2">
+                        <span class="min-w-0">
                             <IpAddress :ip="entry.ip" class="text-sm" />
                             <span class="block text-xs text-slate-500">until {{ when(entry.until) }}</span>
                         </span>
@@ -108,8 +108,8 @@ const reasonLabel = {
         </div>
 
         <div :class="card" class="!p-0">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-                <div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-900">Panel sign-in history</h3>
                     <p class="text-sm text-slate-500">
                         Every attempt to sign in to this panel, kept for as long as the
@@ -122,20 +122,20 @@ const reasonLabel = {
                     <option value="success">Successful</option>
                 </select>
             </div>
-            <div>
+            <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase text-slate-400">
                         <tr>
-                            <th class="px-6 py-2">Time</th>
+                            <th class="px-4 py-2 sm:px-6">Time</th>
                             <th class="px-2 py-2">Result</th>
-                            <th class="px-2 py-2">Email typed</th>
+                            <th class="hidden px-2 py-2 sm:table-cell">Email typed</th>
                             <th class="px-2 py-2">Address</th>
                             <th class="hidden px-2 py-2 md:table-cell">Browser</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="attempt in visibleAttempts" :key="attempt.id">
-                            <td class="whitespace-nowrap px-6 py-2 text-slate-500" :title="when(attempt.created_at)">{{ ago(attempt.created_at) }}</td>
+                            <td class="whitespace-nowrap px-4 py-2 text-slate-500 sm:px-6" :title="when(attempt.created_at)">{{ ago(attempt.created_at) }}</td>
                             <td class="px-2 py-2">
                                 <span
                                     class="rounded-full px-2 py-0.5 text-xs font-medium"
@@ -143,9 +143,9 @@ const reasonLabel = {
                                 >
                                     {{ attempt.success ? 'Signed in' : 'Failed' }}
                                 </span>
-                                <span class="ml-1 text-xs text-slate-400">{{ reasonLabel[attempt.reason] ?? attempt.reason }}</span>
+                                <span class="ml-1 inline-block text-xs text-slate-400">{{ reasonLabel[attempt.reason] ?? attempt.reason }}</span>
                             </td>
-                            <td class="px-2 py-2">{{ attempt.email || '—' }}</td>
+                            <td class="hidden break-all px-2 py-2 sm:table-cell">{{ attempt.email || '—' }}</td>
                             <td class="px-2 py-2"><IpAddress :ip="attempt.ip" /></td>
                             <td class="hidden px-2 py-2 text-slate-500 md:table-cell" :title="attempt.user_agent">{{ browser(attempt.user_agent) }}</td>
                         </tr>

@@ -288,7 +288,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                 </select>
             </label>
 
-            <div class="ml-auto flex items-center gap-3 text-xs text-slate-500">
+            <div class="ml-auto flex flex-wrap items-center gap-3 text-xs text-slate-500">
                 <span v-if="traffic">
                     Read {{ number(traffic.scanned) }} log lines in {{ (traffic.took_ms / 1000).toFixed(1) }}s
                 </span>
@@ -321,7 +321,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                     class="flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-2.5 text-sm ring-1"
                     :class="toneClass[f.tone]"
                 >
-                    <span class="min-w-0 flex-1">{{ f.text }}</span>
+                    <span class="min-w-0 flex-1 break-words">{{ f.text }}</span>
                     <button
                         v-if="f.ip && banned.has(f.ip)"
                         type="button"
@@ -355,7 +355,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
         <div v-if="show('timeline') && traffic?.timeline?.length" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="font-semibold text-slate-900">Requests over time</h3>
-                <div class="flex items-center gap-4 text-xs text-slate-500">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                     <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-brand-500"></span>PHP / app</span>
                     <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-slate-300"></span>Static files</span>
                     <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-rose-500"></span>Suspicious</span>
@@ -455,7 +455,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             <!-- CPU now -->
             <div v-if="show('cpu')" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
                 <div class="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
-                    <div>
+                    <div class="min-w-0">
                         <h3 class="font-semibold text-slate-900">What is using the CPU right now</h3>
                         <p class="text-sm text-slate-500">
                             Measured over one second when this page was read. 100% is one full core
@@ -653,7 +653,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                 </p>
                 <p v-if="!traffic?.threats?.length" class="mt-4 text-sm text-slate-500">None in this window.</p>
                 <div v-for="th in traffic?.threats ?? []" :key="th.kind" class="mt-4 rounded-xl bg-slate-50 p-4">
-                    <div class="flex items-baseline justify-between gap-2">
+                    <div class="flex flex-wrap items-baseline justify-between gap-x-2">
                         <p class="font-medium text-slate-900">{{ th.label }}</p>
                         <p class="text-sm text-slate-600">
                             {{ number(th.requests) }} from {{ number(th.ips) }} address{{ th.ips === 1 ? '' : 'es' }}
@@ -663,7 +663,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                         On {{ th.sites.map((s) => `${s.name} (${number(s.count)})`).join(', ') }}
                     </p>
                     <ul class="mt-2 space-y-1">
-                        <li v-for="ip in th.top_ips.slice(0, 8)" :key="ip.name" class="flex items-center justify-between text-xs">
+                        <li v-for="ip in th.top_ips.slice(0, 8)" :key="ip.name" class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                             <IpAddress :ip="ip.name" class="text-slate-700" />
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
@@ -732,7 +732,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                         </thead>
                         <tbody class="divide-y divide-slate-100">
                             <tr v-for="p in pathPages.visible.value" :key="p.site + p.path" class="hover:bg-slate-50">
-                                <td class="max-w-md px-5 py-2.5">
+                                <td class="min-w-[12rem] max-w-md px-5 py-2.5">
                                     <span class="block truncate font-mono text-xs text-slate-900" :title="p.path">{{ p.path }}</span>
                                     <span class="text-[11px] text-slate-400">{{ p.dynamic ? 'PHP / app' : 'static' }}</span>
                                     <span

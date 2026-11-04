@@ -58,7 +58,7 @@ const FEATURES = {
     web_scan: {
         kind: 'jail',
         title: 'Ban vulnerability scanners',
-        text: 'Bans an address asking for files only an attacker looks for — phpunit, backup.sql, web shells — on the sites and on the server’s bare IP address. One request for a secret file (.env, .git, .aws, SSH keys, wp-config backups) is enough. Floods and anything else the Logs page flags as an attack are banned here too.',
+        text: 'Bans an address asking for files only an attacker looks for — phpunit, backup.sql, web shells — on the sites and on the server’s bare IP address. One request for a secret file (.env, .git, .aws, SSH keys, wp-config backups) is enough. Floods and sweeps for missing pages are banned too when they reach the server directly; through Cloudflare those are left to Cloudflare. Search engines and AI crawlers following dead links are never banned. You can edit what counts below.',
         jails: ['panel-web-scan', 'panel-web-secret'],
         needs: 'fail2ban',
         unit: 'probes',
@@ -74,7 +74,7 @@ const FEATURES = {
         kind: 'rate',
         perSecond: true,
         title: 'Limit request floods',
-        text: 'Caps how many PHP or app requests one address can make. Images, CSS and JS are never limited, nor are the panel, Nextcloud and n8n. Set it well above what a real visitor does.',
+        text: 'Caps how many PHP or app requests one address can make. Images, CSS and JS are never limited, nor are the panel, Nextcloud and n8n, nor search engines, AI crawlers, link previews and uptime monitors. Set it well above what a real visitor does.',
         needs: 'nginx',
         confirm:
             'Every address is limited, real visitors included. The default (20 a second, bursts of 100) is far above what a person browsing does, but a site whose pages fire many AJAX calls may need more. Watch Logs → Website traffic for 429s after turning it on.',
@@ -194,6 +194,49 @@ const submit = async (key, on) => {
 };
 
 const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.label ?? `${value}s`;
+
+// The scanner protection's two lists, one pattern a line.
+const paths = computed(() => props.protection.paths ?? { secret: [], scan: [], default_secret: [], default_scan: [] });
+const pathForm = reactive({
+    secret_paths: (paths.value.secret ?? []).join('\n'),
+    scan_paths: (paths.value.scan ?? []).join('\n'),
+});
+const pathsOpen = ref(false);
+const lines = (text) => text.split('\n').map((l) => l.trim()).filter(Boolean);
+const sameList = (text, list) => {
+    const a = lines(text).map((l) => l.toLowerCase()).sort();
+    const b = (list ?? []).map((l) => l.toLowerCase()).sort();
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+};
+const pathsChanged = computed(
+    () => !sameList(pathForm.secret_paths, paths.value.secret) || !sameList(pathForm.scan_paths, paths.value.scan),
+);
+const pathsCustom = computed(
+    () => !sameList(pathForm.secret_paths, paths.value.default_secret) || !sameList(pathForm.scan_paths, paths.value.default_scan),
+);
+const pathErrors = computed(() => ['secret_paths', 'scan_paths'].map((k) => errors.value[k]).filter(Boolean));
+
+const restorePaths = (which) => {
+    if (which === 'secret') pathForm.secret_paths = (paths.value.default_secret ?? []).join('\n');
+    else pathForm.scan_paths = (paths.value.default_scan ?? []).join('\n');
+};
+
+const savePaths = () => {
+    lastKey.value = 'scan_paths';
+    router.post(
+        route('security.protection'),
+        { feature: 'scan_paths', secret_paths: pathForm.secret_paths, scan_paths: pathForm.scan_paths },
+        {
+            preserveScroll: true,
+            onStart: () => (busy.value = 'scan_paths'),
+            onFinish: () => (busy.value = ''),
+            onSuccess: () => {
+                pathForm.secret_paths = (paths.value.secret ?? []).join('\n');
+                pathForm.scan_paths = (paths.value.scan ?? []).join('\n');
+            },
+        },
+    );
+};
 </script>
 
 <template>
@@ -209,7 +252,8 @@ const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.la
         <p class="max-w-3xl text-sm text-slate-500">
             Every protection here is optional and off until you turn it on. Addresses on the never-ban list
             (SSH protection tab) are never banned or rate limited by any of them<span v-if="myIp">
-                — your address is <span class="font-mono">{{ myIp }}</span></span>.
+                — your address is <span class="break-all font-mono">{{ myIp }}</span></span>. Nor are search engines, AI
+            crawlers, link previews and uptime monitors for crawling — following dead links, coming back often, crawling fast.
         </p>
 
         <section v-for="section in SECTIONS" :key="section.title">
@@ -219,7 +263,7 @@ const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.la
             <div class="mt-3 grid gap-4 lg:grid-cols-2">
                 <div v-for="key in section.features" :key="key" :class="[card, STATE[state(key)].card]" class="flex flex-col">
                     <div class="flex items-start justify-between gap-3">
-                        <h4 class="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
+                        <h4 class="flex min-w-0 flex-wrap items-center gap-2 font-semibold text-slate-900">
                             {{ FEATURES[key].title }}
                             <span
                                 v-if="(key === 'real_ip' || key === 'edge_only') && protection.edge_sites?.length && !enabled(key)"
@@ -275,6 +319,119 @@ const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.la
                             Allowed in a burst
                             <input v-model.number="forms[key].burst" type="number" min="0" :class="field" class="text-sm" />
                         </label>
+                    </div>
+
+                    <!-- The scanner protection: what it bans for, editable. -->
+                    <div v-if="key === 'web_scan'" class="mt-4 rounded-xl border border-slate-200 bg-slate-50/60">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-start text-sm font-medium text-slate-800"
+                            :aria-expanded="pathsOpen"
+                            @click="pathsOpen = !pathsOpen"
+                        >
+                            <span class="min-w-0">
+                                What gets banned
+                                <span class="block text-xs font-normal text-slate-500 sm:inline">
+                                    <span class="hidden sm:inline"> · </span>{{ lines(pathForm.secret_paths).length }} secret paths ·
+                                    {{ lines(pathForm.scan_paths).length }} scanner paths<template v-if="pathsCustom"> · edited</template>
+                                </span>
+                            </span>
+                            <svg
+                                class="h-4 w-4 shrink-0 text-slate-400 transition"
+                                :class="pathsOpen ? 'rotate-180' : ''"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                aria-hidden="true"
+                            >
+                                <path
+                                    fill-rule="evenodd"
+                                    d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                                    clip-rule="evenodd"
+                                />
+                            </svg>
+                        </button>
+
+                        <div v-if="pathsOpen" class="space-y-4 border-t border-slate-200 px-4 pb-4 pt-3">
+                            <p class="text-xs text-slate-500">
+                                One pattern a line, matched anywhere in the requested path (never the query string), ignoring case.
+                                <code class="rounded bg-white px-1 font-mono ring-1 ring-slate-200">*</code> matches anything,
+                                <code class="rounded bg-white px-1 font-mono ring-1 ring-slate-200">$</code> at the end means the path ends there.
+                                Encoded dots and slashes (<span class="font-mono">%2e</span>, <span class="font-mono">%2f</span>) are caught too.
+                                A pattern that would match ordinary pages — <span class="font-mono">/</span>, <span class="font-mono">.php</span>,
+                                <span class="font-mono">/wp-admin/</span>, sitemaps — is refused.
+                            </p>
+
+                            <div class="grid gap-4 md:grid-cols-2">
+                                <label class="block text-xs font-medium text-slate-700">
+                                    <span class="flex flex-wrap items-baseline justify-between gap-x-2">
+                                        Banned on the first request
+                                        <button
+                                            type="button"
+                                            class="py-1 font-normal text-brand-600 hover:underline"
+                                            @click="restorePaths('secret')"
+                                        >
+                                            Restore defaults
+                                        </button>
+                                    </span>
+                                    <span class="block font-normal text-slate-500">
+                                        Secrets — whatever the answer. Search engines confirmed by DNS are never banned.
+                                    </span>
+                                    <textarea
+                                        v-model="pathForm.secret_paths"
+                                        rows="9"
+                                        spellcheck="false"
+                                        autocapitalize="off"
+                                        autocomplete="off"
+                                        :class="field"
+                                        class="font-mono text-xs"
+                                        placeholder="/.env"
+                                    />
+                                </label>
+                                <label class="block text-xs font-medium text-slate-700">
+                                    <span class="flex flex-wrap items-baseline justify-between gap-x-2">
+                                        Counted as scanning
+                                        <button
+                                            type="button"
+                                            class="py-1 font-normal text-brand-600 hover:underline"
+                                            @click="restorePaths('scan')"
+                                        >
+                                            Restore defaults
+                                        </button>
+                                    </span>
+                                    <span class="block font-normal text-slate-500">
+                                        Only when refused, missing or redirected; banned after the number above. Useful bots are not counted.
+                                    </span>
+                                    <textarea
+                                        v-model="pathForm.scan_paths"
+                                        rows="9"
+                                        spellcheck="false"
+                                        autocapitalize="off"
+                                        autocomplete="off"
+                                        :class="field"
+                                        class="font-mono text-xs"
+                                        placeholder="/vendor/phpunit"
+                                    />
+                                </label>
+                            </div>
+
+                            <div v-if="busy === '' && lastKey === 'scan_paths' && pathErrors.length" class="space-y-1">
+                                <InputError v-for="message in pathErrors" :key="message" :message="message" />
+                            </div>
+
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button
+                                    type="button"
+                                    class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                                    :disabled="busy !== '' || !pathsChanged"
+                                    @click="savePaths"
+                                >
+                                    {{ busy === 'scan_paths' ? 'Saving…' : 'Save paths' }}
+                                </button>
+                                <span class="text-xs text-slate-500">
+                                    {{ enabled('web_scan') ? 'Applied as soon as they are saved.' : 'Used once the protection is turned on.' }}
+                                </span>
+                            </div>
+                        </div>
                     </div>
 
                     <div v-if="busy === '' && lastKey === key && Object.keys(errors).length" class="mt-2 space-y-1">

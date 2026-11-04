@@ -121,7 +121,7 @@ const submit = () => {
                     <TextInput
                         id="local_part"
                         v-model="form.local_part"
-                        class="block w-[30%] shrink-0 rounded-r-none"
+                        class="block w-1/2 shrink-0 rounded-r-none sm:w-[30%]"
                         placeholder="info"
                     />
                     <span

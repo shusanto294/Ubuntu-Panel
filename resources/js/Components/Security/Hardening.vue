@@ -153,25 +153,25 @@ const save = async () => {
         <div :class="card">
             <h3 class="font-semibold text-slate-900">What sshd is running with</h3>
             <dl class="mt-4 space-y-3 text-sm">
-                <div class="flex justify-between">
+                <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Port</dt>
                     <dd class="font-mono">{{ (hardening.ports ?? []).join(', ') || '—' }}</dd>
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Root login</dt>
                     <dd class="font-mono">{{ hardening.permit_root_login || '—' }}</dd>
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Passwords</dt>
                     <dd class="font-mono">{{ !hardening.readable ? '—' : hardening.password_authentication ? 'yes' : 'no' }}</dd>
                 </div>
-                <div class="flex justify-between">
+                <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Max attempts per connection</dt>
                     <dd class="font-mono">{{ hardening.max_auth_tries || '—' }}</dd>
                 </div>
                 <div class="flex justify-between gap-4">
                     <dt class="text-slate-500">Accounts with SSH keys</dt>
-                    <dd class="text-right font-mono">{{ hardening.authorized_keys.join(', ') || 'none' }}</dd>
+                    <dd class="min-w-0 break-all text-right font-mono">{{ hardening.authorized_keys.join(', ') || 'none' }}</dd>
                 </div>
             </dl>
         </div>

@@ -119,7 +119,7 @@ const remove = async (user) => {
     <div class="space-y-6">
         <div :class="card">
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div class="min-w-0">
                     <h3 class="font-semibold text-slate-900">SSH users</h3>
                     <p class="mt-1 text-sm text-slate-500">
                         Every account on this machine that can open a shell.
@@ -166,7 +166,7 @@ const remove = async (user) => {
 
         <div :class="card" class="!p-0">
             <ul class="divide-y divide-slate-100">
-                <li v-for="user in visibleUsers" :key="user.name" class="px-6 py-4">
+                <li v-for="user in visibleUsers" :key="user.name" class="px-4 py-4 sm:px-6">
                     <div class="flex flex-wrap items-center gap-3">
                         <span
                             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold uppercase"
@@ -176,7 +176,7 @@ const remove = async (user) => {
                         </span>
                         <div class="min-w-0 flex-1">
                             <p class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">
-                                <span class="font-mono">{{ user.name }}</span>
+                                <span class="break-all font-mono">{{ user.name }}</span>
                                 <span v-if="user.sudo" class="rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700">sudo</span>
                                 <span v-if="user.expired" class="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700">locked</span>
                                 <span
@@ -190,7 +190,7 @@ const remove = async (user) => {
                                 <span v-else-if="user.protected && user.uid !== 0" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">panel &amp; terminal</span>
                                 <span v-else-if="user.protected" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">system</span>
                             </p>
-                            <p class="text-xs text-slate-500">
+                            <p class="break-words text-xs text-slate-500">
                                 uid {{ user.uid }} · {{ user.home }} ·
                                 {{ user.keys.length }} key{{ user.keys.length === 1 ? '' : 's' }} ·
                                 {{ user.has_password ? 'password set' : 'no password' }} ·
@@ -219,7 +219,7 @@ const remove = async (user) => {
                                     class="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs ring-1 ring-slate-900/5"
                                 >
                                     <span class="min-w-0">
-                                        <span class="font-medium text-slate-700">{{ key.comment || key.type }}</span>
+                                        <span class="block break-all font-medium text-slate-700">{{ key.comment || key.type }}</span>
                                         <span class="block truncate font-mono text-slate-400">{{ key.type }} {{ key.fingerprint }}</span>
                                     </span>
                                     <button
@@ -233,7 +233,7 @@ const remove = async (user) => {
                                 </li>
                                 <li v-if="!user.keys.length" class="text-xs text-slate-400">No keys installed.</li>
                             </ul>
-                            <form v-if="!user.protected || user.uid === 0" class="mt-2 flex gap-2" @submit.prevent="addKey(user.name)">
+                            <form v-if="!user.protected || user.uid === 0" class="mt-2 flex flex-col gap-2 sm:flex-row" @submit.prevent="addKey(user.name)">
                                 <input
                                     v-model="keyForm.public_key"
                                     type="text"
@@ -299,7 +299,7 @@ const remove = async (user) => {
                         </template>
                     </div>
                 </li>
-                <li v-if="!users.length" class="px-6 py-8 text-center text-sm text-slate-400">
+                <li v-if="!users.length" class="px-4 py-8 sm:px-6 text-center text-sm text-slate-400">
                     Could not read the accounts on this machine.
                 </li>
             </ul>

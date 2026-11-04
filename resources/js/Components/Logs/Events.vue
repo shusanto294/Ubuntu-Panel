@@ -203,7 +203,7 @@ const toggle = (key) => {
                     <option v-for="site in sites" :key="site" :value="site">{{ site }}</option>
                 </select>
             </label>
-            <label class="block min-w-[14rem] flex-1 text-sm">
+            <label class="block min-w-[12rem] flex-1 text-sm sm:min-w-[14rem]">
                 <span class="text-xs font-medium text-slate-700">Containing</span>
                 <input
                     v-model="form.q"
@@ -254,7 +254,7 @@ const toggle = (key) => {
                                 </span>
                                 <p v-if="row.site" class="mt-1 text-xs text-slate-500">{{ row.site }}</p>
                             </td>
-                            <td class="min-w-[20rem] px-4 py-2.5">
+                            <td class="min-w-[16rem] px-4 py-2.5 sm:min-w-[20rem]">
                                 <div class="flex items-start gap-2">
                                     <span
                                         v-if="row.level !== 'info'"

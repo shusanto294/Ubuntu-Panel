@@ -252,7 +252,7 @@ const rewrites = computed(() => props.staging.rewrites_database);
                                 v-model="form.domain"
                                 type="text"
                                 autocomplete="off"
-                                class="min-w-64 flex-1 rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                                class="min-w-[12rem] flex-1 rounded-xl sm:min-w-64 border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
                                 placeholder="staging.example.com"
                             />
                             <button
@@ -289,7 +289,7 @@ const rewrites = computed(() => props.staging.rewrites_database);
                             class="flex flex-wrap items-center justify-between gap-3 px-6 py-4"
                         >
                             <div class="min-w-0">
-                                <p class="flex items-center gap-2 font-medium text-slate-800">
+                                <p class="flex flex-wrap items-center gap-2 break-all font-medium text-slate-800">
                                     <Link
                                         :href="route('sites.show', copy.id)"
                                         class="hover:underline"
@@ -297,7 +297,7 @@ const rewrites = computed(() => props.staging.rewrites_database);
                                     >
                                     <StatusBadge :status="copy.status" />
                                 </p>
-                                <p class="mt-0.5 text-xs text-slate-500">
+                                <p class="mt-0.5 break-words text-xs text-slate-500">
                                     Created {{ copy.created_at }}
                                     <span v-if="copy.last_error" class="text-rose-600">
                                         · {{ copy.last_error }}
