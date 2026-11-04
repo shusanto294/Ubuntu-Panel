@@ -440,3 +440,46 @@ func (s *Store) ClearServerEvents(ctx context.Context, sources []string, before 
 
 	return count
 }
+
+// LatestServerEventID is the newest event's id, or 0.
+func (s *Store) LatestServerEventID(ctx context.Context) int64 {
+	var id int64
+	s.db.QueryRowContext(ctxOrBackground(ctx), `SELECT coalesce(max(id), 0) FROM server_events`).Scan(&id)
+
+	return id
+}
+
+// ServerEventsAfter are the events after an id at one of the levels named,
+// oldest first, at most limit of them, and how many there are in all.
+func (s *Store) ServerEventsAfter(ctx context.Context, after int64, levels []string, limit int) ([]ServerEvent, int) {
+	ctx = ctxOrBackground(ctx)
+
+	args := []any{after}
+	for _, level := range levels {
+		args = append(args, level)
+	}
+	where := `id > ? AND level IN (` + placeholders(len(levels)) + `)`
+
+	total := 0
+	s.db.QueryRowContext(ctx, `SELECT count(*) FROM server_events WHERE `+where, args...).Scan(&total)
+
+	events := []ServerEvent{}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, created_at, source, site, level, ip_address, message
+		   FROM server_events WHERE `+where+` ORDER BY id LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return events, total
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var event ServerEvent
+		if rows.Scan(&event.ID, &event.CreatedAt, &event.Source, &event.Site, &event.Level,
+			&event.IP, &event.Message) == nil {
+			events = append(events, event)
+		}
+	}
+
+	return events, total
+}

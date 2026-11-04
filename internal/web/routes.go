@@ -45,6 +45,12 @@ func (a *App) routes() *router {
 
 	// This machine
 	rt.get("/dashboard", "dashboard", authenticated, a.overview)
+
+	// What the panel wants its owner to know — under the bell in the top bar.
+	rt.get("/notifications", "notifications.index", authenticated, a.notificationsIndex)
+	rt.get("/notifications/summary", "notifications.summary", authenticated, a.notificationsJSON)
+	rt.post("/notifications/read", "notifications.read", authenticated, a.notificationsRead)
+	rt.post("/notifications/clear", "notifications.clear", authenticated, a.notificationsClear)
 	rt.get("/system/metrics", "system.metrics", authenticated, a.metricsEndpoint)
 	rt.get("/system/metrics/history", "system.metrics.history", authenticated, a.metricHistory)
 	rt.get("/system/credentials", "system.credentials", authenticated, a.credentials)

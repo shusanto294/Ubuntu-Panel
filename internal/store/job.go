@@ -74,15 +74,33 @@ func (s *Store) QueuedJobs(ctx context.Context) ([]*Job, error) {
 // the same deployment: only one UPDATE can match a given row in the reserved
 // state, so the loser gets zero rows changed and goes back to sleep.
 func (s *Store) ClaimJob(ctx context.Context) (*Job, error) {
+	return s.ClaimJobOf(ctx, nil, false)
+}
+
+// ClaimJobOf claims the next job whose kind is one of kinds — or, with
+// except, is none of them — so a lane of quick jobs never waits behind a
+// deployment and a deployment worker never takes the quick ones.
+func (s *Store) ClaimJobOf(ctx context.Context, kinds []string, except bool) (*Job, error) {
 	now := time.Now().Unix()
 
 	var job Job
 
-	err := s.db.QueryRowContext(ctxOrBackground(ctx),
-		`SELECT id, kind, payload, attempts FROM jobs
-		  WHERE status = 'queued' AND available_at <= ?
-		  ORDER BY id LIMIT 1`, now,
-	).Scan(&job.ID, &job.Kind, &job.Payload, &job.Attempts)
+	query := `SELECT id, kind, payload, attempts FROM jobs WHERE status = 'queued' AND available_at <= ?`
+	args := []any{now}
+
+	if len(kinds) > 0 {
+		if except {
+			query += ` AND kind NOT IN (` + placeholders(len(kinds)) + `)`
+		} else {
+			query += ` AND kind IN (` + placeholders(len(kinds)) + `)`
+		}
+		for _, kind := range kinds {
+			args = append(args, kind)
+		}
+	}
+
+	err := s.db.QueryRowContext(ctxOrBackground(ctx), query+` ORDER BY id LIMIT 1`, args...).
+		Scan(&job.ID, &job.Kind, &job.Payload, &job.Attempts)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -108,6 +126,12 @@ func (s *Store) ClaimJob(ctx context.Context) (*Job, error) {
 // make the table the log, and the log already exists.
 func (s *Store) FinishJob(id int64) {
 	s.db.Exec(`DELETE FROM jobs WHERE id = ?`, id)
+}
+
+// RetryJob puts a job back on the queue to run again after a delay.
+func (s *Store) RetryJob(id int64, after time.Duration, reason string) {
+	s.db.Exec(`UPDATE jobs SET status = 'queued', last_error = ?, available_at = ?, reserved_at = NULL WHERE id = ?`,
+		reason, time.Now().Add(after).Unix(), id)
 }
 
 // FailJob records why a job did not finish and leaves the row behind.

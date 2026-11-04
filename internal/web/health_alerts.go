@@ -30,6 +30,11 @@ const (
 	alertMalwareSetting   = "alert_malware"
 	alertWebBanSetting    = "alert_web_ban"
 	alertWebBannedSetting = "alert_web_banned"
+
+	alertAttacksSetting     = "alert_attacks"
+	alertAttacksSeenSetting = "alert_attacks_seen"
+	alertCriticalSetting    = "alert_critical_logs"
+	alertCriticalCursor     = "alert_critical_cursor"
 )
 
 // healthAlertDefaults are on for the problems and off for the digest: a busy
@@ -41,6 +46,8 @@ var healthAlertDefaults = map[string]bool{
 	alertCertsSetting:     true,
 	alertMalwareSetting:   true,
 	alertWebBanSetting:    false,
+	alertAttacksSetting:   true,
+	alertCriticalSetting:  true,
 }
 
 // healthAlertKeys are the form's names for them.
@@ -51,6 +58,8 @@ var healthAlertKeys = map[string]string{
 	"cert_expiry": alertCertsSetting,
 	"malware":     alertMalwareSetting,
 	"web_ban":     alertWebBanSetting,
+	"attacks":     alertAttacksSetting,
+	"critical":    alertCriticalSetting,
 }
 
 func (a *App) healthAlert(setting string) bool {
@@ -70,6 +79,7 @@ var health struct {
 	cpu        system.CPUMeter
 	hotMinutes int
 	certsAt    time.Time
+	attacksAt  time.Time
 }
 
 // cooled is whether an alert may be sent again, and marks it sent if so.
@@ -87,8 +97,8 @@ func (a *App) cooled(kind string, cooldown time.Duration) bool {
 }
 
 // healthAlerts are the alerts above, checked every minute.
-func (a *App) healthAlerts(ctx context.Context, ready bool) []string {
-	alerts := []string{}
+func (a *App) healthAlerts(ctx context.Context) []alert {
+	alerts := []alert{}
 
 	health.Lock()
 	cpu := health.cpu.Read()
@@ -102,30 +112,26 @@ func (a *App) healthAlerts(ctx context.Context, ready bool) []string {
 
 	// The web bans list moves forward whether or not anything is sent, like
 	// the SSH one, so switching the alert on is about bans from then on.
-	webBans := a.webBanAlert(ready && a.healthAlert(alertWebBanSetting))
-
-	if !ready {
-		return nil
-	}
+	webBans := a.webBanAlert(a.healthAlert(alertWebBanSetting))
 
 	if hot >= cpuAlertMinutes && a.healthAlert(alertCPUSetting) && a.cooled("cpu", time.Hour) {
-		alerts = append(alerts, a.cpuAlert(ctx, hot))
+		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/logs", a.cpuAlert(ctx, hot)))
 	}
 
 	metrics := system.Read()
 	if metrics.DiskPercent >= diskAlertAt && a.healthAlert(alertDiskSetting) && a.cooled("disk", 12*time.Hour) {
-		alerts = append(alerts, fmt.Sprintf("The disk is %.0f%% full\n\n"+
+		alerts = append(alerts, newAlert("disk_full", levelCritical, "/dashboard", fmt.Sprintf("The disk is %.0f%% full\n\n"+
 			"%.1f GB free of %.1f GB. When it is full, databases stop writing, mail is refused and "+
 			"sites fail. Old backups and logs (Logs → Clear logs) are the usual places to make room.",
-			metrics.DiskPercent, metrics.DiskFree, metrics.DiskTotal))
+			metrics.DiskPercent, metrics.DiskFree, metrics.DiskTotal)))
 	}
 
 	if a.healthAlert(alertMailQueueSetting) && a.Store.ServiceInstalled("mail") {
 		if queued := mailQueue(); queued >= mailQueueAlert && a.cooled("mail_queue", 6*time.Hour) {
-			alerts = append(alerts, fmt.Sprintf("%d messages are waiting in the mail queue\n\n"+
+			alerts = append(alerts, newAlert("mail_queue", levelWarning, "/logs?view=server&source=mail", fmt.Sprintf("%d messages are waiting in the mail queue\n\n"+
 				"A queue this long usually means a mailbox's password was stolen and it is sending "+
 				"spam, or a site's contact form is being abused. `sudo mailq` shows who they are from; "+
-				"turn on mail login protection on the Security page.", queued))
+				"turn on mail login protection on the Security page.", queued)))
 		}
 	}
 
@@ -139,10 +145,10 @@ func (a *App) healthAlerts(ctx context.Context, ready bool) []string {
 
 		if due {
 			if expiring := a.expiringCertificates(ctx); len(expiring) > 0 && a.cooled("certs", 24*time.Hour) {
-				alerts = append(alerts, fmt.Sprintf("%d certificate(s) expire within %d days\n\n%s\n\n"+
+				alerts = append(alerts, newAlert("cert_expiry", levelWarning, "/sites", fmt.Sprintf("%d certificate(s) expire within %d days\n\n%s\n\n"+
 					"certbot renews them 30 days ahead, so one this close means renewal is failing — "+
 					"usually DNS that no longer points here. Request it again from the site's page.",
-					len(expiring), certAlertDays, strings.Join(expiring, "\n")))
+					len(expiring), certAlertDays, strings.Join(expiring, "\n"))))
 			}
 		}
 	}
@@ -163,13 +169,164 @@ func (a *App) healthAlerts(ctx context.Context, ready bool) []string {
 				}
 			}
 
-			alerts = append(alerts, fmt.Sprintf("The malware scan found %d new file(s) to review\n\n%s\n\n"+
+			alerts = append(alerts, newAlert("malware", levelCritical, "/security?tab=protection", fmt.Sprintf("The malware scan found %d new file(s) to review\n\n%s\n\n"+
 				"Nothing was changed or deleted. The Protection tab on the Security page lists them all.",
-				unreported, strings.Join(lines, "\n")))
+				unreported, strings.Join(lines, "\n"))))
 		}
 	}
 
-	return append(alerts, webBans...)
+	if a.healthAlert(alertAttacksSetting) {
+		health.Lock()
+		due := time.Since(health.attacksAt) >= 5*time.Minute
+		if due {
+			health.attacksAt = time.Now()
+		}
+		health.Unlock()
+
+		if due {
+			if text := a.attackAlert(ctx); text != "" {
+				alerts = append(alerts, newAlert("attacks", levelWarning, "/logs", text))
+			}
+		}
+	}
+
+	if text := a.criticalAlert(ctx); text != "" {
+		alerts = append(alerts, newAlert("critical", levelCritical, "/logs?view=server&level=error", text))
+	}
+
+	for _, text := range webBans {
+		alerts = append(alerts, newAlert("web_ban", levelInfo, "/security?tab=bans", text))
+	}
+
+	return alerts
+}
+
+// attackAlert is the addresses the last hour of traffic says are attacking —
+// the ones the Logs page's "What stands out" names — that have not been
+// emailed about in the last day. Trusted addresses are never in it.
+func (a *App) attackAlert(ctx context.Context) string {
+	report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
+
+	var seen map[string]int64
+	json.Unmarshal([]byte(a.Store.Setting(alertAttacksSeenSetting, "{}")), &seen)
+	if seen == nil {
+		seen = map[string]int64{}
+	}
+
+	now := time.Now()
+	for ip, at := range seen {
+		if now.Sub(time.Unix(at, 0)) > 24*time.Hour {
+			delete(seen, ip)
+		}
+	}
+
+	fresh := []string{}
+	for _, ip := range report.TopIPs {
+		if !ip.Danger || ip.Trusted != "" {
+			continue
+		}
+		if _, ok := seen[ip.IP]; ok {
+			continue
+		}
+
+		seen[ip.IP] = now.Unix()
+
+		site := ""
+		if len(ip.Sites) > 0 {
+			site = " on " + ip.Sites[0].Name
+		}
+		fresh = append(fresh, fmt.Sprintf("  %s — %s%s (%d requests in the last hour)", ip.IP, ip.Verdict, site, ip.Requests))
+	}
+
+	encoded, _ := json.Marshal(seen)
+	a.Store.SetSetting(alertAttacksSeenSetting, string(encoded))
+
+	if len(fresh) == 0 {
+		return ""
+	}
+
+	if len(fresh) > 30 {
+		fresh = append(fresh[:30], fmt.Sprintf("  …and %d more", len(fresh)-30))
+	}
+
+	var advice []string
+	p := a.protection()
+	if !p.WebLogin.Enabled {
+		advice = append(advice, "website login bans")
+	}
+	if !p.WebScan.Enabled {
+		advice = append(advice, "scanner bans")
+	}
+	if !p.RateLogin.Enabled {
+		advice = append(advice, "login rate limits")
+	}
+
+	next := "Logs → Server logs on the panel has the detail, with a button to ban each address."
+	if len(advice) > 0 {
+		next += " To have addresses like these banned automatically, turn on " + strings.Join(advice, ", ") +
+			" in Security → Protection."
+	}
+
+	return fmt.Sprintf("%d %s attacking the sites\n\n%s\n\n%s",
+		len(fresh), map[bool]string{true: "address is", false: "addresses are"}[len(fresh) == 1],
+		strings.Join(fresh, "\n"), next)
+}
+
+// criticalAlert is the critical lines the server's logs gained since the last
+// look — an out-of-memory kill, a crash, a fatal error — at most one email
+// every half hour, each carrying everything since the one before.
+func (a *App) criticalAlert(ctx context.Context) string {
+	cursor, _ := strconv.ParseInt(a.Store.Setting(alertCriticalCursor, ""), 10, 64)
+	latest := a.Store.LatestServerEventID(ctx)
+
+	// From now on, the first time: not a month of the past.
+	if cursor == 0 || !a.healthAlert(alertCriticalSetting) {
+		a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
+		return ""
+	}
+
+	if latest <= cursor {
+		return ""
+	}
+
+	events, total := a.Store.ServerEventsAfter(ctx, cursor, []string{"critical"}, 30)
+	if total == 0 {
+		a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
+		return ""
+	}
+
+	// Held, not lost, while the cooldown runs: the next email has them.
+	if !a.cooled("critical", 30*time.Minute) {
+		return ""
+	}
+
+	a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
+
+	lines := []string{}
+	for _, event := range events {
+		where := event.Source
+		if event.Site != "" {
+			where += " · " + event.Site
+		}
+
+		message := event.Message
+		if first, _, ok := strings.Cut(message, "\n"); ok {
+			message = first
+		}
+		if len(message) > 300 {
+			message = message[:300] + "…"
+		}
+
+		lines = append(lines, fmt.Sprintf("  %s  [%s]  %s",
+			time.Unix(event.CreatedAt, 0).Format("Jan 2 15:04"), where, message))
+	}
+	if total > len(events) {
+		lines = append(lines, fmt.Sprintf("  …and %d more", total-len(events)))
+	}
+
+	return fmt.Sprintf("%d critical %s in the server's logs\n\n%s\n\n"+
+		"Logs → Server logs on the panel lists them, with errors only under Level.",
+		total, map[bool]string{true: "line", false: "lines"}[total == 1], strings.Join(lines, "\n"))
 }
 
 // cpuAlert says what the CPU is busy with: the busiest programs now, and

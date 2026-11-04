@@ -84,6 +84,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 
 	app.registerJobs()
 	app.registerSecurityJobs()
+	app.registerNotificationJobs()
 
 	app.MCP = app.buildMCP()
 
@@ -207,6 +208,10 @@ func (a *App) sharedProps(r *http.Request) inertia.Props {
 		// Whether a newer panel is out, for the badge beside Settings. From
 		// memory: the hourly check is what asks GitHub, never a page.
 		props["panelUpdate"] = a.updateBadge()
+
+		// The bell: how many are unread and the newest few. A lazy prop, so a
+		// partial reload that does not ask for it never counts them.
+		props["notifications"] = inertia.Lazy(func() any { return a.notificationsSummary(r.Context()) })
 	} else {
 		props["auth"] = map[string]any{"user": nil}
 	}

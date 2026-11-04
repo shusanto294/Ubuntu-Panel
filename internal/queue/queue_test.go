@@ -162,3 +162,83 @@ func TestJobsRunningAtStartupAreRequeued(t *testing.T) {
 		t.Fatalf("attempts is %d, want 2", job.Attempts)
 	}
 }
+
+// An email on the quick lane does not wait for a deployment holding the only
+// ordinary worker.
+func TestTheQuickLaneDoesNotWaitBehindLongWork(t *testing.T) {
+	st := newStore(t)
+	q := New(st, quiet(), 1)
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	sent := make(chan struct{}, 1)
+
+	q.Handle(SiteDeploy, func(ctx context.Context, job *store.Job) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	})
+	q.HandleQuick(NotifyEmail, func(ctx context.Context, job *store.Job) error {
+		sent <- struct{}{}
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	q.Start(ctx)
+	defer func() { close(release); q.Stop() }()
+
+	q.PushID(SiteDeploy, "site", 1)
+	<-started
+
+	q.Push(NotifyEmail, map[string]any{"to": "a@b.c"})
+
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the email waited behind the deployment")
+	}
+}
+
+// A handler that asks to be retried runs again, and is not failed.
+func TestRetryLaterRunsTheJobAgain(t *testing.T) {
+	st := newStore(t)
+	q := New(st, quiet(), 1)
+
+	var mutex sync.Mutex
+	attempts := 0
+	done := make(chan struct{}, 1)
+
+	q.HandleQuick(NotifyEmail, func(ctx context.Context, job *store.Job) error {
+		mutex.Lock()
+		attempts++
+		n := attempts
+		mutex.Unlock()
+
+		if n == 1 {
+			return &RetryLater{After: time.Second, Reason: errors.New("the mail server did not answer")}
+		}
+
+		done <- struct{}{}
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	q.Start(ctx)
+	defer q.Stop()
+
+	q.Push(NotifyEmail, nil)
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the job was not retried")
+	}
+
+	if job, _ := st.ClaimJob(ctx); job != nil {
+		t.Fatalf("a job was left on the queue: %+v", job)
+	}
+}

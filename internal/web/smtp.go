@@ -130,21 +130,16 @@ func (a *App) smtpTest(w http.ResponseWriter, r *http.Request) {
 	input, _ := a.input(r)
 	to := stringInput(input, "to", user.Email)
 
-	err := notify.Send(r.Context(), a.smtpConfig(), notify.Message{
-		To:      []string{to},
-		Subject: config.Name + ": test message",
-		Body: fmt.Sprintf("This is a test message from %s on %s.\n\n"+
-			"If you are reading it, the panel can email you security alerts.\n",
-			config.Name, system.Hostname()),
-	})
-
-	if err != nil {
-		a.Log.Warn("SMTP test failed", "error", err)
-		a.failBack(w, r, "The test message was not sent: "+err.Error())
+	if !a.smtpConfig().Ready() {
+		a.failBack(w, r, "Save the SMTP settings first.")
 		return
 	}
 
-	a.okBack(w, r, "Test message sent to "+to+".")
+	// On the queue like every email: the outcome arrives as a notification.
+	a.queueEmail(to, config.Name+": test message", fmt.Sprintf("This is a test message from %s on %s.\n\n"+
+		"If you are reading it, the panel can email you its alerts.\n", config.Name, system.Hostname()), true)
+
+	a.okBack(w, r, "Sending a test message to "+to+" in the background. The bell in the top bar says whether it went.")
 }
 
 func (a *App) smtpDestroy(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +174,8 @@ func (a *App) anyAlertEnabled() bool {
 		a.Store.SettingBool(alertPanelLockSetting, true) ||
 		a.Store.SettingBool(alertSSHLoginSetting, true) ||
 		a.Store.SettingBool(alertSSHBanSetting, false) ||
-		a.healthAlert(alertCPUSetting) || a.healthAlert(alertDiskSetting)
+		a.healthAlert(alertCPUSetting) || a.healthAlert(alertDiskSetting) ||
+		a.healthAlert(alertAttacksSetting) || a.healthAlert(alertCriticalSetting)
 }
 
 func (a *App) alertSettings(ctx context.Context) map[string]any {
@@ -195,6 +191,9 @@ func (a *App) alertSettings(ctx context.Context) map[string]any {
 		"cert_expiry":   a.healthAlert(alertCertsSetting),
 		"malware":       a.healthAlert(alertMalwareSetting),
 		"web_ban":       a.healthAlert(alertWebBanSetting),
+		"attacks":       a.healthAlert(alertAttacksSetting),
+		"task_failed":   a.Store.SettingBool(alertTaskFailedSetting, true),
+		"critical":      a.healthAlert(alertCriticalSetting),
 	}
 }
 
@@ -224,6 +223,8 @@ func (a *App) securityAlerts(w http.ResponseWriter, r *http.Request) {
 	} {
 		a.Store.SetSetting(setting, strconv.FormatBool(boolInput(input, key, false)))
 	}
+
+	a.Store.SetSetting(alertTaskFailedSetting, strconv.FormatBool(boolInput(input, "task_failed", false)))
 
 	for key, setting := range healthAlertKeys {
 		a.Store.SetSetting(setting, strconv.FormatBool(boolInput(input, key, false)))
@@ -265,38 +266,21 @@ func (a *App) checkAlerts(ctx context.Context) {
 		}
 	}()
 
-	smtp := a.smtpConfig()
-	recipient := a.alertRecipient(ctx)
-	ready := smtp.Ready() && recipient != ""
+	var alerts []alert
 
-	var alerts []string
-
-	alerts = append(alerts, a.panelAlerts(ctx, ready)...)
-	alerts = append(alerts, a.sshAlerts(ready)...)
-	alerts = append(alerts, a.healthAlerts(ctx, ready)...)
+	alerts = append(alerts, a.panelAlerts(ctx)...)
+	alerts = append(alerts, a.sshAlerts()...)
+	alerts = append(alerts, a.healthAlerts(ctx)...)
+	alerts = append(alerts, a.taskAlerts(ctx)...)
 
 	a.pruneLogs(ctx)
 
-	if !ready || len(alerts) == 0 {
-		return
-	}
-
-	subject := fmt.Sprintf("%s alert on %s", config.Name, system.Hostname())
-	if len(alerts) == 1 {
-		first, _, _ := strings.Cut(alerts[0], "\n")
-		subject = fmt.Sprintf("[%s] %s", system.Hostname(), first)
-	}
-
-	body := strings.Join(alerts, "\n\n---\n\n") +
-		"\n\nChange which alerts you get on the Alerts tab of the panel's Security page.\n"
-
-	if err := notify.Send(ctx, smtp, notify.Message{To: []string{recipient}, Subject: subject, Body: body}); err != nil {
-		a.Log.Warn("could not send a security alert", "error", err)
-	}
+	// Shown in the panel, and emailed — on the queue — when it can be.
+	a.deliver(ctx, alerts)
 }
 
 // panelAlerts are the panel's own sign-ins and lockouts since the last look.
-func (a *App) panelAlerts(ctx context.Context, ready bool) []string {
+func (a *App) panelAlerts(ctx context.Context) []alert {
 	cursor, _ := strconv.ParseInt(a.Store.Setting(alertCursorSetting, ""), 10, 64)
 
 	if cursor == 0 {
@@ -311,12 +295,8 @@ func (a *App) panelAlerts(ctx context.Context, ready bool) []string {
 
 	a.Store.SetSetting(alertCursorSetting, strconv.FormatInt(attempts[len(attempts)-1].ID, 10))
 
-	if !ready {
-		return nil
-	}
-
 	limit, window := a.loginLimits()
-	alerts := []string{}
+	alerts := []alert{}
 	lockedSeen := map[string]bool{}
 
 	for _, attempt := range attempts {
@@ -324,11 +304,11 @@ func (a *App) panelAlerts(ctx context.Context, ready bool) []string {
 
 		if attempt.Success && a.Store.SettingBool(alertPanelLoginSetting, true) &&
 			!a.Store.KnownLoginAddress(ctx, attempt.UserID, attempt.IP, attempt.ID) {
-			alerts = append(alerts, fmt.Sprintf("New sign-in to the panel from %s\n\n"+
+			alerts = append(alerts, newAlert("panel_login", levelWarning, "/security?tab=logins", fmt.Sprintf("New sign-in to the panel from %s\n\n"+
 				"Account: %s\nAddress: %s\nBrowser: %s\nTime: %s\n\n"+
 				"This address had not signed in before. If it was not you, change your password "+
 				"and sign the other browsers out on the Security page.",
-				attempt.IP, attempt.Email, attempt.IP, attempt.UserAgent, when))
+				attempt.IP, attempt.Email, attempt.IP, attempt.UserAgent, when)))
 		}
 
 		if !attempt.Success && attempt.Reason != store.LoginLocked && !lockedSeen[attempt.IP] &&
@@ -338,10 +318,10 @@ func (a *App) panelAlerts(ctx context.Context, ready bool) []string {
 
 			if count == limit {
 				lockedSeen[attempt.IP] = true
-				alerts = append(alerts, fmt.Sprintf("%s was locked out of the panel\n\n"+
+				alerts = append(alerts, newAlert("panel_lockout", levelWarning, "/security?tab=logins", fmt.Sprintf("%s was locked out of the panel\n\n"+
 					"%d failed sign-ins in %d minutes, the last for %q at %s. It cannot try again "+
 					"for %d minutes.", attempt.IP, limit, int(window.Minutes()), attempt.Email, when,
-					int(window.Minutes())))
+					int(window.Minutes()))))
 			}
 		}
 	}
@@ -350,11 +330,11 @@ func (a *App) panelAlerts(ctx context.Context, ready bool) []string {
 }
 
 // sshAlerts are SSH logins and new bans since the last look.
-func (a *App) sshAlerts(ready bool) []string {
-	alerts := []string{}
+func (a *App) sshAlerts() []alert {
+	alerts := []alert{}
 
-	wantLogins := ready && a.Store.SettingBool(alertSSHLoginSetting, true)
-	wantBans := ready && a.Store.SettingBool(alertSSHBanSetting, false)
+	wantLogins := a.Store.SettingBool(alertSSHLoginSetting, true)
+	wantBans := a.Store.SettingBool(alertSSHBanSetting, false)
 
 	checked, _ := strconv.ParseInt(a.Store.Setting(alertSSHCheckedSetting, ""), 10, 64)
 	now := time.Now()
@@ -368,11 +348,11 @@ func (a *App) sshAlerts(ready bool) []string {
 				continue
 			}
 
-			alerts = append(alerts, fmt.Sprintf("SSH login as %s from %s\n\n"+
+			alerts = append(alerts, newAlert("ssh_login", levelWarning, "/logs?view=panel&source=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
 				"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
 				"If this was not you, ban the address on the Security page and change the "+
 				"account's password or keys.", event.User, event.IP, event.User, event.IP,
-				event.Method, event.Time.Format(time.RFC1123)))
+				event.Method, event.Time.Format(time.RFC1123))))
 		}
 	}
 
@@ -412,11 +392,11 @@ func (a *App) sshAlerts(ready bool) []string {
 				shown = shown[:50]
 			}
 
-			alerts = append(alerts, fmt.Sprintf("%d %s banned from SSH\n\n%s\n\n"+
+			alerts = append(alerts, newAlert("ssh_ban", levelInfo, "/security?tab=bans", fmt.Sprintf("%d %s banned from SSH\n\n%s\n\n"+
 				"Each failed to log in too many times. They are refused on the SSH port; "+
 				"unban one from the Security page.", len(fresh),
 				map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1],
-				strings.Join(shown, "\n")))
+				strings.Join(shown, "\n"))))
 		}
 	}
 

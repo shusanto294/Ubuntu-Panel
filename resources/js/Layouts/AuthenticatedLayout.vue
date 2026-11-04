@@ -1,4 +1,5 @@
 <script setup>
+import NotificationBell from '@/Components/NotificationBell.vue';
 import { onMounted, ref, watch } from 'vue';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
@@ -205,6 +206,8 @@ const sections = [
                 <div class="min-w-0 flex-1">
                     <slot name="header" />
                 </div>
+
+                <NotificationBell />
 
                 <Dropdown align="right" width="48">
                     <template #trigger>

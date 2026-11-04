@@ -162,6 +162,8 @@ func (a *App) pruneLogs(ctx context.Context) {
 
 	before := time.Now().AddDate(0, 0, -a.logRetentionDays())
 
+	a.Store.PruneNotifications(ctx, before)
+
 	if removed := a.Store.ClearLogs(ctx, []string{store.LogsTasks, store.LogsLogins, store.LogsSSH, store.LogsServer}, before); removed > 0 {
 		a.Log.Info("old logs removed", "rows", removed, "older_than_days", a.logRetentionDays())
 	}

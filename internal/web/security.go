@@ -397,8 +397,8 @@ func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapsh
 			Key: "alerts", Label: "Security alerts by email", Level: "info", Tab: "alerts",
 			OK: a.smtpConfig().Ready() && a.anyAlertEnabled(),
 			Detail: map[bool]string{
-				true:  "Sign-ins and lockouts are emailed to " + a.alertRecipient(ctx) + ".",
-				false: "Connect an SMTP server in Settings to be emailed about sign-ins and lockouts.",
+				true:  "Sign-ins, lockouts, attacks and server problems are emailed to " + a.alertRecipient(ctx) + ".",
+				false: "Connect an SMTP server in Settings to be emailed about sign-ins, attacks and server problems.",
 			}[a.smtpConfig().Ready() && a.anyAlertEnabled()],
 		},
 	}

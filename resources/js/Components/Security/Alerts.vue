@@ -22,6 +22,9 @@ const form = useForm({
     cert_expiry: props.alerts.cert_expiry,
     malware: props.alerts.malware,
     web_ban: props.alerts.web_ban,
+    attacks: props.alerts.attacks,
+    critical: props.alerts.critical,
+    task_failed: props.alerts.task_failed,
 });
 
 const save = () => form.post(route('security.alerts'), { preserveScroll: true });
@@ -31,6 +34,7 @@ const options = [
     { key: 'panel_lockout', label: 'Panel lockouts', hint: 'An address used up its failed sign-ins and is locked out.' },
     { key: 'ssh_login', label: 'Every successful SSH login', hint: 'Who logged in, from where, and with a password or a key.' },
     { key: 'ssh_ban', label: 'New SSH bans', hint: 'A digest of addresses fail2ban banned. Busy servers ban many a day.' },
+    { key: 'attacks', label: 'Attacks on the sites', hint: 'An address brute-forcing a login, scanning for vulnerable files or flooding a site — what Logs → “What stands out” flags. Checked every 5 minutes; each address at most once a day. Your own addresses are never included.' },
     { key: 'web_ban', label: 'New website and mail bans', hint: 'A digest of addresses the Protection tab’s jails banned.' },
 ];
 
@@ -40,23 +44,30 @@ const health = [
     { key: 'mail_queue', label: 'Mail piling up', hint: '100 or more messages waiting to send — usually a stolen mailbox sending spam.' },
     { key: 'cert_expiry', label: 'Certificate not renewing', hint: 'A site’s Let’s Encrypt certificate expires within 14 days.' },
     { key: 'malware', label: 'Malware scan findings', hint: 'The scan on the Protection tab found files it had not found before.' },
+    { key: 'task_failed', label: 'Failed panel tasks', hint: 'A deployment, backup, certificate or install that stopped with an error.' },
+    { key: 'critical', label: 'Critical errors in the server’s logs', hint: 'An out-of-memory kill, a crash, a fatal error. At most one email every 30 minutes, carrying everything since the last.' },
 ];
 </script>
 
 <template>
     <div class="grid gap-6 lg:grid-cols-2">
         <div :class="card">
-            <h3 class="font-semibold text-slate-900">Email alerts</h3>
-            <p class="mt-1 text-sm text-slate-500">Checked every minute and sent through your SMTP server.</p>
+            <h3 class="font-semibold text-slate-900">Notifications and email alerts</h3>
+            <p class="mt-1 text-sm text-slate-500">
+                Checked every minute. Each one you tick shows under the bell in the top bar, and is emailed as
+                well when an SMTP server is connected — sent in the background, and retried if the mail server
+                does not answer.
+            </p>
 
             <div v-if="!smtpReady" class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                No SMTP server is connected, so no alert can be sent.
-                <Link :href="route('settings')" class="font-medium underline">Connect one in Settings</Link>.
+                No SMTP server is connected, so these show in the panel only.
+                <Link :href="route('settings')" class="font-medium underline">Connect one in Settings</Link> to be
+                emailed as well.
             </div>
 
             <form class="mt-4 space-y-5" @submit.prevent="save">
                 <div>
-                    <label class="block text-sm font-medium text-slate-700">Send alerts to</label>
+                    <label class="block text-sm font-medium text-slate-700">Email alerts to</label>
                     <input v-model="form.email" type="email" :class="field" />
                     <InputError class="mt-2" :message="form.errors.email" />
                 </div>

@@ -363,6 +363,23 @@ var schema = []string{
 		offset INTEGER NOT NULL
 	)`,
 
+	// What the panel wants its owner to know: an attack, a sign-in from a new
+	// address, a disk filling up, a failed backup. Kept whether or not email
+	// is set up, shown under the bell in the top bar, and emailed as well when
+	// it is.
+	`CREATE TABLE IF NOT EXISTS notifications (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_at INTEGER NOT NULL,
+		kind       TEXT NOT NULL,
+		level      TEXT NOT NULL,
+		title      TEXT NOT NULL,
+		body       TEXT NOT NULL DEFAULT '',
+		link       TEXT NOT NULL DEFAULT '',
+		read_at    INTEGER
+	)`,
+	`CREATE INDEX IF NOT EXISTS notifications_created ON notifications(created_at)`,
+	`CREATE INDEX IF NOT EXISTS notifications_unread ON notifications(read_at, id)`,
+
 	`CREATE TABLE IF NOT EXISTS ip_countries (
 		ip         TEXT PRIMARY KEY,
 		country    TEXT NOT NULL,

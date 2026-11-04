@@ -78,7 +78,21 @@ const (
 	// The Security page's two pieces of work that wait on apt.
 	SecurityAutoUpdates = "security.auto-updates"
 	SecurityUpdates     = "security.updates"
+
+	// NotifyEmail sends one email — an alert, a test message. On the quick
+	// lane, so it never waits behind a deployment.
+	NotifyEmail = "notify.email"
 )
+
+// RetryLater is what a handler returns to have its job run again after a
+// delay instead of failing: a mail server that did not answer this minute
+// may well the next.
+type RetryLater struct {
+	After  time.Duration
+	Reason error
+}
+
+func (r *RetryLater) Error() string { return r.Reason.Error() }
 
 // Handler runs one job. Returning an error records it against the job row; the
 // user-facing outcome is the task the handler wrote, not this.
@@ -91,6 +105,10 @@ type Queue struct {
 
 	workers  int
 	handlers map[string]Handler
+
+	// quick are the kinds the quick lane runs: seconds of work that should
+	// not wait for a worker busy with a deployment.
+	quick []string
 
 	stop   context.CancelFunc
 	waited sync.WaitGroup
@@ -113,6 +131,13 @@ func New(st *store.Store, log *slog.Logger, workers int) *Queue {
 // Handle registers the function for a kind of job.
 func (q *Queue) Handle(kind string, handler Handler) {
 	q.handlers[kind] = handler
+}
+
+// HandleQuick registers a kind that runs on the quick lane, a worker of its
+// own that takes nothing else.
+func (q *Queue) HandleQuick(kind string, handler Handler) {
+	q.handlers[kind] = handler
+	q.quick = append(q.quick, kind)
 }
 
 // Push enqueues work.
@@ -160,8 +185,18 @@ func (q *Queue) Start(parent context.Context) {
 		go func(worker int) {
 			defer q.waited.Done()
 
-			q.run(ctx, worker)
+			q.run(ctx, worker, false)
 		}(i + 1)
+	}
+
+	if len(q.quick) > 0 {
+		q.waited.Add(1)
+
+		go func() {
+			defer q.waited.Done()
+
+			q.run(ctx, 0, true)
+		}()
 	}
 
 	q.log.Info("queue started", "workers", q.workers)
@@ -177,7 +212,7 @@ func (q *Queue) Stop() {
 	q.waited.Wait()
 }
 
-func (q *Queue) run(ctx context.Context, worker int) {
+func (q *Queue) run(ctx context.Context, worker int, quick bool) {
 	// Poll rather than notify: the work arrives every few minutes at most, and
 	// a second of latency on a deployment that takes two is not worth a
 	// wake-up channel that has to survive a restart.
@@ -192,7 +227,9 @@ func (q *Queue) run(ctx context.Context, worker int) {
 		}
 
 		for {
-			job, err := q.store.ClaimJob(ctx)
+			// The quick lane takes only its kinds; the others take everything
+			// but them.
+			job, err := q.store.ClaimJobOf(ctx, q.quick, !quick)
 			if err != nil {
 				if !errors.Is(err, store.ErrNotFound) {
 					q.log.Error("could not claim a job", "error", err)
@@ -233,6 +270,14 @@ func (q *Queue) execute(ctx context.Context, worker int, job *store.Job) {
 	}()
 
 	if err := handler(ctx, job); err != nil {
+		var retry *RetryLater
+		if errors.As(err, &retry) {
+			log.Warn("will retry", "error", retry.Reason, "after", retry.After)
+			q.store.RetryJob(job.ID, retry.After, retry.Reason.Error())
+
+			return
+		}
+
 		log.Error("failed", "error", err, "took", time.Since(started))
 		q.store.FailJob(job.ID, err.Error())
 

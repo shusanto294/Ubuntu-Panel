@@ -100,3 +100,27 @@ func TestEventsCombinesFiltersAndPages(t *testing.T) {
 		t.Fatalf("cleared %d", removed)
 	}
 }
+
+func TestServerEventsAfter(t *testing.T) {
+	st := taskStore(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	st.RecordServerEvents(ctx, []ServerEvent{
+		{CreatedAt: now, Source: "kernel", Level: "critical", Message: "Out of memory: Killed process 1"},
+		{CreatedAt: now, Source: "nginx", Level: "error", Message: "upstream timed out"},
+	})
+
+	cursor := st.LatestServerEventID(ctx)
+
+	st.RecordServerEvents(ctx, []ServerEvent{
+		{CreatedAt: now, Source: "kernel", Level: "critical", Message: "Out of memory: Killed process 2"},
+		{CreatedAt: now, Source: "php", Level: "warning", Message: "max_children"},
+		{CreatedAt: now, Source: "site", Level: "critical", Message: "PHP Fatal error"},
+	})
+
+	events, total := st.ServerEventsAfter(ctx, cursor, []string{"critical"}, 1)
+	if total != 2 || len(events) != 1 || events[0].Message != "Out of memory: Killed process 2" {
+		t.Fatalf("total %d, %+v", total, events)
+	}
+}
