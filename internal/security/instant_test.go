@@ -36,18 +36,11 @@ func TestStaleInstantBans(t *testing.T) {
 	}
 }
 
-func TestWebJailsCarryTheNginxAction(t *testing.T) {
+func TestWebJailsLeaveNginxToTheWorker(t *testing.T) {
 	p := ProtectionDefaults
 	p.WebScan.Enabled = true
 
-	file := ProtectJailFile(p, JailEnv{BotCheck: true})
-	if strings.Count(file, "action   = %(action_)s\n           "+NginxActionName) != 2 {
-		t.Errorf("the scanner and secret jails should both reach nginx at once:\n%s", file)
-	}
-
-	if !strings.Contains(nginxActionFile, "actionban = "+BotCheckBinary+" --nginx-ban <ip>") ||
-		!strings.Contains(nginxActionFile, "actionunban = "+BotCheckBinary+" --nginx-unban <ip>") ||
-		!strings.Contains(nginxActionFile, "actionflush = true") {
-		t.Errorf("action file:\n%s", nginxActionFile)
+	if file := ProtectJailFile(p, JailEnv{BotCheck: true}); strings.Contains(file, "action ") {
+		t.Errorf("the jails keep fail2ban's own action; the panel's worker tells nginx:\n%s", file)
 	}
 }

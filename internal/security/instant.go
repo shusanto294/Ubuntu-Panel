@@ -15,7 +15,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 )
 
-// Instant bans: nginx refuses an address the moment a website jail bans it.
+// Instant bans: nginx refuses an address the moment fail2ban bans it.
 //
 // The firewall ban fail2ban makes is immediate, but it cannot stop a visitor
 // whose requests arrive through Cloudflare — the firewall sees Cloudflare.
@@ -23,44 +23,28 @@ import (
 // rebuilt once a minute from a copy of the Security page's state that can
 // itself be a minute or two old. A scanner had minutes to keep going.
 //
-// So the website jails carry one more fail2ban action, which runs the panel's
-// binary with --nginx-ban <ip> as fail2ban bans: it adds the address to a file
-// of its own and reloads nginx, within a second of the request. fail2ban's
-// unban takes it out again. The minute's full list stays what is
-// authoritative; this file only gets there first, and anything left in it
-// that is no longer banned is pruned by the panel (StaleInstantBans).
+// So the panel's ban worker (web/ban_worker.go) follows fail2ban's log and,
+// for every ban, runs the panel's binary with --nginx-ban <ip> through sudo:
+// the address goes into a file of its own and nginx reloads, a second or so
+// after the request. An unban takes it out again. The minute's full list
+// stays what is authoritative; this file only gets there first, and anything
+// left in it that is no longer banned is pruned (StaleInstantBans).
 
-// InstantBansPath is the file the action writes. In conf.d, beside the full
+// InstantBansPath is the file the worker writes. In conf.d, beside the full
 // list: nginx is fine with an address denied twice.
 const InstantBansPath = "/etc/nginx/conf.d/panel-banned-instant.conf"
 
-// instantBansLock serialises the action: fail2ban runs each jail's actions on
-// a thread of their own, and two bans at once must not lose one another.
+// instantBansLock serialises writers of the file: the worker, an unban from
+// the Security page and the minute's pruning may all arrive at once.
 const instantBansLock = "/run/ubuntu-panel-nginx-bans.lock"
 
-// NginxActionName and nginxActionPath are the fail2ban action.
-const (
-	NginxActionName = "ubuntu-panel-nginx"
-	nginxActionPath = "/etc/fail2ban/action.d/ubuntu-panel-nginx.conf"
-)
-
-// nginxActionFile is the action. actionflush is a command that does nothing,
-// on purpose: without one fail2ban unbans every address one by one when a jail
-// stops — on every fail2ban restart — and bans them again one by one when it
-// starts, a reload of nginx for each. Kept, the file rides through a restart
-// untouched, and a ban fail2ban restores is already there.
-var nginxActionFile = "# Managed by Ubuntu Panel: nginx refuses an address the moment a website jail bans it.\n" +
-	"[Definition]\n" +
-	"actionstart =\n" +
-	"actionstop =\n" +
-	"actioncheck =\n" +
-	"actionflush = true\n" +
-	"actionban = " + BotCheckBinary + " --nginx-ban <ip>\n" +
-	"actionunban = " + BotCheckBinary + " --nginx-unban <ip>\n"
+// nginxActionPath is the fail2ban action 2.16.0 installed to do this from
+// inside fail2ban; it is removed wherever it is found.
+const nginxActionPath = "/etc/fail2ban/action.d/ubuntu-panel-nginx.conf"
 
 // InstantBan adds an address to the instant file (ban) or takes it out, and
-// reloads nginx when the file changed. Run as root — by fail2ban, or by the
-// panel through sudo. Nothing to do on a machine without nginx.
+// reloads nginx when the file changed. Run as root: the panel runs it through
+// sudo (BanInstant, ReleaseInstant). Nothing to do on a machine without nginx.
 func InstantBan(address string, ban bool) error {
 	address = strings.TrimSpace(address)
 	if !ValidAddress(address) {
@@ -202,8 +186,7 @@ func StaleInstantBans(contents string, banned []string, now time.Time, grace tim
 }
 
 // ReleaseInstant takes an address off the instant file from the panel, which
-// is not root: through sudo and the same binary, so it takes the same lock
-// fail2ban's action does. Nothing to do when the file does not name it.
+// is not root: through sudo and the panel's binary, which takes the lock. Nothing to do when the file does not name it.
 func ReleaseInstant(address string) error {
 	if !ValidAddress(strings.TrimSpace(address)) {
 		return fmt.Errorf("%q is not an address", address)
@@ -221,6 +204,22 @@ func ReleaseInstant(address string) error {
 	if result := proc.Run("sudo "+BotCheckBinary+" --nginx-unban "+proc.Quote(strings.TrimSpace(address))+" 2>&1",
 		time.Minute); !result.OK() {
 		return fmt.Errorf("nginx still refuses %s: %s", address, lastLines(result.Output, 2))
+	}
+
+	return nil
+}
+
+// BanInstant has nginx refuse an address now, from the panel: through sudo and
+// the panel's binary, which takes the lock and reloads nginx.
+func BanInstant(address string) error {
+	address = strings.TrimSpace(address)
+	if !ValidAddress(address) {
+		return fmt.Errorf("%q is not an address", address)
+	}
+
+	if result := proc.Run("sudo "+BotCheckBinary+" --nginx-ban "+proc.Quote(address)+" 2>&1",
+		time.Minute); !result.OK() {
+		return fmt.Errorf("%s", lastLines(result.Output, 2))
 	}
 
 	return nil

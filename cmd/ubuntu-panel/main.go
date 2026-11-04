@@ -38,7 +38,7 @@ func main() {
 		"update the apps already on this machine and exit")
 	verifiedBot := flag.String("verified-bot", "",
 		"exit 0 when the address is a search engine's crawler, by forward-confirmed reverse DNS")
-	nginxBan := flag.String("nginx-ban", "", "have nginx refuse the address now (fail2ban's action; run as root)")
+	nginxBan := flag.String("nginx-ban", "", "have nginx refuse the address now (the panel's ban worker runs it as root)")
 	nginxUnban := flag.String("nginx-unban", "", "take the address off nginx's instant ban list (run as root)")
 
 	flag.Parse()
@@ -57,8 +57,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// fail2ban's action for the website jails: nginx refuses the address the
-	// moment it is banned, which is what stops one coming through Cloudflare.
+	// The ban worker's hands: nginx refuses the address the moment fail2ban
+	// bans it, which is what stops one coming through Cloudflare. Run as root
+	// through sudo, so the panel's own process never writes nginx's files.
 	if *nginxBan != "" || *nginxUnban != "" {
 		address, ban := *nginxBan, true
 		if address == "" {

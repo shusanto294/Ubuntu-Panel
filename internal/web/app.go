@@ -140,6 +140,10 @@ func (a *App) Start(ctx context.Context) {
 	// Security alerts: the clock that emails sign-ins, lockouts and bans.
 	go a.runSecurityAlerts(ctx)
 
+	// The ban worker: follows fail2ban and gives nginx each ban and unban the
+	// moment it happens, which is what stops a visitor behind Cloudflare.
+	go a.runBanWorker(ctx)
+
 	// Panel updates: how the last one went, if this is the panel it installed,
 	// then the check for a newer one, and the automatic update when that is on.
 	go func() {
