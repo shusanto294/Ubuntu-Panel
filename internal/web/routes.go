@@ -85,6 +85,7 @@ func (a *App) routes() *router {
 	// the pages that start the work show a line of progress and link here
 	// rather than carrying a console each.
 	rt.get("/logs", "logs.index", authenticated, a.logsIndex)
+	rt.get("/logs/stats/{section}", "logs.stats", authenticated, a.logsStatsPage)
 	rt.get("/logs/{task}", "logs.show", authenticated, a.logsShow)
 
 	rt.get("/tasks/latest", "tasks.latest", authenticated, a.tasksLatest)

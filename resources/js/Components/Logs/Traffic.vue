@@ -20,7 +20,20 @@ const props = defineProps({
     fpm: { type: Array, default: () => [] },
     // Why each trusted address is trusted: they are never offered a Ban button.
     trustedIps: { type: Object, default: () => ({}) },
+
+    // Which parts to show: findings, timeline, sites, cpu, ips, attacks,
+    // agents, urls. Each stats page shows its own few.
+    sections: { type: Array, default: () => ['findings', 'timeline', 'sites', 'cpu', 'ips', 'attacks', 'agents', 'urls'] },
+
+    // Narrowing for a page about one kind of response: the addresses and URLs
+    // with the most 404s, or 5xx, or the flagged addresses only.
+    focus: { type: String, default: '' }, // '' | 'not-found' | 'server-errors' | 'suspicious'
+
+    // Still being read.
+    loading: { type: Boolean, default: false },
 });
+
+const show = (section) => props.sections.includes(section);
 
 const WINDOW_LABEL = { '1h': 'Last hour', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 
@@ -43,9 +56,15 @@ const bytes = (n) => {
 // A different window reloads only the summary; the list below keeps its filters.
 const setWindow = (key) =>
     router.get(
-        route('logs.index'),
+        window.location.pathname,
         { ...Object.fromEntries(new URLSearchParams(window.location.search)), window: key },
-        { preserveScroll: true, preserveState: true, only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'] },
+        {
+            preserveScroll: true,
+            preserveState: true,
+            only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'],
+            onStart: () => (refreshing.value = true),
+            onFinish: () => (refreshing.value = false),
+        },
     );
 
 const logHref = (site, q) => {
@@ -211,8 +230,34 @@ const showAllProcesses = ref(false);
 
 // Every list a page at a time.
 const sitePages = usePagination(() => t.value?.sites ?? [], 20);
-const ipPages = usePagination(() => t.value?.top_ips ?? [], 20);
-const pathPages = usePagination(() => t.value?.paths ?? [], 20);
+const focusedIps = computed(() => {
+    const list = t.value?.top_ips ?? [];
+    switch (props.focus) {
+        case 'not-found':
+            return list.filter((ip) => ip.not_found > 0).sort((a, b) => b.not_found - a.not_found);
+        case 'suspicious':
+            return list.filter((ip) => ip.danger || ip.verdict || Object.keys(ip.threats ?? {}).length);
+        default:
+            return list;
+    }
+});
+
+const focusedPaths = computed(() => {
+    const list = t.value?.paths ?? [];
+    switch (props.focus) {
+        case 'not-found':
+            return list.filter((p) => p.not_found > 0).sort((a, b) => b.not_found - a.not_found);
+        case 'server-errors':
+            return list.filter((p) => p.errors > 0).sort((a, b) => b.errors - a.errors);
+        case 'suspicious':
+            return list.filter((p) => p.threat);
+        default:
+            return list;
+    }
+});
+
+const ipPages = usePagination(focusedIps, 20);
+const pathPages = usePagination(focusedPaths, 20);
 const agentPages = usePagination(() => t.value?.agents ?? [], 20);
 const groupPages = usePagination(() => props.processes?.groups ?? [], 20);
 const processPages = usePagination(() => props.processes?.top ?? [], 20);
@@ -252,8 +297,12 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
         </div>
 
+        <div v-if="loading && !traffic" class="rounded-2xl bg-white px-5 py-12 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-900/5">
+            Reading the access logs…
+        </div>
+
         <!-- What stands out -->
-        <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+        <div v-if="show('findings')" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
             <h3 class="font-semibold text-slate-900">What stands out</h3>
             <ul v-if="findings.length" class="mt-3 space-y-2">
                 <li
@@ -279,51 +328,13 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </p>
         </div>
 
-        <!-- Totals -->
-        <div v-if="traffic" class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">Requests</p>
-                <p class="mt-1 text-2xl font-semibold text-slate-900">{{ number(traffic.requests) }}</p>
-                <p class="text-xs text-slate-400">{{ bytes(traffic.bytes) }} sent</p>
-            </div>
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">To PHP / the app</p>
-                <p class="mt-1 text-2xl font-semibold text-slate-900">{{ number(traffic.dynamic) }}</p>
-                <p class="text-xs text-slate-400">the ones that cost CPU</p>
-            </div>
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">Addresses</p>
-                <p class="mt-1 text-2xl font-semibold text-slate-900">{{ number(traffic.ips) }}</p>
-                <p class="text-xs text-slate-400">distinct visitors</p>
-            </div>
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">Not found / refused</p>
-                <p class="mt-1 text-2xl font-semibold text-slate-900">{{ number(statusCount('4xx')) }}</p>
-                <p class="text-xs text-slate-400">4xx responses</p>
-            </div>
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">Server errors</p>
-                <p class="mt-1 text-2xl font-semibold" :class="statusCount('5xx') ? 'text-rose-600' : 'text-slate-900'">
-                    {{ number(statusCount('5xx')) }}
-                </p>
-                <p class="text-xs text-slate-400">5xx responses</p>
-            </div>
-            <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-                <p class="text-xs text-slate-500">Suspicious</p>
-                <p class="mt-1 text-2xl font-semibold" :class="threatTotal ? 'text-amber-600' : 'text-slate-900'">
-                    {{ number(threatTotal) }}
-                </p>
-                <p class="text-xs text-slate-400">logins, scans, XML-RPC</p>
-            </div>
-        </div>
-
         <p v-if="traffic?.partial?.length" class="text-xs text-amber-700">
             {{ traffic.partial.join(', ') }} had more requests in this window than the panel reads at once, so
             the counts for {{ traffic.partial.length === 1 ? 'it' : 'them' }} are the most recent part of it.
         </p>
 
         <!-- Timeline -->
-        <div v-if="traffic?.timeline?.length" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+        <div v-if="show('timeline') && traffic?.timeline?.length" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="font-semibold text-slate-900">Requests over time</h3>
                 <div class="flex items-center gap-4 text-xs text-slate-500">
@@ -364,7 +375,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
 
         <div class="grid gap-6 xl:grid-cols-2">
             <!-- Sites -->
-            <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
+            <div v-if="show('sites') && traffic" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
                 <div class="px-5 pt-5">
                     <h3 class="font-semibold text-slate-900">Which sites are getting the requests</h3>
                     <p class="text-sm text-slate-500">
@@ -373,7 +384,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                     </p>
                 </div>
                 <div v-if="!traffic?.sites?.length" class="px-5 py-8 text-center text-sm text-slate-500">
-                    No requests in this window.
+                    Nothing to show for this period.
                 </div>
                 <div v-else class="mt-3 overflow-x-auto">
                     <table class="min-w-full divide-y divide-slate-200 text-sm">
@@ -424,7 +435,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
 
             <!-- CPU now -->
-            <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
+            <div v-if="show('cpu')" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
                 <div class="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
                     <div>
                         <h3 class="font-semibold text-slate-900">What is using the CPU right now</h3>
@@ -509,15 +520,15 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
 
             <!-- Addresses -->
-            <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
+            <div v-if="show('ips') && traffic" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
                 <div class="px-5 pt-5">
                     <h3 class="font-semibold text-slate-900">Who is sending them</h3>
                     <p class="text-sm text-slate-500">
                         The busiest addresses, with the ones that look like an attack first.
                     </p>
                 </div>
-                <div v-if="!traffic?.top_ips?.length" class="px-5 py-8 text-center text-sm text-slate-500">
-                    No requests in this window.
+                <div v-if="!focusedIps.length" class="px-5 py-8 text-center text-sm text-slate-500">
+                    Nothing to show for this period.
                 </div>
                 <div v-else class="mt-3 overflow-x-auto">
                     <table class="min-w-full divide-y divide-slate-200 text-sm">
@@ -606,7 +617,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
 
             <!-- Attacks -->
-            <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+            <div v-if="show('attacks') && traffic" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Attacks and probing</h3>
                 <p class="text-sm text-slate-500">
                     Login posts, XML-RPC and requests for files only an attacker asks for.
@@ -643,7 +654,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
 
             <!-- User agents -->
-            <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+            <div v-if="show('agents') && traffic" class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Browsers and bots</h3>
                 <p class="text-sm text-slate-500">What the requests said they were. A bot can lie; a browser rarely sends 1,000 requests.</p>
                 <ul class="mt-4 space-y-2">
@@ -665,12 +676,12 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
             </div>
 
             <!-- URLs -->
-            <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
+            <div v-if="show('urls') && traffic" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 xl:col-span-2">
                 <div class="px-5 pt-5">
                     <h3 class="font-semibold text-slate-900">Most requested URLs</h3>
                     <p class="text-sm text-slate-500">Without the query string, per site.</p>
                 </div>
-                <div v-if="traffic?.paths?.length" class="mt-3 overflow-x-auto">
+                <div v-if="focusedPaths.length" class="mt-3 overflow-x-auto">
                     <table class="min-w-full divide-y divide-slate-200 text-sm">
                         <thead class="bg-slate-50">
                             <tr class="text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -705,7 +716,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                     </table>
                     <Pagination v-model="pathPages.page.value" :pages="pathPages.pages.value" :total="pathPages.total.value" :per-page="pathPages.perPage" />
                 </div>
-                <p v-else class="px-5 py-8 text-center text-sm text-slate-500">No requests in this window.</p>
+                <p v-else class="px-5 py-8 text-center text-sm text-slate-500">Nothing to show for this period.</p>
             </div>
         </div>
     </div>

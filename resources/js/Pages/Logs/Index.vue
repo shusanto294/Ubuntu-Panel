@@ -1,9 +1,9 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Events from '@/Components/Logs/Events.vue';
 import ServerLogs from '@/Components/Logs/ServerLogs.vue';
-import Traffic from '@/Components/Logs/Traffic.vue';
+import StatTiles from '@/Components/Logs/StatTiles.vue';
 import { confirmDanger } from '@/dialog';
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
@@ -18,13 +18,8 @@ const props = defineProps({
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
     clearSources: { type: Array, default: () => [] },
 
-    // Traffic.
-    window: { type: String, default: '1h' },
-    windows: { type: Array, default: () => ['1h', '24h', '7d', '30d'] },
-    trustedIps: { type: Object, default: () => ({}) },
-    traffic: { type: Object, default: null },
-    processes: { type: Object, default: null },
-    fpm: { type: Array, default: () => [] },
+    // The boxes over the server's list: asked for once the page is up.
+    stats: { type: Object, default: null },
 
     // Everything that happened.
     events: { type: Array, default: () => [] },
@@ -75,6 +70,14 @@ const clearLogs = async () => {
             onSuccess: () => (showClear.value = false),
         });
 };
+
+// The boxes read the access logs, which is the slow part: the page shows the
+// list first and asks for them after.
+onMounted(() => {
+    if (props.view === 'server' && !props.stats) {
+        router.reload({ only: ['stats'], preserveScroll: true, preserveState: true });
+    }
+});
 
 const setRetention = (days) => router.post(route('logs.retention'), { days }, { preserveScroll: true });
 </script>
@@ -145,7 +148,7 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
                         <span class="font-medium text-slate-700">Also empty the log files on disk</span>
                         <span class="block text-xs text-slate-500">
                             nginx's, PHP-FPM's, the databases', fail2ban's, the system's and each site's — whichever
-                            the choice above covers. The Website traffic view reads the access logs, so it starts
+                            the choice above covers. The traffic boxes and their pages read the access logs, so they start
                             from zero too.
                         </span>
                     </span>
@@ -205,18 +208,10 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
             :search="search"
         />
 
-        <div v-else class="space-y-10">
-            <Traffic
-                :window="window"
-                :windows="windows"
-                :traffic="traffic"
-                :processes="processes"
-                :fpm="fpm"
-                :trusted-ips="trustedIps"
-            />
+        <div v-else class="space-y-6">
+            <StatTiles :stats="stats" :window="filters.range ?? '1h'" />
 
             <section>
-                <h3 class="mb-3 font-semibold text-slate-900">What the server logged</h3>
                 <Events
                     view="server"
                     :events="events"

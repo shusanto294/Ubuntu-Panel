@@ -238,6 +238,14 @@ func (rn *Renderer) StaleAssets(r *http.Request) bool {
 	return sent != "" && sent != rn.Version()
 }
 
+// Asked is whether a partial reload of this component named the prop. A
+// deferred prop — one too slow to hold the first paint for — is only added
+// when it is asked for: the page renders without it and asks for it once it
+// is up.
+func Asked(r *http.Request, component, prop string) bool {
+	return partialProps(r, component)[prop]
+}
+
 // partialProps is the set the client asked for on a partial reload, or nil
 // when it wants the whole page.
 func partialProps(r *http.Request, component string) map[string]bool {

@@ -53,9 +53,16 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 
 	switch view {
 	case "server":
-		extras = append(extras,
-			a.logsTrafficProps(r.Context(), query.Get("window"), session.ClientIP(r)),
-			a.logsEventsProps(r.Context(), flat, "server"))
+		extras = append(extras, a.logsEventsProps(r.Context(), flat, "server"))
+
+		// The boxes above the list read the access logs, which is the slow
+		// part of the page: never on the first paint, only when the page asks
+		// once it is up.
+		if inertia.Asked(r, "Logs/Index", "stats") {
+			extras = append(extras, map[string]any{
+				"stats": a.trafficStats(r.Context(), query.Get("range"), session.ClientIP(r)),
+			})
+		}
 	case "panel":
 		extras = append(extras, a.logsEventsProps(r.Context(), flat, "panel"))
 	case "files":

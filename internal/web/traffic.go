@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
@@ -394,48 +396,6 @@ func readServerLog(path string, page int, search string) (string, int) {
 
 // ------------------------------------------------------------------ props
 
-// logsTrafficProps are the Traffic view's: the access logs read over the
-// window, and what the processor is doing now. Lazy, so the Activity view —
-// and a partial reload that does not ask for them — never pays for the read.
-func (a *App) logsTrafficProps(ctx context.Context, windowKey, viewer string) map[string]any {
-	window := findTrafficWindow(windowKey)
-
-	windows := make([]string, 0, len(trafficWindows))
-	for _, w := range trafficWindows {
-		windows = append(windows, w.key)
-	}
-
-	// The processor is measured before the logs are read, never during: the
-	// read is real work, and measured alongside it the panel's own cat and
-	// tail would be what the page says is using the CPU.
-	var (
-		sampled   sync.Once
-		processes system.Processes
-	)
-	sample := func() system.Processes {
-		sampled.Do(func() { processes = system.SampleProcesses(time.Second) })
-		return processes
-	}
-
-	return map[string]any{
-		"window":  window.key,
-		"windows": windows,
-		"traffic": inertia.Lazy(func() any {
-			sample()
-			report, _ := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
-			return report
-		}),
-		// Why each trusted address on the page is trusted, so it is offered no
-		// Ban button anywhere.
-		"trustedIps": inertia.Lazy(func() any {
-			_, reasons := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
-			return reasons
-		}),
-		"processes": inertia.Lazy(func() any { return sample() }),
-		"fpm":       inertia.Lazy(func() any { return fpmPressure() }),
-	}
-}
-
 // logsFilesProps are the Log files view's: the list of files, and a page of
 // the one chosen.
 func (a *App) logsFilesProps(ctx context.Context, source string, page int, search string) map[string]any {
@@ -489,4 +449,95 @@ func (a *App) logsFilesProps(ctx context.Context, source string, page int, searc
 	}
 
 	return props
+}
+
+// ------------------------------------------------------------ stats pages
+
+// trafficStats are the Logs page's boxes: the period's totals, each a link
+// to its own page.
+func (a *App) trafficStats(ctx context.Context, windowKey, viewer string) map[string]any {
+	window := findTrafficWindow(windowKey)
+
+	report, _ := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
+
+	suspicious := 0
+	for _, threat := range report.Threats {
+		suspicious += threat.Requests
+	}
+
+	attackers := 0
+	for _, ip := range report.TopIPs {
+		if ip.Danger {
+			attackers++
+		}
+	}
+
+	return map[string]any{
+		"window":        window.key,
+		"requests":      report.Requests,
+		"bytes":         report.Bytes,
+		"dynamic":       report.Dynamic,
+		"ips":           report.IPs,
+		"client_errors": report.Statuses["4xx"],
+		"server_errors": report.Statuses["5xx"],
+		"suspicious":    suspicious,
+		"attackers":     attackers,
+		"partial":       report.Partial,
+		"took_ms":       report.TookMS,
+	}
+}
+
+// statsSections are the pages the Logs page's boxes open.
+var statsSections = map[string]string{
+	"requests":      "Requests",
+	"php":           "Requests to PHP and the apps",
+	"addresses":     "Addresses",
+	"not-found":     "Not found and refused",
+	"server-errors": "Server errors",
+	"suspicious":    "Suspicious activity",
+}
+
+// logsStatsPage is one of them. Like the boxes, the traffic is never read on
+// the first paint: the page asks for it once it is up, and shows that it is
+// reading meanwhile.
+func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
+	section := r.PathValue("section")
+
+	title, ok := statsSections[section]
+	if !ok {
+		a.notFoundError(w, r, "No such page.")
+		return
+	}
+
+	window := findTrafficWindow(r.URL.Query().Get("window"))
+
+	windows := make([]string, 0, len(trafficWindows))
+	for _, w := range trafficWindows {
+		windows = append(windows, w.key)
+	}
+
+	props := inertia.Props{
+		"section": section,
+		"title":   title,
+		"window":  window.key,
+		"windows": windows,
+	}
+
+	viewer := session.ClientIP(r)
+	ctx := context.WithoutCancel(r.Context())
+
+	if inertia.Asked(r, "Logs/Stats", "traffic") {
+		report, reasons := a.markTrusted(ctx, a.traffic(ctx, window), viewer)
+		props["traffic"] = report
+		props["trustedIps"] = reasons
+	}
+
+	// What the CPU is doing is the PHP page's alone: it takes a second to
+	// measure.
+	if section == "php" && inertia.Asked(r, "Logs/Stats", "processes") {
+		props["processes"] = system.SampleProcesses(time.Second)
+		props["fpm"] = fpmPressure()
+	}
+
+	a.Render.Render(w, r, "Logs/Stats", props)
 }

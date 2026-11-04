@@ -49,9 +49,6 @@ const loading = ref(false);
 const visit = (page = 1) => {
     const query = { view: props.view };
 
-    // The traffic summary's window, on the Server logs tab, stays as it was.
-    const trafficWindow = new URLSearchParams(window.location.search).get('window');
-    if (trafficWindow) query.window = trafficWindow;
     for (const [key, value] of Object.entries(form.value)) {
         if (value) query[key] = value;
     }
@@ -60,7 +57,8 @@ const visit = (page = 1) => {
     router.get(route('logs.index'), query, {
         preserveScroll: true,
         preserveState: true,
-        only: ['events', 'filters', 'pagination', 'counts', 'sites'],
+        // On Server logs the boxes above follow the period too.
+        only: ['events', 'filters', 'pagination', 'counts', 'sites', ...(props.view === 'server' ? ['stats'] : [])],
         onStart: () => (loading.value = true),
         onFinish: () => (loading.value = false),
     });
@@ -225,8 +223,8 @@ const toggle = (key) => {
         </form>
 
         <p v-if="view === 'server'" class="text-xs text-slate-500">
-            Copied in from the server's log files every minute. Ordinary successful requests are left to the traffic
-            summary above; every request is still in the access logs under Log files.
+            Copied in from the server's log files every minute. Ordinary successful requests are only counted in
+            the boxes above; every request is still in the access logs under Log files.
         </p>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
