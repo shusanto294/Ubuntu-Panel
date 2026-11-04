@@ -89,8 +89,8 @@ func firewallBlocks(rules []security.Rule) []security.Rule {
 	return blocks
 }
 
-// mergeBans puts the three lists together, one row per address, sorted by the
-// number of things refusing it and then by address.
+// mergeBans puts the three lists together, one row per address, by address;
+// newestFirst orders them once the times are known.
 func mergeBans(ssh []string, protect map[string][]string, blocks []security.Rule, locked map[string]int64) []bannedAddress {
 	rows := map[string]*bannedAddress{}
 
@@ -124,15 +124,57 @@ func mergeBans(ssh []string, protect map[string][]string, blocks []security.Rule
 		list = append(list, *row)
 	}
 
-	sort.Slice(list, func(i, j int) bool {
-		if len(list[i].Sources) != len(list[j].Sources) {
-			return len(list[i].Sources) > len(list[j].Sources)
+	sort.Slice(list, func(i, j int) bool { return list[i].IP < list[j].IP })
+
+	return list
+}
+
+// latestBan is when the most recent of an address's bans began, 0 when no
+// source knows.
+func latestBan(row bannedAddress) int64 {
+	latest := int64(0)
+	for _, source := range row.Sources {
+		if source.At > latest {
+			latest = source.At
+		}
+	}
+
+	return latest
+}
+
+// newestRule is the lowest firewall rule number refusing the address, or 0.
+// The panel inserts every block as rule 1, so a lower number is a newer block —
+// the order for the rules added before the panel kept their time.
+func newestRule(row bannedAddress) int {
+	newest := 0
+	for _, source := range row.Sources {
+		if source.Rule > 0 && (newest == 0 || source.Rule < newest) {
+			newest = source.Rule
+		}
+	}
+
+	return newest
+}
+
+// newestFirst orders the list by its latest ban, newest first. Bans whose time
+// is not known go after the rest, newest firewall rule first.
+func newestFirst(list []bannedAddress) {
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := latestBan(list[i]), latestBan(list[j])
+		if a != b {
+			return a > b
+		}
+
+		ra, rb := newestRule(list[i]), newestRule(list[j])
+		if ra != rb {
+			if ra == 0 || rb == 0 {
+				return ra != 0
+			}
+			return ra < rb
 		}
 
 		return list[i].IP < list[j].IP
 	})
-
-	return list
 }
 
 // bans is the Banned IPs tab's props.
@@ -167,6 +209,7 @@ func (a *App) bans(ctx context.Context, snap *securitySnapshot) map[string]any {
 	counts.Total = len(list)
 
 	a.addBanTimes(list, snap, int64(window.Seconds()))
+	newestFirst(list)
 
 	return map[string]any{
 		"list":            list,

@@ -179,32 +179,45 @@ var webLoginFilterFile = "# Managed by Ubuntu Panel: website login brute force.\
 	"            " + accessPrefix + `POST \S*/(?:login|signin|sign-in|user/login|admin/login|auth/login|administrator/index\.php)/?(?:\?\S*)? HTTP/[^"]*" \d{3} ` + "\n" +
 	"ignoreregex =\n"
 
+// A dot and a slash as a scanner writes them: plain, or percent-encoded to slip
+// past rules that look for the plain ones (/%2eenv, /%2f%2eaws%2fcredentials).
+// fail2ban reads its files with Python's ConfigParser, where % starts an
+// interpolation, so a literal one is written twice.
+const (
+	scanDot   = `(?:\.|%%2[eE])`
+	scanSlash = `(?:/|%%2[fF])`
+)
+
 // scanTargets are files nobody but a vulnerability scanner asks for.
 var scanTargets = []string{
-	`\.env`, `\.git/`, `\.aws/`, `\.ssh/`, `\.svn/`, `\.hg/`, `\.htpasswd`, `\.DS_Store`,
+	scanDot + `env`, scanDot + `git` + scanSlash, scanDot + `git-credentials`,
+	scanDot + `aws` + scanSlash, scanDot + `ssh` + scanSlash, scanDot + `docker` + scanSlash,
+	scanDot + `svn` + scanSlash, scanDot + `hg` + scanSlash, scanDot + `htpasswd`, scanDot + `DS_Store`,
 	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`,
 	`vendor/phpunit`, `eval-stdin\.php`, `cgi-bin/`, `boaform`, `HNAP1`,
-	`actuator/`, `solr/`, `manager/html`, `telescope/`, `_ignition/`,
+	`actuator/`, `solr/`, `manager/html`, `telescope/`, `_ignition/`, `server-status`, `phpinfo\.php`,
 	`(?:backup|dump|database|db)\.sql`, `(?:shell|wso|c99|r57|alfa|xleet)\.php`,
-	`\.\./`,
-	// fail2ban reads its files with Python's ConfigParser, where % starts an
-	// interpolation; a literal one is written twice.
-	`%%2e%%2e`,
+	scanDot + scanDot + scanSlash,
 }
 
 // webScanFilterFile counts requests for those files that were refused or not
 // there — a 200 is a file the site does have, and is not this jail's business.
+//
+// Only the path is looked at, never the query string: the panel's own file
+// manager asks for /sites/1/files?path=.env, and this jail also reads the log
+// the panel's requests are written to.
 var webScanFilterFile = "# Managed by Ubuntu Panel: vulnerability scanners.\n" +
 	"[Definition]\n" +
-	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /\S*(?:` +
-	strings.Join(scanTargets, "|") + `)\S* HTTP/[^"]*" [45]\d\d ` + "\n" +
+	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
+	strings.Join(scanTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" [45]\d\d ` + "\n" +
 	"ignoreregex =\n"
 
 // JailEnv is what the jail file needs to know about the machine.
 type JailEnv struct {
-	IgnoreIPs []string
-	MailLog   bool // /var/log/mail.log is written; otherwise the journal
-	Fail2ban  bool // /var/log/fail2ban.log is written
+	IgnoreIPs  []string
+	MailLog    bool // /var/log/mail.log is written; otherwise the journal
+	Fail2ban   bool // /var/log/fail2ban.log is written
+	DefaultLog bool // nginx's own access.log exists
 }
 
 // ProtectJailFile renders every optional jail that is on, or "" when none is.
@@ -233,11 +246,9 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 		fmt.Fprintf(&file, "ignoreip = %s\n", strings.Join(ignore, " "))
 	}
 
-	// Every site's access log — and only those. nginx's own access.log is
-	// where the panel's pages are logged, along with phpMyAdmin behind it:
-	// panel sign-ins are posts to /login, and the file manager asks for
-	// .env and ../ paths, so reading that file would have the panel's own
-	// use counted as an attack on it.
+	// The login jail reads every site's access log — and only those. nginx's
+	// own access.log is where the panel's pages are logged, and panel sign-ins
+	// are posts to /login.
 	nginxLogs := "logpath  = " + SiteAccessLogs
 
 	if p.WebLogin.Enabled {
@@ -245,9 +256,18 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 			"port     = http,https", nginxLogs, "backend  = auto")
 	}
 
+	// The scanner jail reads nginx's own access.log as well: it is where
+	// requests to the server's bare IP address land, and scanners sweep
+	// addresses, not names. Its filter looks at paths only, so the panel's
+	// file manager — which names files in the query string — is not counted.
 	if p.WebScan.Enabled {
+		logs := nginxLogs
+		if env.DefaultLog {
+			logs += "\n           " + DefaultAccessLog
+		}
+
 		section(JailWebScan, p.WebScan, "filter   = ubuntu-panel-web-scan",
-			"port     = http,https", nginxLogs, "backend  = auto")
+			"port     = http,https", logs, "backend  = auto")
 	}
 
 	if p.Mail.Enabled {
@@ -309,9 +329,10 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 	}
 
 	env := JailEnv{
-		IgnoreIPs: ignoreIPs,
-		MailLog:   proc.Ok("sudo test -s /var/log/mail.log"),
-		Fail2ban:  proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		IgnoreIPs:  ignoreIPs,
+		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
+		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
 	}
 
 	previous, _ := proc.ReadFile(protectJailPath, true)
@@ -352,9 +373,10 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 // so a panel start does not reload fail2ban for nothing.
 func JailsCurrent(p Protection, ignoreIPs []string) bool {
 	env := JailEnv{
-		IgnoreIPs: ignoreIPs,
-		MailLog:   proc.Ok("sudo test -s /var/log/mail.log"),
-		Fail2ban:  proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		IgnoreIPs:  ignoreIPs,
+		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
+		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
 	}
 
 	jail, _ := proc.ReadFile(protectJailPath, true)
@@ -384,6 +406,10 @@ func UnbanFrom(jail, address string) error {
 // per webmail host, each named after its hostname. Not nginx's own
 // access.log, which holds the panel's requests.
 const SiteAccessLogs = "/var/log/nginx/*-access.log"
+
+// DefaultAccessLog is nginx's own access log: the panel's requests, and every
+// request to the server's bare IP address.
+const DefaultAccessLog = "/var/log/nginx/access.log"
 
 // AccessLogs is the access logs the web jails read, for noticing a site that
 // was added since fail2ban expanded the pattern.

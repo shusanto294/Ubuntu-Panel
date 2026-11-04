@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
@@ -37,11 +38,34 @@ func TestMergeBans(t *testing.T) {
 		t.Fatalf("want 4 addresses, got %d", len(list))
 	}
 
-	if list[0].IP != "2.2.2.2" || len(list[0].Sources) != 3 {
-		t.Fatalf("the address refused three ways should come first, got %+v", list[0])
+	if list[1].IP != "2.2.2.2" || len(list[1].Sources) != 3 {
+		t.Fatalf("one row per address with every source, got %+v", list[1])
 	}
 
-	if list[1].IP != "1.1.1.1" || list[3].IP != "4.4.4.4" || list[3].Sources[0].Until != 99 {
+	if list[0].IP != "1.1.1.1" || list[3].IP != "4.4.4.4" || list[3].Sources[0].Until != 99 {
 		t.Fatalf("unexpected order or sources: %+v", list)
+	}
+}
+
+func TestNewestFirst(t *testing.T) {
+	list := []bannedAddress{
+		{IP: "1.1.1.1", Sources: []banSource{{Kind: banSSH, At: 100}}},
+		{IP: "2.2.2.2", Sources: []banSource{{Kind: banFirewall, Rule: 5}}},
+		{IP: "3.3.3.3", Sources: []banSource{{Kind: banSSH, At: 300}, {Kind: banFirewall, Rule: 1, At: 50}}},
+		{IP: "4.4.4.4", Sources: []banSource{{Kind: banFirewall, Rule: 4}}},
+		{IP: "5.5.5.5", Sources: []banSource{{Kind: banSSH}}},
+		{IP: "6.6.6.6", Sources: []banSource{{Kind: "web_scan", At: 200}}},
+	}
+
+	newestFirst(list)
+
+	got := []string{}
+	for _, row := range list {
+		got = append(got, row.IP)
+	}
+
+	want := "3.3.3.3 6.6.6.6 1.1.1.1 4.4.4.4 2.2.2.2 5.5.5.5"
+	if strings.Join(got, " ") != want {
+		t.Errorf("order = %v, want %s", got, want)
 	}
 }

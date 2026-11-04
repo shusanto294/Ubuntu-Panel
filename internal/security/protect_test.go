@@ -85,6 +85,20 @@ func TestWebScanFilter(t *testing.T) {
 		`203.0.113.9 - - [] "GET /blog/environment-tips/ HTTP/1.1" 404 1 "-" "x"`:                             "",
 		`203.0.113.9 - - [] "GET /.env HTTP/1.1" 200 1 "-" "x"`:                                               "", // a file it has
 		`203.0.113.9 - - [] "GET /%2e%2e/etc/passwd HTTP/1.1" 400 1 "-" "x"`:                                  "203.0.113.9",
+
+		// Encoded to slip past the plain patterns.
+		`203.0.113.9 - - [] "GET /%2eenv HTTP/1.1" 404 1 "-" "x"`:                  "203.0.113.9",
+		`203.0.113.9 - - [] "GET /%2f%2eaws%2fcredentials HTTP/1.1" 404 1 "-" "x"`: "203.0.113.9",
+		`203.0.113.9 - - [] "GET /%2fbackend%2f%2eenv HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.docker/config.json HTTP/1.1" 404 1 "-" "x"`:     "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.git-credentials HTTP/1.1" 404 1 "-" "x"`:        "203.0.113.9",
+		`203.0.113.9 - - [] "GET /.env.bak?x=1 HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
+		`203.0.113.9 - - [] "GET /actuator/env HTTP/1.1" 404 1 "-" "x"`:            "203.0.113.9",
+
+		// The panel's file manager names files in the query string, and this
+		// jail reads the log the panel's requests are in.
+		`198.51.100.4 - - [] "GET /sites/3/files?path=.env HTTP/1.1" 404 1 "-" "Mozilla"`:            "",
+		`198.51.100.4 - - [] "POST /sites/3/files?path=../.git/config HTTP/1.1" 422 1 "-" "Mozilla"`: "",
 	}
 
 	for line, want := range cases {
@@ -104,7 +118,7 @@ func TestProtectJailFile(t *testing.T) {
 	p.Mail.Enabled = true
 	p.Recidive.Enabled = true
 
-	file := ProtectJailFile(p, JailEnv{IgnoreIPs: []string{"203.0.113.10"}, MailLog: true, Fail2ban: true})
+	file := ProtectJailFile(p, JailEnv{IgnoreIPs: []string{"203.0.113.10"}, MailLog: true, Fail2ban: true, DefaultLog: true})
 
 	for _, want := range []string{
 		"[panel-web-login]", "filter   = ubuntu-panel-web-login", "port     = http,https",
@@ -213,5 +227,30 @@ func TestNginxSharedLines(t *testing.T) {
 	}
 	if sameFile(NginxFile(ProtectionDefaults, NginxEnv{}), file) {
 		t.Error("an empty file is not the one wanted")
+	}
+}
+
+// Scanners sweep addresses, not names: what they ask of the bare IP lands in
+// nginx's own access.log, which the scanner jail reads and the login jail —
+// whose /login would be the panel's own sign-in — never does.
+func TestScanJailReadsTheBareIPLog(t *testing.T) {
+	p := ProtectionDefaults
+	p.WebLogin.Enabled = true
+	p.WebScan.Enabled = true
+
+	file := ProtectJailFile(p, JailEnv{DefaultLog: true})
+
+	_, scan, _ := strings.Cut(file, "[panel-web-scan]")
+	login, _, _ := strings.Cut(file, "[panel-web-scan]")
+
+	if !strings.Contains(scan, "/var/log/nginx/*-access.log\n           /var/log/nginx/access.log") {
+		t.Errorf("the scanner jail should read the sites' logs and nginx's own:\n%s", scan)
+	}
+	if strings.Contains(login, "/var/log/nginx/access.log") {
+		t.Errorf("the login jail must not read the log the panel's sign-ins are in:\n%s", login)
+	}
+
+	if strings.Contains(ProtectJailFile(p, JailEnv{}), "/var/log/nginx/access.log") {
+		t.Error("a log that does not exist would stop fail2ban loading the jail")
 	}
 }
