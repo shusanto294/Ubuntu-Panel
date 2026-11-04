@@ -286,8 +286,10 @@ const savePaths = () => {
                     <div v-if="FEATURES[key].kind === 'jail'" class="mt-4 grid gap-3 sm:grid-cols-3">
                         <label class="block text-xs font-medium text-slate-700">
                             Ban after
-                            <input v-model.number="forms[key].max_retry" type="number" min="1" max="1000" :class="field" class="text-sm" />
-                            <span class="font-normal text-slate-400">{{ FEATURES[key].unit }}</span>
+                            <input v-model.number="forms[key].max_retry" type="number" min="0" max="1000" :class="field" class="text-sm" />
+                            <span class="font-normal text-slate-400">
+                                {{ forms[key].max_retry <= 1 ? `${FEATURES[key].unit} — banned on the very first one` : FEATURES[key].unit }}
+                            </span>
                         </label>
                         <label class="block text-xs font-medium text-slate-700">
                             Within

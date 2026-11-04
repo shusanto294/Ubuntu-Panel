@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
@@ -19,6 +19,42 @@ const props = defineProps({
 
 const emit = defineEmits(['open']);
 
+/*
+ * The list stays live while the tab is open: every two seconds it asks for
+ * the bans again. The panel re-reads them half a second after fail2ban bans
+ * or lets anyone go, so a new ban is here a couple of seconds after nginx
+ * starts refusing it. A page load or an action on this tab replaces it too.
+ */
+const live = ref(props.bans);
+watch(() => props.bans, (value) => (live.value = value));
+
+let timer = null;
+let asking = false;
+
+const ask = async () => {
+    if (asking || document.hidden) return;
+    asking = true;
+    try {
+        const response = await fetch(route('security.bans.live'), {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (response.ok && (response.headers.get('content-type') || '').includes('application/json')) {
+            const body = await response.json();
+            if (body?.bans?.list) live.value = body.bans;
+        }
+    } catch {
+        // Offline for a moment, or the panel restarting: the next tick tries again.
+    } finally {
+        asking = false;
+    }
+};
+
+onMounted(() => {
+    timer = setInterval(ask, 2000);
+});
+onBeforeUnmount(() => clearInterval(timer));
+
 const sources = {
     ssh: { label: 'SSH brute-force', scope: 'SSH port', style: 'bg-amber-50 text-amber-700', tab: 'ssh' },
     web_login: { label: 'Website login attack', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
@@ -31,7 +67,7 @@ const sources = {
 
 const PROTECT_KINDS = ['web_login', 'web_scan', 'mail', 'recidive'];
 
-const counts = computed(() => props.bans.counts);
+const counts = computed(() => live.value.counts);
 
 const tiles = computed(() => [
     { key: 'all', label: 'Banned now', value: counts.value.total, detail: 'unique addresses, all sources' },
@@ -55,7 +91,7 @@ const source = ref('all');
 const search = ref('');
 
 const rows = computed(() =>
-    props.bans.list.filter(
+    live.value.list.filter(
         (row) =>
             (source.value === 'all' ||
                 row.sources.some((s) =>
@@ -77,7 +113,7 @@ const ban = async () => {
         !(await confirmAction(
             'Ban from the whole server?',
             `${banForm.ip} will be refused on every port — SSH, the sites and this panel — by a firewall rule.` +
-                (props.bans.firewall_active ? '' : ' The firewall is off, so the rule only takes effect once it is turned on.'),
+                (live.value.firewall_active ? '' : ' The firewall is off, so the rule only takes effect once it is turned on.'),
             'Ban',
         ))
     )
@@ -242,7 +278,7 @@ const release = async (row) => {
                         </tr>
                         <tr v-if="!rows.length">
                             <td colspan="4" class="px-6 py-8 text-center text-slate-400">
-                                {{ bans.list.length ? 'No banned address matches.' : 'Nobody is banned right now.' }}
+                                {{ live.list.length ? 'No banned address matches.' : 'Nobody is banned right now.' }}
                             </td>
                         </tr>
                     </tbody>

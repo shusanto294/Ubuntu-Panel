@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
@@ -108,29 +110,43 @@ func (a *App) followFail2ban(ctx context.Context) {
 	a.handleBanEvents(ctx, events)
 }
 
-// handleBanEvents applies the events in order. Unbans arriving together — a
-// jail switched off, an address let go of every jail at once — are answered
-// with one rebuild of the full list, a moment after the last of them.
+// handleBanEvents applies the events in order. Two things wait a moment so a
+// burst is answered once: the Security page's view of the bans, re-read half a
+// second after the last event, and — after unbans — the rebuild of nginx's
+// full list from that view.
 func (a *App) handleBanEvents(ctx context.Context, events <-chan banEvent) {
-	var rebuild <-chan time.Time
+	var (
+		reread  <-chan time.Time
+		rebuild bool
+	)
+
+	settle := func() {
+		reread = nil
+		a.refreshBans()
+		if rebuild {
+			rebuild = false
+			a.syncNginxBans(ctx, false)
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case <-rebuild:
-			rebuild = nil
-			securityCache.forget()
-			a.syncNginxBans(ctx, true)
+		case <-reread:
+			settle()
 
 		case event, ok := <-events:
 			if !ok {
-				if rebuild != nil {
-					securityCache.forget()
-					a.syncNginxBans(ctx, true)
+				if reread != nil {
+					settle()
 				}
 				return
+			}
+
+			if reread == nil {
+				reread = time.After(500 * time.Millisecond)
 			}
 
 			if event.ban {
@@ -147,9 +163,68 @@ func (a *App) handleBanEvents(ctx context.Context, events <-chan banEvent) {
 			if err := security.ReleaseInstant(event.address); err != nil {
 				a.Log.Warn("nginx could not be told about an unban", "ip", event.address, "jail", event.jail, "error", err)
 			}
-			if rebuild == nil {
-				rebuild = time.After(time.Second)
-			}
+			rebuild = true
 		}
 	}
+}
+
+// refreshBans re-reads what the Banned IPs tab shows — the jails, when each
+// banned what, and the firewall's blocks — into the Security page's cached
+// copy, leaving the slow parts of it (SSH history, updates) as they are. The
+// tab asks for the list every couple of seconds, so a ban is on it about as
+// soon as nginx refuses it. With no cached copy there is nothing to do: the
+// next page reads everything afresh anyway.
+func (a *App) refreshBans() {
+	securityCache.Lock()
+	current, generation := securityCache.value, securityCache.generation
+	securityCache.Unlock()
+
+	if current == nil {
+		return
+	}
+
+	var (
+		wait  sync.WaitGroup
+		times sync.Mutex
+		next  = *current
+		p     = a.protection()
+	)
+
+	next.Protect = map[string]security.JailStatus{}
+	next.BanTimes = map[string]map[string]security.BanTime{}
+
+	wait.Add(2)
+	go func() { defer wait.Done(); next.Jail = security.Status() }()
+	go func() { defer wait.Done(); next.Firewall = security.ReadFirewall() }()
+
+	if p.AnyJail() {
+		wait.Add(1)
+		go func() { defer wait.Done(); next.Protect = security.ProtectStatus(p) }()
+	}
+
+	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
+		wait.Add(1)
+		go func(jail string) {
+			defer wait.Done()
+			found := security.BanTimes(jail)
+			times.Lock()
+			next.BanTimes[jail] = found
+			times.Unlock()
+		}(jail)
+	}
+
+	wait.Wait()
+
+	securityCache.Lock()
+	if securityCache.generation == generation && securityCache.value == current {
+		securityCache.value = &next
+		securityCache.generation++
+	}
+	securityCache.Unlock()
+}
+
+// securityBansLive is the Banned IPs tab's list on its own, which the tab
+// asks for every couple of seconds while it is open.
+func (a *App) securityBansLive(w http.ResponseWriter, r *http.Request) {
+	a.writeJSON(w, http.StatusOK, map[string]any{"bans": a.bans(r.Context(), a.snapshot(false))})
 }

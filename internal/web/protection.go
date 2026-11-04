@@ -301,6 +301,11 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 			BanTime:  number("ban_time", current.BanTime),
 		}
 
+		// 0 is how some people say "the first one": fail2ban's 1.
+		if next.MaxRetry == 0 {
+			next.MaxRetry = 1
+		}
+
 		if problems := next.Validate(); len(problems) > 0 {
 			for field, message := range problems {
 				sess.Error(field, message)

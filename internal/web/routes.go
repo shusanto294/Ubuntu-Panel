@@ -243,6 +243,7 @@ func (a *App) routes() *router {
 	rt.post("/security/ssh-protection", "security.ssh-protection", authenticated, a.securitySSHProtection)
 	rt.post("/security/ssh-protection/install", "security.ssh-protection.install", authenticated,
 		a.securityInstallFail2ban)
+	rt.get("/security/bans/live", "security.bans.live", authenticated, a.securityBansLive)
 	rt.post("/security/bans", "security.bans.store", authenticated, a.securityBan)
 	rt.post("/security/bans/remove", "security.bans.destroy", authenticated, a.securityUnban)
 	rt.post("/security/bans/release", "security.bans.release", authenticated, a.securityRelease)
