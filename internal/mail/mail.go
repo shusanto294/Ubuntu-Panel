@@ -49,7 +49,7 @@ func New(st *store.Store) *Service { return &Service{Store: st} }
 // **Bump this when you change what writeConfigs, writeDKIMConfig or
 // EnsureSchema produce.** Nothing else needs to move with it: the panel's
 // version is about releases, and this is about the contents of six files.
-const ConfigRevision = "3"
+const ConfigRevision = "4"
 
 // IsConfigured reports whether the mail server is installed and set up.
 func (s *Service) IsConfigured() bool {
@@ -439,10 +439,37 @@ func (s *Service) Hostname() string {
 // afterwards — so, like the tables, it is checked where it is used. `mkdir -p`
 // on a machine with no vmail user is what produced "The mail directory could
 // not be created", which named the symptom and not one thing that would fix
-// it. useradd and groupadd are allowed to fail: on the second run they should.
-const mailStoreCommand = "sudo groupadd -g 5000 vmail 2>/dev/null || true; " +
-	"sudo useradd -g vmail -u 5000 vmail -d " + vmailRoot + " -m 2>/dev/null || true; " +
+// it.
+//
+// It used to be `useradd … || true`, and that hid the failure that matters:
+// when the account could not be made — uid 5000 already someone else's, say —
+// the step passed, Dovecot was restarted on a configuration naming a user that
+// did not exist, and every login and every SMTP AUTH died with "static userdb:
+// Invalid uid: vmail" and "no SASL authentication mechanisms". Now an account
+// that is there is left alone, and one that cannot be made fails the step and
+// says why.
+//
+// The account has no login shell. useradd's default is /bin/sh, and with a uid
+// of 5000 that made vmail look like a person's account on the Users page —
+// lockable, deletable, home and all, and deleting it with its home takes every
+// mailbox on the server with it. usermod puts that right on machines set up
+// before this, and is a no-op on the rest.
+const mailStoreCommand = "getent group vmail >/dev/null || " +
+	"sudo groupadd -g 5000 vmail 2>/dev/null || sudo groupadd vmail || exit 1; " +
+	"if ! getent passwd vmail >/dev/null; then " +
+	"  owner=$(getent passwd 5000 | cut -d: -f1); " +
+	"  if [ -n \"$owner\" ]; then " +
+	"    echo \"uid 5000 belongs to '$owner', so the vmail account the mail server runs as cannot be created.\"; " +
+	"    exit 1; " +
+	"  fi; " +
+	"  sudo useradd -g vmail -u 5000 -d " + vmailRoot + " -M -s /usr/sbin/nologin vmail || exit 1; " +
+	"fi; " +
+	"sudo usermod -s /usr/sbin/nologin vmail >/dev/null 2>&1 || true; " +
 	"sudo mkdir -p " + vmailRoot + " && sudo chown vmail:vmail " + vmailRoot
+
+// MailAccountExists reports whether the vmail account is on the machine. A
+// variable so that tests, which run on machines with no mail server, can say.
+var MailAccountExists = func() bool { return proc.Ok("getent passwd vmail >/dev/null") }
 
 // writeConfigs writes the little SQL map files Postfix and Dovecot each need,
 // plus the drop-ins that tell them to use them.
@@ -719,7 +746,15 @@ func (s *Service) NeedsConfiguring() bool {
 		return true
 	}
 
-	return s.Store.Setting("mail_configured_revision", "") != ConfigRevision
+	if s.Store.Setting("mail_configured_revision", "") != ConfigRevision {
+		return true
+	}
+
+	// Configured, and since lost the account Dovecot runs every mailbox as —
+	// removed by hand, or from the Users page before it was protected there.
+	// Nothing else about the machine looks wrong, and every login fails, so
+	// it is put back on the next start rather than waiting for a button.
+	return !MailAccountExists()
 }
 
 // dovecotConfig is the drop-in, built rather than written straight to disk so

@@ -82,7 +82,7 @@ const destroy = async () => {
                 <div v-if="loading && !related" class="rounded-2xl bg-white px-5 py-10 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-900/5">
                     Reading the logs for {{ ips.join(', ') }}…
                 </div>
-                <IpReport v-for="report in related?.reports ?? []" :key="report.ip" :report="report" />
+                <IpReport v-for="report in related?.reports ?? []" :key="report.ip" :report="report" :reload="['related']" />
             </section>
 
             <!-- The critical lines it counted. -->

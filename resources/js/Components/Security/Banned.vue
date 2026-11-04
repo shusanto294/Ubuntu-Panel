@@ -65,7 +65,7 @@ const rows = computed(() =>
     ),
 );
 
-const { page, pages, total, perPage, visible } = usePagination(rows, 25);
+const { page, pages, total, perPage, visible } = usePagination(rows, 20);
 
 watch([source, search], () => (page.value = 1));
 

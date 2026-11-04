@@ -5,7 +5,7 @@ import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import { usePagination } from '@/Composables/usePagination';
-import { confirmAction } from '@/dialog';
+import { confirmAction, confirmDanger } from '@/dialog';
 import { ago, card, field, smallButton, when } from './ui';
 import { router, useForm } from '@inertiajs/vue3';
 
@@ -59,6 +59,12 @@ const ban1 = async (ip) => {
     if (!(await confirmAction('Ban this address?', `${ip} will be refused on the SSH port ${jail.ban_time === -1 ? 'permanently' : 'for the ban time'}.`, 'Ban')))
         return;
     router.post(route('security.bans.store'), { ip }, { preserveScroll: true });
+};
+
+const unban1 = async (ip) => {
+    if (!(await confirmDanger('Unban this address?', `${ip} is let go from everything that refuses it.`, 'Unban')))
+        return;
+    router.post(route('security.bans.release'), { ip }, { preserveScroll: true });
 };
 
 // Banned by anything — this jail or a firewall block — is refused on
@@ -232,7 +238,12 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
                             <td class="hidden py-2 text-slate-500 sm:table-cell">{{ (attacker.users ?? []).join(', ') }}</td>
                             <td class="py-2 text-slate-500">{{ ago(attacker.last_seen) }}</td>
                             <td class="py-2 text-right">
-                                <span v-if="banned.has(attacker.ip)" class="text-xs font-medium text-rose-600">Banned</span>
+                                <span v-if="banned.has(attacker.ip)" class="inline-flex items-center gap-2">
+                                    <span class="text-xs font-medium text-rose-600">Banned</span>
+                                    <button type="button" :class="smallButton" class="text-slate-700" @click="unban1(attacker.ip)">
+                                        Unban
+                                    </button>
+                                </span>
                                 <button v-else type="button" :class="smallButton" class="text-rose-600" @click="ban1(attacker.ip)">
                                     Ban
                                 </button>

@@ -94,3 +94,13 @@ func TestSiteAccountsAreProtected(t *testing.T) {
 		t.Fatalf("a machine account was taken for a site's: %+v", users[2])
 	}
 }
+
+// vmail owns every mailbox; deleting it from the Users page takes the mail
+// server down, and with its home, every message on it.
+func TestTheMailAccountIsProtected(t *testing.T) {
+	users := parseUsers("@@user vmail 5000 /var/vmail /bin/sh\n", "panel")
+
+	if len(users) != 1 || !users[0].Protected {
+		t.Fatalf("vmail is not protected: %+v", users)
+	}
+}

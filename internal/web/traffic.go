@@ -532,6 +532,13 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 		props["trustedIps"] = reasons
 	}
 
+	// Which of them are banned already, so they are offered Unban, not Ban.
+	// Asked for on its own after a ban or an unban, which changes it and
+	// nothing else.
+	if inertia.Asked(r, "Logs/Stats", "traffic") || inertia.Asked(r, "Logs/Stats", "bannedIps") {
+		props["bannedIps"] = a.bannedIPs(ctx)
+	}
+
 	// What the CPU is doing is the PHP page's alone: it takes a second to
 	// measure.
 	if section == "php" && inertia.Asked(r, "Logs/Stats", "processes") {

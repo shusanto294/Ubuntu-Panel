@@ -175,6 +175,20 @@ func (a *App) bans(ctx context.Context, snap *securitySnapshot) map[string]any {
 	}
 }
 
+// bannedIPs is every address refused by anything right now, for the pages that
+// offer a Ban button and should offer Unban instead when it already is.
+func (a *App) bannedIPs(ctx context.Context) []string {
+	ips := []string{}
+
+	if list, ok := a.bans(ctx, a.snapshot(false))["list"].([]bannedAddress); ok {
+		for _, row := range list {
+			ips = append(ips, row.IP)
+		}
+	}
+
+	return ips
+}
+
 // blockTimesSetting is when the panel added each firewall block, which ufw
 // does not keep.
 const blockTimesSetting = "security_block_times"

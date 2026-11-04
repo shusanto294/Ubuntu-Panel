@@ -17,6 +17,10 @@ import (
 func mailApp(t *testing.T) *App {
 	t.Helper()
 
+	exists := mail.MailAccountExists
+	mail.MailAccountExists = func() bool { return true }
+	t.Cleanup(func() { mail.MailAccountExists = exists })
+
 	st, err := store.Open(filepath.Join(t.TempDir(), "panel.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -142,5 +146,24 @@ func TestAnOrdinaryUpdateDoesNotReconfigureMail(t *testing.T) {
 
 	if n := queued(t, app); n != 0 {
 		t.Fatalf("a version bump queued %d configure jobs", n)
+	}
+}
+
+// A configured mail server that has since lost its vmail account is set up
+// again: Dovecot refuses every login without it, and nothing else looks wrong.
+func TestAMissingMailAccountIsRecreated(t *testing.T) {
+	app := mailApp(t)
+
+	app.Catalog.SyncRows()
+	app.Store.SetServiceStatus("mail", store.ServiceInstalled, "3.8.6", "")
+	app.Store.SetSetting("mail_configured", "1")
+	app.Store.SetSetting("mail_configured_revision", mail.ConfigRevision)
+
+	mail.MailAccountExists = func() bool { return false }
+
+	app.EnsureMailConfigured()
+
+	if n := queued(t, app); n != 1 {
+		t.Fatalf("queued %d configure jobs with the vmail account gone, want one", n)
 	}
 }

@@ -144,6 +144,10 @@ func parseUsers(output, panelUser string) []SSHUser {
 			case current.Name == panelUser:
 				current.Protected, current.Reason = true, "The panel and its built-in terminal run as "+
 					"this account, so it cannot be locked or deleted from here."
+			case current.Name == "vmail":
+				current.Protected, current.Reason = true, "The mail server stores every mailbox as "+
+					"this account. Without it nobody can log in to their email, so it cannot be "+
+					"locked or deleted from here."
 			}
 
 		case "@@groups":

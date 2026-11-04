@@ -14,7 +14,12 @@ import { Link, router } from '@inertiajs/vue3';
  */
 const props = defineProps({
     report: { type: Object, required: true },
+    // The page's prop that carries this report, reloaded after a ban or an
+    // unban so the buttons follow — the page's own, every other prop kept.
+    reload: { type: Array, default: () => [] },
 });
+
+const visit = () => ({ preserveScroll: true, preserveState: true, ...(props.reload.length ? { only: props.reload } : {}) });
 
 const r = computed(() => props.report);
 
@@ -55,13 +60,13 @@ const ban = async () => {
     router.post(
         route('security.bans.store'),
         { ip: r.value.ip, scope: 'server', comment: 'Banned from its report in the panel' },
-        { preserveScroll: true },
+        visit(),
     );
 };
 
 const unban = async () => {
     if (!(await confirmDanger(`Unban ${r.value.ip}?`, 'It is let go from everything that refuses it.', 'Unban'))) return;
-    router.post(route('security.bans.release'), { ip: r.value.ip }, { preserveScroll: true });
+    router.post(route('security.bans.release'), { ip: r.value.ip }, visit());
 };
 
 const banEnds = (source) => {
@@ -120,7 +125,7 @@ const statusClass = (status) =>
                         Unban
                     </button>
                     <button
-                        v-if="!r.trusted && !r.bans.some((b) => b.kind === 'firewall')"
+                        v-else-if="!r.trusted"
                         type="button"
                         class="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700"
                         @click="ban"

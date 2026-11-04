@@ -20,6 +20,8 @@ const props = defineProps({
     fpm: { type: Array, default: () => [] },
     // Why each trusted address is trusted: they are never offered a Ban button.
     trustedIps: { type: Object, default: () => ({}) },
+    // Addresses something already refuses: offered Unban instead of Ban.
+    bannedIps: { type: Array, default: () => [] },
 
     // Which parts to show: findings, timeline, sites, cpu, ips, attacks,
     // agents, urls. Each stats page shows its own few.
@@ -61,7 +63,7 @@ const setWindow = (key) =>
         {
             preserveScroll: true,
             preserveState: true,
-            only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'],
+            only: ['window', 'traffic', 'trustedIps', 'bannedIps', 'processes', 'fpm'],
             onStart: () => (refreshing.value = true),
             onFinish: () => (refreshing.value = false),
         },
@@ -84,7 +86,7 @@ const refresh = () => {
     if (refreshing.value || document.hidden) return;
 
     router.reload({
-        only: ['traffic', 'trustedIps', 'processes', 'fpm'],
+        only: ['traffic', 'trustedIps', 'bannedIps', 'processes', 'fpm'],
         preserveScroll: true,
         preserveState: true,
         onStart: () => (refreshing.value = true),
@@ -114,8 +116,16 @@ const ban = async (ip, reason) => {
     router.post(
         route('security.bans.store'),
         { ip, scope: 'server', comment: `From Logs → Traffic: ${reason || 'banned by hand'}`.slice(0, 120) },
-        { preserveScroll: true },
+        { preserveScroll: true, preserveState: true, only: ['bannedIps'] },
     );
+};
+
+const banned = computed(() => new Set(props.bannedIps));
+
+const unban = async (ip) => {
+    if (!(await confirmDanger(`Unban ${ip}?`, 'It is let go from everything that refuses it.', 'Unban'))) return;
+
+    router.post(route('security.bans.release'), { ip }, { preserveScroll: true, preserveState: true, only: ['bannedIps'] });
 };
 
 // ---------------------------------------------------------------- reading
@@ -313,7 +323,15 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                 >
                     <span class="min-w-0 flex-1">{{ f.text }}</span>
                     <button
-                        v-if="f.ip && !trustedIps[f.ip]"
+                        v-if="f.ip && banned.has(f.ip)"
+                        type="button"
+                        class="rounded-lg bg-white px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                        @click="unban(f.ip)"
+                    >
+                        Unban {{ f.ip }}
+                    </button>
+                    <button
+                        v-else-if="f.ip && !trustedIps[f.ip]"
                         type="button"
                         class="rounded-lg bg-rose-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-rose-700"
                         @click="ban(f.ip, f.reason)"
@@ -599,7 +617,15 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                         Details
                                     </Link>
                                     <button
-                                        v-if="!ip.trusted && !trustedIps[ip.ip]"
+                                        v-if="banned.has(ip.ip)"
+                                        type="button"
+                                        class="rounded-lg px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                                        @click="unban(ip.ip)"
+                                    >
+                                        Unban
+                                    </button>
+                                    <button
+                                        v-else-if="!ip.trusted && !trustedIps[ip.ip]"
                                         type="button"
                                         class="rounded-lg px-2.5 py-1 text-xs font-medium ring-1 transition"
                                         :class="
@@ -642,6 +668,14 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
                                 <span v-if="trustedIps[ip.name]" class="text-emerald-700">trusted</span>
+                                <button
+                                    v-else-if="banned.has(ip.name)"
+                                    type="button"
+                                    class="font-medium text-slate-700 hover:underline"
+                                    @click="unban(ip.name)"
+                                >
+                                    Unban
+                                </button>
                                 <button
                                     v-else
                                     type="button"

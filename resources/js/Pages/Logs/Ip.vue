@@ -29,7 +29,7 @@ onMounted(() => {
             </div>
         </template>
 
-        <IpReport v-if="report" :report="report" />
+        <IpReport v-if="report" :report="report" :reload="['report']" />
         <div v-else class="rounded-2xl bg-white px-5 py-12 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-900/5">
             Reading the logs for {{ ip }}…
         </div>
