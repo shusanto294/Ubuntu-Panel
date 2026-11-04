@@ -483,3 +483,57 @@ func (s *Store) ServerEventsAfter(ctx context.Context, after int64, levels []str
 
 	return events, total
 }
+
+// ForgetServerEvents deletes the stored events of the sources named whose
+// message contains one of hints and that drop says to drop: a filter added
+// later, applied to what was collected before it.
+func (s *Store) ForgetServerEvents(ctx context.Context, sources, hints []string, drop func(source, message string) bool) int64 {
+	if len(sources) == 0 || len(hints) == 0 {
+		return 0
+	}
+
+	query := `SELECT id, source, message FROM server_events WHERE source IN (` + placeholders(len(sources)) + `) AND (`
+	args := []any{}
+	for _, source := range sources {
+		args = append(args, source)
+	}
+	for i, hint := range hints {
+		if i > 0 {
+			query += ` OR `
+		}
+		query += `instr(message, ?) > 0`
+		args = append(args, hint)
+	}
+	query += `)`
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx), query, args...)
+	if err != nil {
+		return 0
+	}
+
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		var source, message string
+		if rows.Scan(&id, &source, &message) == nil && drop(source, message) {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	var count int64
+	for start := 0; start < len(ids); start += 500 {
+		batch := ids[start:min(start+500, len(ids))]
+		params := make([]any, len(batch))
+		for i, id := range batch {
+			params[i] = id
+		}
+		if result, err := s.db.ExecContext(ctxOrBackground(ctx),
+			`DELETE FROM server_events WHERE id IN (`+placeholders(len(batch))+`)`, params...); err == nil {
+			n, _ := result.RowsAffected()
+			count += n
+		}
+	}
+
+	return count
+}

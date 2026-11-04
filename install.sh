@@ -1156,6 +1156,9 @@ server {
     listen [::]:${PANEL_PUBLIC_PORT} default_server;
     server_name _;
 
+    # The panel's own pages are not logged here; the panel keeps its own log.
+    access_log off;
+
     # phpMyAdmin, when it is installed — a 404 until then. Kept in step with
     # PhpMyAdminLocation in internal/sites/nginx.go, which is what rewrites
     # this vhost once the panel is running and knows which PHP is on the box.

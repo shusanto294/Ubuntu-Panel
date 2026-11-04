@@ -10,7 +10,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -329,9 +328,13 @@ func prune(ctx context.Context, sessions *session.Manager, db *store.Store, log 
 	}
 }
 
-// logger writes to stderr, which systemd captures, and to the log file when
-// one can be opened. A log file that cannot be written is not a reason to
-// refuse to start: the panel is often what you would use to fix that.
+// logger writes to the panel's own log file — the one the panel's log view
+// reads — and nowhere else: not stderr, which systemd would copy into the
+// journal and from there into Ubuntu's syslog, a second copy of every page
+// opened that nobody reads there. Only when the file cannot be opened does it
+// fall back to stderr, so a panel that cannot write its log still says why.
+// A log file that cannot be written is not a reason to refuse to start: the
+// panel is often what you would use to fix that.
 func logger(cfg *config.Config) (*slog.Logger, func()) {
 	level := slog.LevelInfo
 	if cfg.Debug {
@@ -344,7 +347,7 @@ func logger(cfg *config.Config) (*slog.Logger, func()) {
 		if err := os.MkdirAll(directory, 0o750); err == nil {
 			file, err := os.OpenFile(cfg.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
 			if err == nil {
-				log := slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, file), options))
+				log := slog.New(slog.NewTextHandler(file, options))
 
 				return log, func() { file.Close() }
 			}

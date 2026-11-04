@@ -13,6 +13,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
+	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
@@ -179,6 +180,17 @@ func (a *App) EnsureProtection(ctx context.Context) {
 	// would otherwise sit in the settings table for ever.
 	a.Store.ForgetSetting("security_scan_result")
 	a.Store.ForgetSetting("security_scan_unreported")
+
+	// The panel's own lines left the Server logs tab in 2.15.1; the ones
+	// collected before that go with them, once.
+	if a.Store.Setting("server_events_panel_cleared", "") == "" {
+		removed := a.Store.ForgetServerEvents(ctx,
+			[]string{serverlog.SourceSystem, serverlog.SourceAuth, serverlog.SourceNginx},
+			[]string{"ubuntu-panel", "Ubuntu Panel", "Reloading ", "Reloaded ", "signal process started"},
+			serverlog.PanelCaused)
+		a.Store.SetSetting("server_events_panel_cleared", "1")
+		a.Log.Info("removed the panel's own lines from the server logs", "events", removed)
+	}
 
 	if p.AnyJail() || p.RealIP || p.RateLogin.Enabled || p.RateFlood.Enabled ||
 		security.NginxCurrent() != "" {

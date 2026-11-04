@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -122,5 +123,28 @@ func TestServerEventsAfter(t *testing.T) {
 	events, total := st.ServerEventsAfter(ctx, cursor, []string{"critical"}, 1)
 	if total != 2 || len(events) != 1 || events[0].Message != "Out of memory: Killed process 2" {
 		t.Fatalf("total %d, %+v", total, events)
+	}
+}
+
+func TestForgetServerEvents(t *testing.T) {
+	st := taskStore(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	st.RecordServerEvents(ctx, []ServerEvent{
+		{CreatedAt: now, Source: "system", Level: "info", Message: "web1 ubuntu-panel[1]: level=INFO msg=x"},
+		{CreatedAt: now, Source: "system", Level: "info", Message: "web1 systemd[1]: Reloading nginx.service"},
+		{CreatedAt: now, Source: "system", Level: "error", Message: "web1 systemd[1]: Reload failed for nginx.service"},
+		{CreatedAt: now, Source: "kernel", Level: "info", Message: "ubuntu-panel mentioned by the kernel"},
+	})
+
+	drop := func(source, message string) bool { return !strings.Contains(message, "failed") }
+	if n := st.ForgetServerEvents(ctx, []string{"system"}, []string{"ubuntu-panel", "Reload"}, drop); n != 2 {
+		t.Fatalf("removed %d, want 2", n)
+	}
+
+	_, total, _ := st.Events(ctx, EventFilter{Since: now - 60}, 10, 0)
+	if total != 2 {
+		t.Errorf("%d left, want the failed reload and the kernel line", total)
 	}
 }

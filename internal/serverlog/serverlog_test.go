@@ -49,7 +49,7 @@ func TestLevelsAndAddresses(t *testing.T) {
 	events := read(File{Source: SourceNginx},
 		`2026/11/04 10:00:00 [error] 812#812: *41 upstream timed out, client: 203.0.113.9, server: a.example`,
 		`2026/11/04 10:00:01 [warn] 812#812: *42 limiting requests, excess: 10.5 by zone "panel_login", client: 198.51.100.7`,
-		`2026/11/04 10:00:02 [notice] 812#812: signal process started`,
+		`2026/11/04 10:00:02 [notice] 812#812: using inherited sockets from "6;7;"`,
 	)
 
 	if len(events) != 3 {
@@ -149,5 +149,39 @@ func TestAccessKeepsOnlyNotableRequests(t *testing.T) {
 	}
 	if events[1].Level != LevelWarning || events[2].Level != LevelWarning {
 		t.Errorf("429 and scan: %+v %+v", events[1], events[2])
+	}
+}
+
+// What the panel caused is in its own log, not the Server logs tab; what the
+// machine says about itself stays.
+func TestPanelCausedLinesAreLeftOut(t *testing.T) {
+	hidden := map[string]string{
+		`web1 ubuntu-panel[812]: time=2026-11-05T10:00:00.000+06:00 level=INFO msg="protection changed"`:         SourceSystem,
+		`web1 ubuntu-panel[812]: time=2026-11-05T10:00:00.000+06:00 level=ERROR msg="could not apply"`:           SourceSystem,
+		`web1 systemd[1]: Started ubuntu-panel.service - Ubuntu Panel.`:                                          SourceSystem,
+		`web1 systemd[1]: ubuntu-panel.service: Consumed 1min 2.345s CPU time.`:                                  SourceSystem,
+		`web1 systemd[1]: Started ubuntu-panel-update.service - Ubuntu Panel update.`:                            SourceSystem,
+		`web1 systemd[1]: Reloading nginx.service - A high performance web server and a reverse proxy server...`: SourceSystem,
+		`web1 systemd[1]: Reloaded nginx.service - A high performance web server and a reverse proxy server.`:    SourceSystem,
+		`web1 systemd[1]: Reloading fail2ban.service - Fail2Ban Service...`:                                      SourceSystem,
+		`[notice] 4021#4021: signal process started`:                                                             SourceNginx,
+	}
+	for message, source := range hidden {
+		if !skip(source, message, "ubuntupanel") {
+			t.Errorf("%s should be left out", message)
+		}
+	}
+
+	kept := map[string]string{
+		`web1 systemd[1]: Reload failed for nginx.service - A high performance web server.`:             SourceSystem,
+		`web1 systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE`:            SourceSystem,
+		`web1 systemd[1]: Started php8.3-fpm.service - The PHP 8.3 FastCGI Process Manager.`:            SourceSystem,
+		`[error] 4021#4021: *1 connect() failed (111: Connection refused) while connecting to upstream`: SourceNginx,
+		`web1 sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash`:             SourceAuth,
+	}
+	for message, source := range kept {
+		if skip(source, message, "ubuntupanel") {
+			t.Errorf("%s should be kept", message)
+		}
 	}
 }

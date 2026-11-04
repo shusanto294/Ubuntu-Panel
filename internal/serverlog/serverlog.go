@@ -355,6 +355,7 @@ var program = regexp.MustCompile(`^\S+ ([^\s:\[]+)(?:\[\d+\])?: `)
 
 // skip drops what is noise, or is somewhere else already:
 //
+//   - anything the panel itself caused (panelCaused): it has its own log;
 //   - the panel's own sudo, which is every minute of every day;
 //   - sudo and cron session open and close lines, for the same reason;
 //   - sshd, whose logins and attempts the panel already keeps as SSH events;
@@ -363,6 +364,10 @@ var program = regexp.MustCompile(`^\S+ ([^\s:\[]+)(?:\[\d+\])?: `)
 //   - in syslog, the kernel and mail lines rsyslog also writes to kern.log
 //     and mail.log, which are read for themselves.
 func skip(source, message, panelUser string) bool {
+	if panelCaused(source, message) {
+		return true
+	}
+
 	switch source {
 	case SourceAuth:
 		if strings.Contains(message, "pam_unix(sudo:session)") ||
@@ -401,4 +406,54 @@ func skip(source, message, panelUser string) bool {
 	}
 
 	return false
+}
+
+// panelCaused is a line Ubuntu wrote because of the panel rather than about
+// the machine. The panel's own log holds what it did; the Server logs tab is
+// for what the machine's programs say. Dropped:
+//
+//   - the panel's own lines, which systemd copied into syslog before 2.15.1
+//     stopped writing them there;
+//   - systemd's lines about the panel's service and its update unit;
+//   - the reloads the panel asks for many times a day — "Reloading
+//     nginx.service", nginx's "signal process started" — which only mean a
+//     setting was applied. A reload that fails says so and is kept.
+func panelCaused(source, message string) bool {
+	return PanelCaused(source, message)
+}
+
+// PanelCaused is panelCaused, for clearing what was collected before it.
+func PanelCaused(source, message string) bool {
+	if source == SourceNginx {
+		return strings.Contains(message, "signal process started")
+	}
+
+	if source != SourceSystem && source != SourceAuth {
+		return false
+	}
+
+	m := program.FindStringSubmatch(message)
+	if m == nil {
+		return false
+	}
+
+	name, rest := m[1], message[len(m[0]):]
+
+	if strings.HasPrefix(name, "ubuntu-panel") {
+		return true
+	}
+
+	if name != "systemd" {
+		return false
+	}
+
+	if strings.Contains(rest, "ubuntu-panel") || strings.Contains(rest, "Ubuntu Panel") {
+		return true
+	}
+
+	if strings.Contains(rest, "failed") || strings.Contains(rest, "Failed") || strings.Contains(rest, "error") {
+		return false
+	}
+
+	return strings.HasPrefix(rest, "Reloading ") || strings.HasPrefix(rest, "Reloaded ")
 }

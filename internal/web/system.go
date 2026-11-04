@@ -828,6 +828,7 @@ func panelPortVhost(domain string, panelPort, port int, php string, certificate 
 			"%s"+
 			"    server_name %s;\n"+
 			panelAllowAll+
+			panelNoAccessLog+
 			"\n"+
 			"%s"+
 			"%s\n"+
@@ -896,6 +897,7 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 			"    listen [::]:80;\n"+
 			"    server_name %[1]s;\n"+
 			panelAllowAll+
+			panelNoAccessLog+
 			"\n"+
 			"%[2]s"+
 			"}\n"+
@@ -904,6 +906,7 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 			"    listen [::]:443 ssl;\n"+
 			"    server_name %[1]s;\n"+
 			panelAllowAll+
+			panelNoAccessLog+
 			"\n"+
 			"    ssl_certificate     %[3]s;\n"+
 			"    ssl_certificate_key %[4]s;\n"+
@@ -923,6 +926,13 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 // an owner who banned themselves by accident can still sign in and unban.
 // Sign-ins have their own lockout, which this does not touch.
 const panelAllowAll = "    allow all;\n"
+
+// panelNoAccessLog keeps the panel's own pages out of nginx's access.log: every
+// page the owner opens, every live refresh, would otherwise be a line in a log
+// Ubuntu keeps, beside the scanners that log is read for. What the panel does
+// is in its own log. Errors still go to nginx's error log, and the bare
+// address on the panel's port — the 404 scanners get — is still logged.
+const panelNoAccessLog = "    access_log off;\n"
 
 // panelVhost is the whole file: the panel on its own port, plus the panel on the
 // hostname when one has been set.
