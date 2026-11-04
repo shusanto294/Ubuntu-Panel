@@ -27,8 +27,8 @@ func TestFirewallBlocks(t *testing.T) {
 
 func TestMergeBans(t *testing.T) {
 	list := mergeBans(
-		[]string{"1.1.1.1", "2.2.2.2"},
-		[]string{"2.2.2.2", "3.3.3.3"},
+		[]string{"1.1.1.1", "2.2.2.2", "3.3.3.3"},
+		map[string][]string{"web_login": {"2.2.2.2"}},
 		[]security.Rule{{Number: 7, From: "2.2.2.2"}},
 		map[string]int64{"4.4.4.4": 99},
 	)

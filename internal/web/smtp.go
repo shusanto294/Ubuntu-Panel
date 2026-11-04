@@ -178,7 +178,8 @@ func (a *App) anyAlertEnabled() bool {
 	return a.Store.SettingBool(alertPanelLoginSetting, true) ||
 		a.Store.SettingBool(alertPanelLockSetting, true) ||
 		a.Store.SettingBool(alertSSHLoginSetting, true) ||
-		a.Store.SettingBool(alertSSHBanSetting, false)
+		a.Store.SettingBool(alertSSHBanSetting, false) ||
+		a.healthAlert(alertCPUSetting) || a.healthAlert(alertDiskSetting)
 }
 
 func (a *App) alertSettings(ctx context.Context) map[string]any {
@@ -188,6 +189,12 @@ func (a *App) alertSettings(ctx context.Context) map[string]any {
 		"panel_lockout": a.Store.SettingBool(alertPanelLockSetting, true),
 		"ssh_login":     a.Store.SettingBool(alertSSHLoginSetting, true),
 		"ssh_ban":       a.Store.SettingBool(alertSSHBanSetting, false),
+		"cpu_high":      a.healthAlert(alertCPUSetting),
+		"disk_full":     a.healthAlert(alertDiskSetting),
+		"mail_queue":    a.healthAlert(alertMailQueueSetting),
+		"cert_expiry":   a.healthAlert(alertCertsSetting),
+		"malware":       a.healthAlert(alertMalwareSetting),
+		"web_ban":       a.healthAlert(alertWebBanSetting),
 	}
 }
 
@@ -218,6 +225,10 @@ func (a *App) securityAlerts(w http.ResponseWriter, r *http.Request) {
 		a.Store.SetSetting(setting, strconv.FormatBool(boolInput(input, key, false)))
 	}
 
+	for key, setting := range healthAlertKeys {
+		a.Store.SetSetting(setting, strconv.FormatBool(boolInput(input, key, false)))
+	}
+
 	a.securityBack(w, r, "Alert settings saved.", false)
 }
 
@@ -239,8 +250,8 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.checkSSHTrap()
 			a.recordSSHEvents(ctx)
+			a.checkProtection(ctx)
 			a.checkAlerts(ctx)
 		}
 	}
@@ -261,6 +272,7 @@ func (a *App) checkAlerts(ctx context.Context) {
 
 	alerts = append(alerts, a.panelAlerts(ctx, ready)...)
 	alerts = append(alerts, a.sshAlerts(ready)...)
+	alerts = append(alerts, a.healthAlerts(ctx, ready)...)
 
 	a.pruneLogs(ctx)
 
@@ -268,14 +280,14 @@ func (a *App) checkAlerts(ctx context.Context) {
 		return
 	}
 
-	subject := fmt.Sprintf("%s security alert on %s", config.Name, system.Hostname())
+	subject := fmt.Sprintf("%s alert on %s", config.Name, system.Hostname())
 	if len(alerts) == 1 {
 		first, _, _ := strings.Cut(alerts[0], "\n")
 		subject = fmt.Sprintf("[%s] %s", system.Hostname(), first)
 	}
 
 	body := strings.Join(alerts, "\n\n---\n\n") +
-		"\n\nChange which alerts you get on the panel's Security page.\n"
+		"\n\nChange which alerts you get on the Alerts tab of the panel's Security page.\n"
 
 	if err := notify.Send(ctx, smtp, notify.Message{To: []string{recipient}, Subject: subject, Body: body}); err != nil {
 		a.Log.Warn("could not send a security alert", "error", err)

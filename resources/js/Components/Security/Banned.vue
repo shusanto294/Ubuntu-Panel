@@ -21,10 +21,15 @@ const emit = defineEmits(['open']);
 
 const sources = {
     ssh: { label: 'SSH brute-force', scope: 'SSH port', style: 'bg-amber-50 text-amber-700', tab: 'ssh' },
-    trap: { label: 'SSH trap', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'hardening' },
+    web_login: { label: 'Website login attack', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
+    web_scan: { label: 'Website scanner', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
+    mail: { label: 'Mail login attack', scope: 'Mail ports', style: 'bg-violet-50 text-violet-700', tab: 'protection' },
+    recidive: { label: 'Repeat offender', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'protection' },
     firewall: { label: 'Firewall block', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'firewall' },
     panel: { label: 'Panel lockout', scope: 'Panel sign-in', style: 'bg-slate-100 text-slate-700', tab: 'logins' },
 };
+
+const PROTECT_KINDS = ['web_login', 'web_scan', 'mail', 'recidive'];
 
 const counts = computed(() => props.bans.counts);
 
@@ -37,12 +42,10 @@ const tiles = computed(() => [
         detail: `${counts.value.ssh_total} since fail2ban started · SSH port only`,
     },
     {
-        key: 'trap',
-        label: 'SSH trap',
-        value: counts.value.trap_on ? counts.value.trap : '—',
-        detail: counts.value.trap_on
-            ? `${counts.value.trap_total} since fail2ban started · every port`
-            : 'the trap is off',
+        key: 'protect',
+        label: 'Website & mail',
+        value: counts.value.protect ?? 0,
+        detail: 'Protection tab jails · web, mail or every port',
     },
     { key: 'firewall', label: 'Firewall blocks', value: counts.value.firewall, detail: 'ufw deny rules · every port' },
     { key: 'panel', label: 'Panel lockouts', value: counts.value.panel, detail: 'panel sign-in only, temporary' },
@@ -54,7 +57,10 @@ const search = ref('');
 const rows = computed(() =>
     props.bans.list.filter(
         (row) =>
-            (source.value === 'all' || row.sources.some((s) => s.kind === source.value)) &&
+            (source.value === 'all' ||
+                row.sources.some((s) =>
+                    source.value === 'protect' ? PROTECT_KINDS.includes(s.kind) : s.kind === source.value,
+                )) &&
             (!search.value || row.ip.includes(search.value.trim())),
     ),
 );
@@ -204,8 +210,12 @@ const release = async (row) => {
                                     </span>
                                 </template>
                                 <span>{{
-                                    row.sources.some((s) => s.kind === 'trap' || s.kind === 'firewall')
+                                    row.sources.some((s) => s.kind === 'firewall' || s.kind === 'recidive')
                                         ? 'Refused on every port'
+                                        : row.sources.some((s) => s.kind === 'web_login' || s.kind === 'web_scan')
+                                          ? 'Refused on the web ports'
+                                          : row.sources.some((s) => s.kind === 'mail')
+                                            ? 'Refused on the mail ports'
                                         : row.sources.some((s) => s.kind === 'ssh')
                                           ? 'Refused on the SSH port'
                                           : 'Refused at panel sign-in'

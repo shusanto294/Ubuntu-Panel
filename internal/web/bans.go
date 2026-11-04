@@ -10,18 +10,18 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 )
 
-// Four things on this machine refuse an address, each kept by the program
+// Several things on this machine refuse an address, each kept by the program
 // that enforces it rather than copied into the panel: fail2ban's SSH jail
-// (the SSH port only), fail2ban's trap jail (every port), ufw's deny rules
-// (every port) and the panel's own sign-in lockout (the panel only). They stay
+// (the SSH port only), the optional jails on the Protection tab (the web or
+// mail ports, or every port for repeat offenders), ufw's deny rules (every
+// port) and the panel's own sign-in lockout (the panel only). They stay
 // separate because they block different things, but the Banned IPs tab reads
-// all four into one list, one row per address, so nobody has to look in four
-// places to find out why an address cannot get in.
+// them all into one list, one row per address, so nobody has to look in
+// several places to find out why an address cannot get in.
 
 // Ban sources, as the page names them.
 const (
 	banSSH      = "ssh"
-	banTrap     = "trap"
 	banFirewall = "firewall"
 	banPanel    = "panel"
 )
@@ -46,17 +46,15 @@ type bannedAddress struct {
 	Sources []banSource `json:"sources"`
 }
 
-// banCounts is the tab's tiles. SSHTotal and TrapTotal are fail2ban's "since it
-// started" counts, which a restart resets.
+// banCounts is the tab's tiles. SSHTotal is fail2ban's "since it started"
+// count, which a restart resets.
 type banCounts struct {
-	Total     int  `json:"total"`
-	SSH       int  `json:"ssh"`
-	SSHTotal  int  `json:"ssh_total"`
-	Trap      int  `json:"trap"`
-	TrapTotal int  `json:"trap_total"`
-	TrapOn    bool `json:"trap_on"`
-	Firewall  int  `json:"firewall"`
-	Panel     int  `json:"panel"`
+	Total    int `json:"total"`
+	SSH      int `json:"ssh"`
+	SSHTotal int `json:"ssh_total"`
+	Protect  int `json:"protect"`
+	Firewall int `json:"firewall"`
+	Panel    int `json:"panel"`
 }
 
 // firewallBlocks are the ufw rules that refuse an address on every port: a
@@ -86,9 +84,9 @@ func firewallBlocks(rules []security.Rule) []security.Rule {
 	return blocks
 }
 
-// mergeBans puts the four lists together, one row per address, sorted by the
+// mergeBans puts the three lists together, one row per address, sorted by the
 // number of things refusing it and then by address.
-func mergeBans(ssh, trap []string, blocks []security.Rule, locked map[string]int64) []bannedAddress {
+func mergeBans(ssh []string, protect map[string][]string, blocks []security.Rule, locked map[string]int64) []bannedAddress {
 	rows := map[string]*bannedAddress{}
 
 	add := func(ip string, source banSource) {
@@ -101,8 +99,10 @@ func mergeBans(ssh, trap []string, blocks []security.Rule, locked map[string]int
 		row.Sources = append(row.Sources, source)
 	}
 
-	for _, ip := range trap {
-		add(ip, banSource{Kind: banTrap})
+	for kind, ips := range protect {
+		for _, ip := range ips {
+			add(ip, banSource{Kind: kind})
+		}
 	}
 	for _, rule := range blocks {
 		add(rule.From, banSource{Kind: banFirewall, Rule: rule.Number, Comment: rule.Comment})
@@ -136,22 +136,29 @@ func (a *App) bans(ctx context.Context, snap *securitySnapshot) map[string]any {
 	locked := a.Store.LockedAddresses(ctx, limit, window)
 	blocks := firewallBlocks(snap.Firewall.Rules)
 
-	trap := []string{}
 	counts := banCounts{
 		SSH:      snap.Jail.CurrentlyBanned,
 		SSHTotal: snap.Jail.TotalBanned,
-		TrapOn:   a.sshTrapEnabled(),
 		Firewall: len(blocks),
 		Panel:    len(locked),
 	}
 
-	if snap.Trap != nil {
-		trap = snap.Trap.Banned
-		counts.Trap = snap.Trap.CurrentlyBanned
-		counts.TrapTotal = snap.Trap.TotalBanned
+	// The optional jails, by the kind the tab shows; the two mail jails are
+	// one kind, so an address in both is listed once for it.
+	protect := map[string][]string{}
+	seen := map[string]bool{}
+	for jail, status := range snap.Protect {
+		kind := protectJailKinds[jail]
+		for _, ip := range status.Banned {
+			if !seen[kind+" "+ip] {
+				seen[kind+" "+ip] = true
+				protect[kind] = append(protect[kind], ip)
+				counts.Protect++
+			}
+		}
 	}
 
-	list := mergeBans(snap.Jail.Banned, trap, blocks, locked)
+	list := mergeBans(snap.Jail.Banned, protect, blocks, locked)
 	counts.Total = len(list)
 
 	return map[string]any{
@@ -162,7 +169,8 @@ func (a *App) bans(ctx context.Context, snap *securitySnapshot) map[string]any {
 }
 
 // securityRelease lets an address back in from everything that refuses it:
-// both jails, every ufw rule that blocks it, and the panel's lockout.
+// every fail2ban jail the panel runs, every ufw rule that blocks it, and the
+// panel's lockout.
 func (a *App) securityRelease(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
@@ -186,9 +194,9 @@ func (a *App) securityRelease(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if a.sshTrapEnabled() {
-			if status := security.TrapStatus(); containsString(status.Banned, address) {
-				if err := security.UnbanTrap(address); err != nil {
+		for jail, status := range security.ProtectStatus(a.protection()) {
+			if containsString(status.Banned, address) {
+				if err := security.UnbanFrom(jail, address); err != nil {
 					problems = append(problems, err.Error())
 				}
 			}

@@ -11,6 +11,7 @@ import Hardening from '@/Components/Security/Hardening.vue';
 import Updates from '@/Components/Security/Updates.vue';
 import Sessions from '@/Components/Security/Sessions.vue';
 import Alerts from '@/Components/Security/Alerts.vue';
+import Protection from '@/Components/Security/Protection.vue';
 import { ago, card } from '@/Components/Security/ui';
 import { Head, Link, router } from '@inertiajs/vue3';
 
@@ -22,8 +23,8 @@ const props = defineProps({
     users: Array,
     hardening: Object,
     sshService: Object,
-    sshTrap: Object,
     bans: Object,
+    protection: Object,
     firewall: Object,
     panelPort: Number,
     updates: Object,
@@ -42,6 +43,7 @@ const props = defineProps({
 const tabs = [
     { key: 'overview', name: 'Overview' },
     { key: 'bans', name: 'Banned IPs' },
+    { key: 'protection', name: 'Protection' },
     { key: 'ssh', name: 'SSH protection' },
     { key: 'users', name: 'SSH users' },
     { key: 'logins', name: 'Panel logins' },
@@ -264,6 +266,7 @@ const tiles = computed(() => [
         </div>
 
         <Banned v-else-if="tab === 'bans'" :bans="bans" :my-ip="myIp" @open="tab = $event" />
+        <Protection v-else-if="tab === 'protection'" :protection="protection" :my-ip="myIp" @open="tab = $event" />
         <SshProtection
             v-else-if="tab === 'ssh'"
             :ssh="ssh"
@@ -284,10 +287,6 @@ const tiles = computed(() => [
             v-else-if="tab === 'hardening'"
             :hardening="hardening"
             :service="sshService"
-            :trap="sshTrap"
-            @open="tab = $event"
-            :never-ban="ssh.jail?.ignore_ips ?? []"
-            :my-ip="myIp"
         />
         <Updates v-else-if="tab === 'updates'" :updates="updates" :busy="Boolean(activeTask)" />
         <Sessions v-else-if="tab === 'sessions'" :sessions="sessions" />

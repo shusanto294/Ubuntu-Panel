@@ -16,6 +16,12 @@ const form = useForm({
     panel_lockout: props.alerts.panel_lockout,
     ssh_login: props.alerts.ssh_login,
     ssh_ban: props.alerts.ssh_ban,
+    cpu_high: props.alerts.cpu_high,
+    disk_full: props.alerts.disk_full,
+    mail_queue: props.alerts.mail_queue,
+    cert_expiry: props.alerts.cert_expiry,
+    malware: props.alerts.malware,
+    web_ban: props.alerts.web_ban,
 });
 
 const save = () => form.post(route('security.alerts'), { preserveScroll: true });
@@ -25,6 +31,15 @@ const options = [
     { key: 'panel_lockout', label: 'Panel lockouts', hint: 'An address used up its failed sign-ins and is locked out.' },
     { key: 'ssh_login', label: 'Every successful SSH login', hint: 'Who logged in, from where, and with a password or a key.' },
     { key: 'ssh_ban', label: 'New SSH bans', hint: 'A digest of addresses fail2ban banned. Busy servers ban many a day.' },
+    { key: 'web_ban', label: 'New website and mail bans', hint: 'A digest of addresses the Protection tab’s jails banned.' },
+];
+
+const health = [
+    { key: 'cpu_high', label: 'CPU stays high', hint: 'Above 90% for five minutes. The email says which programs, which sites and which addresses. At most once an hour.' },
+    { key: 'disk_full', label: 'Disk nearly full', hint: 'Above 90%. At most twice a day.' },
+    { key: 'mail_queue', label: 'Mail piling up', hint: '100 or more messages waiting to send — usually a stolen mailbox sending spam.' },
+    { key: 'cert_expiry', label: 'Certificate not renewing', hint: 'A site’s Let’s Encrypt certificate expires within 14 days.' },
+    { key: 'malware', label: 'Malware scan findings', hint: 'The scan on the Protection tab found files it had not found before.' },
 ];
 </script>
 
@@ -47,6 +62,18 @@ const options = [
                 </div>
 
                 <label v-for="option in options" :key="option.key" class="flex items-start gap-3">
+                    <Checkbox v-model:checked="form[option.key]" class="mt-0.5" />
+                    <span>
+                        <span class="block text-sm font-medium text-slate-700">{{ option.label }}</span>
+                        <span class="block text-xs text-slate-500">{{ option.hint }}</span>
+                    </span>
+                </label>
+
+                <p class="border-t border-slate-100 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    The server's health
+                </p>
+
+                <label v-for="option in health" :key="option.key" class="flex items-start gap-3">
                     <Checkbox v-model:checked="form[option.key]" class="mt-0.5" />
                     <span>
                         <span class="block text-sm font-medium text-slate-700">{{ option.label }}</span>

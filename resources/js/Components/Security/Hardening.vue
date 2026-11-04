@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { ref } from 'vue';
 import Checkbox from '@/Components/Checkbox.vue';
 import InputError from '@/Components/InputError.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
@@ -10,12 +10,7 @@ import { router, useForm } from '@inertiajs/vue3';
 const props = defineProps({
     hardening: Object,
     service: Object,
-    trap: { type: Object, default: () => ({ enabled: false, status: null }) },
-    neverBan: { type: Array, default: () => [] },
-    myIp: { type: String, default: '' },
 });
-
-const emit = defineEmits(['open']);
 
 // SSH itself, on or off — either lasts until it is changed here. Off stops
 // and masks sshd, so the port closes and stays closed through reboots and
@@ -44,36 +39,6 @@ const turnOff = async () => {
 };
 
 const turnOn = () => setService({ action: 'on' });
-
-// The trap: any address not on the never-ban list that connects to SSH is
-// banned from the whole server on its first try, whether SSH is on or off.
-const trapped = computed(() => props.trap.status?.banned ?? []);
-
-// An exact entry only — a range covering the address counts too, but working
-// that out here is not worth a false "you are safe".
-const myIpTrusted = computed(() => props.neverBan.includes(props.myIp));
-
-const setTrap = async (enabled) => {
-    if (
-        enabled &&
-        !(await confirmDanger(
-            'Turn the SSH trap on?',
-            'Any address that connects to SSH or SFTP — whether SSH is on or off — is banned from the whole server, sites and this panel included, permanently, on its first try. ' +
-                'Only addresses on the never-ban list can connect, so add every address you and your site SFTP users connect from. ' +
-                (myIpTrusted.value
-                    ? 'Your address is already on the list.'
-                    : `Your address (${props.myIp}) is added to the never-ban list now, so you are not caught.`),
-            myIpTrusted.value ? 'Turn trap on' : 'Trust my address and turn on',
-        ))
-    )
-        return;
-
-    router.post(route('security.ssh-trap'), { enabled, trust_me: enabled && !myIpTrusted.value }, {
-        preserveScroll: true,
-        onStart: () => (switching.value = true),
-        onFinish: () => (switching.value = false),
-    });
-};
 
 const form = useForm({
     permit_root_login: props.hardening.permit_root_login || 'prohibit-password',
@@ -134,53 +99,6 @@ const save = async () => {
                 Turn off
             </button>
             <PrimaryButton v-else type="button" :disabled="switching" @click="turnOn">Turn on</PrimaryButton>
-        </div>
-
-        <!-- The trap, which only has anything to catch while SSH is off. -->
-        <div class="mt-5 border-t border-slate-100 pt-5">
-            <div class="flex flex-wrap items-start justify-between gap-4">
-                <div class="min-w-0">
-                    <h4 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                        SSH trap
-                        <span
-                            class="rounded-full px-2 py-0.5 text-xs font-medium"
-                            :class="trap.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
-                        >
-                            {{ trap.enabled ? 'on' : 'off' }}
-                        </span>
-                    </h4>
-                    <p class="mt-1 max-w-2xl text-sm text-slate-500">
-                        Any address that connects to SSH or SFTP is banned from the whole server —
-                        sites and panel included — permanently, on its first try, whether SSH is on
-                        or off. Only addresses on the never-ban list (SSH protection tab) can
-                        connect.
-                    </p>
-                    <p
-                        v-if="trap.enabled && !myIpTrusted && myIp"
-                        class="mt-2 text-xs text-amber-700"
-                    >
-                        Your address ({{ myIp }}) is not on the never-ban list. Connecting to SSH
-                        from it would ban it from the server, the panel included.
-                    </p>
-                </div>
-
-                <button
-                    type="button"
-                    class="rounded-xl px-4 py-2 text-sm font-medium ring-1 ring-slate-900/10 transition disabled:opacity-50"
-                    :class="trap.enabled ? 'bg-white text-slate-700 hover:bg-slate-50' : 'bg-slate-900 text-white hover:bg-slate-800'"
-                    :disabled="switching"
-                    @click="setTrap(!trap.enabled)"
-                >
-                    {{ trap.enabled ? 'Turn off' : 'Turn on' }}
-                </button>
-            </div>
-
-            <p v-if="trap.enabled && trapped.length" class="mt-4 text-sm text-slate-600">
-                Caught {{ trapped.length }} address{{ trapped.length === 1 ? '' : 'es' }} —
-                <button type="button" class="font-medium text-brand-600 hover:underline" @click="emit('open', 'bans')">
-                    see and unban them on the Banned IPs tab
-                </button>
-            </p>
         </div>
     </div>
 

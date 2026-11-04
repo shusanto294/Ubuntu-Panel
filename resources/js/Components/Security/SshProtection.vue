@@ -61,7 +61,7 @@ const ban1 = async (ip) => {
     router.post(route('security.bans.store'), { ip }, { preserveScroll: true });
 };
 
-// Banned by anything — this jail, the trap or a firewall block — is refused on
+// Banned by anything — this jail or a firewall block — is refused on
 // the SSH port all the same.
 const banned = computed(() => new Set(props.bannedIps));
 
@@ -185,7 +185,7 @@ const kindLabel = { accepted: 'Logged in', failed: 'Wrong password', invalid: 'U
             <div :class="card" class="flex flex-col">
                 <h3 class="font-semibold text-slate-900">Banned addresses</h3>
                 <p class="mt-1 text-sm text-slate-500">
-                    Every ban — from this protection, the SSH trap, firewall blocks and panel lockouts — is
+                    Every ban — from this protection, firewall blocks and panel lockouts — is
                     listed, counted and managed together on the Banned IPs tab.
                 </p>
                 <div class="mt-auto pt-6">

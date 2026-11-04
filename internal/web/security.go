@@ -94,10 +94,10 @@ func (a *App) applySSHProtection(runner *tasks.Runner) error {
 		return err
 	}
 
-	// The trap shares the never-ban list, so it is rewritten with it.
-	if a.sshTrapEnabled() {
-		if err := security.ApplyTrap(true, a.jailConfig().IgnoreIPs); err != nil {
-			return err
+	// The optional jails and rate limits share the never-ban list.
+	if p := a.protection(); p.AnyJail() || p.RateLogin.Enabled || p.RateFlood.Enabled {
+		if err := a.applyProtection(context.Background(), p); err != nil {
+			a.Log.Warn("could not update the protections with the never-ban list", "error", err)
 		}
 	}
 
@@ -182,7 +182,7 @@ type securitySnapshot struct {
 	Updates  security.Updates
 	Events   []security.Event
 	Users    []security.SSHUser
-	Trap     *security.JailStatus
+	Protect  map[string]security.JailStatus
 	Taken    time.Time
 }
 
@@ -287,10 +287,12 @@ func (a *App) readSnapshot() *securitySnapshot {
 	go func() { defer wait.Done(); snapshot.Events = security.ReadEvents(7*24*time.Hour, 1000) }()
 	go func() { defer wait.Done(); snapshot.Users = security.ReadUsers(a.Config.SystemUser) }()
 
-	// Only when the trap is on: asking fail2ban is a Python start-up.
-	if a.sshTrapEnabled() {
+	// The optional jails, only those that are on: asking fail2ban is a Python
+	// start-up each.
+	snapshot.Protect = map[string]security.JailStatus{}
+	if p := a.protection(); p.AnyJail() {
 		wait.Add(1)
-		go func() { defer wait.Done(); status := security.TrapStatus(); snapshot.Trap = &status }()
+		go func() { defer wait.Done(); snapshot.Protect = security.ProtectStatus(p) }()
 	}
 
 	wait.Wait()
@@ -399,6 +401,8 @@ func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapsh
 			}
 		}
 	}
+
+	list = append(list, a.protectionChecks(ctx)...)
 
 	if snap.Updates.Reboot {
 		list = append(list, check{
@@ -534,15 +538,12 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		},
 		"hardening":  snap.SSH,
 		"sshService": a.sshServiceProps(snap.SSH.Service),
-		"sshTrap": map[string]any{
-			"enabled": a.sshTrapEnabled(),
-			"status":  snap.Trap,
-		},
-		"bans":      a.bans(r.Context(), snap),
-		"users":     a.sshUsers(snap),
-		"firewall":  snap.Firewall,
-		"panelPort": a.panelPort(),
-		"updates":   snap.Updates,
+		"bans":       a.bans(r.Context(), snap),
+		"protection": a.protectionProps(r.Context(), snap),
+		"users":      a.sshUsers(snap),
+		"firewall":   snap.Firewall,
+		"panelPort":  a.panelPort(),
+		"updates":    snap.Updates,
 		"logins": map[string]any{
 			"attempts":        attempts,
 			"succeeded_24h":   succeeded,
@@ -794,6 +795,14 @@ func (a *App) securityTrust(w http.ResponseWriter, r *http.Request) {
 	if proc.Which("fail2ban-client") {
 		// Unbanned too, in case trusting it is the reason somebody came here.
 		security.Unban(address)
+
+		if security.ValidIP(address) {
+			for jail, status := range security.ProtectStatus(a.protection()) {
+				if containsString(status.Banned, address) {
+					security.UnbanFrom(jail, address)
+				}
+			}
+		}
 
 		if err := a.applySSHProtection(nil); err != nil {
 			a.securityBack(w, r, err.Error(), true)
