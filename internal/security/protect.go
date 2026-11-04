@@ -438,7 +438,7 @@ func NginxFile(p Protection, env NginxEnv) string {
 		for _, cidr := range CloudflareRanges {
 			fmt.Fprintf(&file, "set_real_ip_from %s;\n", cidr)
 		}
-		file.WriteString("real_ip_header CF-Connecting-IP;\n")
+		file.WriteString(realIPHeaderLine + "\n")
 	}
 
 	if !p.RateLogin.Enabled && !p.RateFlood.Enabled {
@@ -465,7 +465,7 @@ func NginxFile(p Protection, env NginxEnv) string {
 	}
 	file.WriteString("}\n")
 
-	file.WriteString("limit_req_status 429;\nlimit_req_log_level warn;\n")
+	file.WriteString(limitStatusLine + "\n" + limitLogLine + "\n")
 
 	if p.RateLogin.Enabled {
 		file.WriteString("\n# Login forms and XML-RPC: a few posts a minute per address.\n")
@@ -517,6 +517,64 @@ func validHost(host string) bool {
 	return true
 }
 
+// sharedLines are the lines in the file nginx allows only once in the http
+// block, and another file may set already: a hand-written Cloudflare include,
+// a rate limit from another tool or panel. nginx refuses the whole
+// configuration over a second one, so when it says one of these is a
+// duplicate the file is written without it, and the setting already there is
+// the one that applies. Everything else in the file is named panel_* and
+// cannot clash.
+var sharedLines = []string{realIPHeaderLine, limitStatusLine, limitLogLine}
+
+const (
+	realIPHeaderLine = "real_ip_header CF-Connecting-IP;"
+	limitStatusLine  = "limit_req_status 429;"
+	limitLogLine     = "limit_req_log_level warn;"
+)
+
+// withoutLine is contents with the whole line line removed.
+func withoutLine(contents, line string) string {
+	return strings.Replace(contents, line+"\n", "", 1)
+}
+
+// withoutShared is contents without any of sharedLines.
+func withoutShared(contents string) string {
+	for _, line := range sharedLines {
+		contents = withoutLine(contents, line)
+	}
+	return contents
+}
+
+// duplicateShared is the line of sharedLines nginx's test output says is set
+// twice, or "".
+func duplicateShared(output string) string {
+	for _, line := range sharedLines {
+		directive := strings.Fields(line)[0]
+		if strings.Contains(output, `"`+directive+`" directive is duplicate`) {
+			return line
+		}
+	}
+	return ""
+}
+
+// sameFile is whether the file on disk is the one wanted, allowing for shared
+// lines left out because another file sets them.
+func sameFile(onDisk, wanted string) bool {
+	return onDisk == wanted || withoutShared(onDisk) == withoutShared(wanted)
+}
+
+// whereElse names what else in /etc/nginx could clash with this file: other
+// files setting the shared directives, and every include of conf.d — two of
+// those would load this file twice.
+func whereElse() string {
+	found := proc.Run(`sudo grep -RnE '^[[:space:]]*(real_ip_header|limit_req_status|limit_req_log_level|include[[:space:]]+[^;]*conf\.d)' /etc/nginx 2>/dev/null | grep -v `+proc.Quote(ProtectNginxPath)+` | head -n 8`, time.Minute)
+	lines := strings.TrimSpace(found.Output)
+	if lines == "" {
+		return ""
+	}
+	return " — check these lines in nginx's configuration: " + strings.Join(strings.Split(lines, "\n"), "; ")
+}
+
 // ApplyNginx writes the nginx file, or removes it, and reloads nginx when
 // nginx accepts the result. Refused, the previous file is put back.
 func ApplyNginx(contents string) error {
@@ -536,7 +594,9 @@ func ApplyNginx(contents string) error {
 		}
 		proc.Run("sudo rm -f "+ProtectNginxPath, time.Minute)
 	} else {
-		if existed && previous == contents {
+		// A file written without the shared lines, because another file sets
+		// them, is still the file wanted.
+		if existed && sameFile(previous, contents) {
 			return nil
 		}
 		if err := proc.PutFile(ProtectNginxPath, contents, true); err != nil {
@@ -544,15 +604,32 @@ func ApplyNginx(contents string) error {
 		}
 	}
 
-	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+	check := proc.Run("sudo nginx -t 2>&1", time.Minute)
+	for tries := 0; !check.OK() && contents != "" && tries < len(sharedLines); tries++ {
+		line := duplicateShared(check.Output)
+		if line == "" || !strings.Contains(contents, line+"\n") {
+			break
+		}
+		contents = withoutLine(contents, line)
+		if err := proc.PutFile(ProtectNginxPath, contents, true); err != nil {
+			return err
+		}
+		check = proc.Run("sudo nginx -t 2>&1", time.Minute)
+	}
+
+	if !check.OK() {
 		if existed {
 			proc.PutFile(ProtectNginxPath, previous, true)
 		} else {
 			proc.Run("sudo rm -f "+ProtectNginxPath, time.Minute)
 		}
 
-		return fmt.Errorf("nginx refused the new settings, so the previous ones were kept: %s",
-			lastLines(check.Output, 3))
+		hint := ""
+		if strings.Contains(check.Output, "duplicate") || strings.Contains(check.Output, "already bound") {
+			hint = whereElse()
+		}
+		return fmt.Errorf("nginx refused the new settings, so the previous ones were kept: %s%s",
+			lastLines(check.Output, 3), hint)
 	}
 
 	if result := proc.Run("sudo systemctl reload nginx 2>&1", time.Minute); !result.OK() {

@@ -183,3 +183,35 @@ func TestValidation(t *testing.T) {
 		t.Fatal("every field of a bad jail should be refused")
 	}
 }
+
+func TestNginxSharedLines(t *testing.T) {
+	out := `nginx: [emerg] "limit_req_status" directive is duplicate in /etc/nginx/conf.d/panel-protect.conf:35`
+	if got := duplicateShared(out); got != "limit_req_status 429;" {
+		t.Errorf("duplicateShared = %q", got)
+	}
+	if duplicateShared(`"limit_req" directive is duplicate`) != "" {
+		t.Error("only the shared lines are dropped")
+	}
+
+	p := ProtectionDefaults
+	p.RateLogin.Enabled = true
+	file := NginxFile(p, NginxEnv{})
+	stripped := withoutShared(file)
+	if strings.Contains(stripped, "limit_req_status") || strings.Contains(stripped, "limit_req_log_level") ||
+		!strings.Contains(stripped, "limit_req zone=panel_login") {
+		t.Errorf("withoutShared:\n%s", stripped)
+	}
+
+	p.RealIP = true
+	file = NginxFile(p, NginxEnv{})
+	if got := duplicateShared(`"real_ip_header" directive is duplicate in /etc/nginx/conf.d/panel-protect.conf:27`); got != "real_ip_header CF-Connecting-IP;" {
+		t.Errorf("duplicateShared = %q", got)
+	}
+	partial := withoutLine(file, "real_ip_header CF-Connecting-IP;")
+	if !sameFile(partial, file) || !strings.Contains(partial, "set_real_ip_from") {
+		t.Error("a file without the real_ip_header another file sets is still the one wanted")
+	}
+	if sameFile(NginxFile(ProtectionDefaults, NginxEnv{}), file) {
+		t.Error("an empty file is not the one wanted")
+	}
+}
