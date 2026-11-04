@@ -8,14 +8,15 @@ import { formatDuration, formatRelative, formatStamp } from '@/time';
 import { Link, router } from '@inertiajs/vue3';
 
 /*
- * One list of everything that happened, newest first: what the panel ran,
- * sign-ins to it, SSH, and every line the server's own programs logged that
- * the panel has copied in. Filtered and paged on the server.
+ * A list of what happened, newest first, filtered and paged on the server:
+ * the lines the server's own programs logged that the panel has copied in
+ * (view "server"), or what the panel ran, its sign-ins and SSH ("panel").
  */
 const props = defineProps({
+    view: { type: String, default: 'server' },
     events: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
-    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 50 }) },
+    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 20 }) },
     counts: { type: Object, default: () => ({}) },
     ranges: { type: Array, default: () => [] },
     sources: { type: Array, default: () => [] },
@@ -46,7 +47,11 @@ watch(
 const loading = ref(false);
 
 const visit = (page = 1) => {
-    const query = { view: 'events' };
+    const query = { view: props.view };
+
+    // The traffic summary's window, on the Server logs tab, stays as it was.
+    const trafficWindow = new URLSearchParams(window.location.search).get('window');
+    if (trafficWindow) query.window = trafficWindow;
     for (const [key, value] of Object.entries(form.value)) {
         if (value) query[key] = value;
     }
@@ -61,17 +66,7 @@ const visit = (page = 1) => {
     });
 };
 
-const setRange = (key) => {
-    form.value.range = key;
-    visit();
-};
-
-const setSource = (key) => {
-    form.value.source = form.value.source === key ? '' : key;
-    visit();
-};
-
-const totalCount = computed(() => Object.values(props.counts).reduce((sum, n) => sum + n, 0));
+const totalCount = computed(() => props.sources.reduce((sum, s) => sum + (props.counts[s.key] ?? 0), 0));
 
 // Kept current while a task the panel runs is still going.
 const anyRunning = computed(() => props.events.some((entry) => entry.task?.status === 'running'));
@@ -178,49 +173,23 @@ const toggle = (key) => {
 
 <template>
     <div class="space-y-4">
-        <!-- Period. -->
-        <div class="flex flex-wrap items-center gap-2">
-            <button
-                v-for="r in ranges"
-                :key="r.key"
-                type="button"
-                class="rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition"
-                :class="form.range === r.key ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'"
-                @click="setRange(r.key)"
-            >
-                {{ r.label }}
-            </button>
-            <span class="ml-auto text-xs text-slate-500">
-                {{ totalCount.toLocaleString() }} entries in this period ·
-                the server's own logs are copied in every minute
-            </span>
-        </div>
-
-        <!-- Sources, with how many each has in the period. -->
-        <div class="flex flex-wrap gap-1.5">
-            <button
-                type="button"
-                class="rounded-full px-3 py-1 text-xs font-medium ring-1 transition"
-                :class="!form.source ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'"
-                @click="form.source = ''; visit()"
-            >
-                All sources
-            </button>
-            <button
-                v-for="s in sources"
-                :key="s.key"
-                type="button"
-                class="rounded-full px-3 py-1 text-xs font-medium ring-1 transition"
-                :class="form.source === s.key ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'"
-                @click="setSource(s.key)"
-            >
-                {{ s.label }}
-                <span class="ml-1 opacity-70">{{ (counts[s.key] ?? 0).toLocaleString() }}</span>
-            </button>
-        </div>
-
-        <!-- Level, site, search. -->
+        <!-- Every filter is a field: period, source, level, site, text. -->
         <form class="flex flex-wrap items-end gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5" @submit.prevent="visit()">
+            <label class="block text-sm">
+                <span class="text-xs font-medium text-slate-700">Period</span>
+                <select v-model="form.range" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm" @change="visit()">
+                    <option v-for="r in ranges" :key="r.key" :value="r.key">{{ r.label }}</option>
+                </select>
+            </label>
+            <label class="block text-sm">
+                <span class="text-xs font-medium text-slate-700">Source</span>
+                <select v-model="form.source" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm" @change="visit()">
+                    <option value="">All sources · {{ totalCount.toLocaleString() }}</option>
+                    <option v-for="s in sources" :key="s.key" :value="s.key">
+                        {{ s.label }} · {{ (counts[s.key] ?? 0).toLocaleString() }}
+                    </option>
+                </select>
+            </label>
             <label class="block text-sm">
                 <span class="text-xs font-medium text-slate-700">Level</span>
                 <select v-model="form.level" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm" @change="visit()">
@@ -232,7 +201,7 @@ const toggle = (key) => {
             <label class="block text-sm">
                 <span class="text-xs font-medium text-slate-700">Site</span>
                 <select v-model="form.site" class="mt-1 block max-w-[16rem] rounded-lg border-slate-300 text-sm shadow-sm" @change="visit()">
-                    <option value="">All sites and the server</option>
+                    <option value="">{{ view === 'panel' ? 'All sites and the panel' : 'All sites and the server' }}</option>
                     <option v-for="site in sites" :key="site" :value="site">{{ site }}</option>
                 </select>
             </label>
@@ -242,7 +211,7 @@ const toggle = (key) => {
                     v-model="form.q"
                     type="search"
                     maxlength="200"
-                    placeholder="an IP, a URL, a user, “timeout”…"
+                    :placeholder="view === 'panel' ? 'an action, an email, an IP, a user…' : 'an IP, a URL, “timeout”…'"
                     class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm"
                 />
             </label>
@@ -254,6 +223,11 @@ const toggle = (key) => {
                 {{ loading ? 'Reading…' : 'Search' }}
             </button>
         </form>
+
+        <p v-if="view === 'server'" class="text-xs text-slate-500">
+            Copied in from the server's log files every minute. Ordinary successful requests are left to the traffic
+            summary above; every request is still in the access logs under Log files.
+        </p>
 
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
             <div v-if="!rows.length" class="px-5 py-12 text-center text-sm text-slate-500">

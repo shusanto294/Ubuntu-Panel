@@ -17,24 +17,23 @@ import (
 
 // logsIndex is the Logs page, in three views:
 //
-//   - traffic, the default: what the sites are being asked for and what the
-//     CPU is doing, read from the access logs and /proc (traffic.go);
-//   - events: one list of everything that happened — what the panel ran,
-//     sign-ins to it, SSH, and what nginx, PHP, the databases, fail2ban, the
-//     kernel, mail and each site logged — over a period, filtered and paged
-//     (events.go);
+//   - server, the default: what the server is doing — the traffic and CPU
+//     summary (traffic.go) — and below it every entry the machine's own
+//     programs logged: nginx, PHP, the databases, fail2ban, sudo, the kernel,
+//     mail and each site (events.go);
+//   - panel: what the panel ran, sign-ins to it, and SSH;
 //   - files: the log files themselves, a page at a time.
 func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
 	view := query.Get("view")
 	switch view {
-	case "events", "files":
+	case "server", "panel", "files":
 	case "activity":
-		// The old address of the panel's own history.
-		view = "events"
+		// The old addresses of the panel's own history.
+		view = "panel"
 	default:
-		view = "traffic"
+		view = "server"
 	}
 
 	props := inertia.Props{
@@ -44,24 +43,29 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 		"clearSources":     a.clearSources(),
 	}
 
-	var extra map[string]any
-
-	switch view {
-	case "traffic":
-		extra = a.logsTrafficProps(r.Context(), query.Get("window"))
-	case "events":
-		flat := map[string]string{}
-		for key := range query {
-			flat[key] = query.Get(key)
-		}
-		extra = a.logsEventsProps(r.Context(), flat)
-	case "files":
-		page, _ := strconv.Atoi(query.Get("page"))
-		extra = a.logsFilesProps(r.Context(), query.Get("source"), page, query.Get("q"))
+	flat := map[string]string{}
+	for key := range query {
+		flat[key] = query.Get(key)
 	}
 
-	for key, value := range extra {
-		props[key] = value
+	var extras []map[string]any
+
+	switch view {
+	case "server":
+		extras = append(extras,
+			a.logsTrafficProps(r.Context(), query.Get("window")),
+			a.logsEventsProps(r.Context(), flat, "server"))
+	case "panel":
+		extras = append(extras, a.logsEventsProps(r.Context(), flat, "panel"))
+	case "files":
+		page, _ := strconv.Atoi(query.Get("page"))
+		extras = append(extras, a.logsFilesProps(r.Context(), query.Get("source"), page, query.Get("q")))
+	}
+
+	for _, extra := range extras {
+		for key, value := range extra {
+			props[key] = value
+		}
 	}
 
 	a.Render.Render(w, r, "Logs/Index", props)

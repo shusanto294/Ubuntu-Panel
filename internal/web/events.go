@@ -281,9 +281,11 @@ var eventRanges = []struct {
 	{"all", "Everything kept", 0},
 }
 
-const eventsPerPage = 50
+const eventsPerPage = 20
 
-func (a *App) logsEventsProps(ctx context.Context, query map[string]string) map[string]any {
+// logsEventsProps are a list's: the server's own entries (scope "server") or
+// the panel's (scope "panel").
+func (a *App) logsEventsProps(ctx context.Context, query map[string]string, scope string) map[string]any {
 	rangeKey := query["range"]
 	since := int64(0)
 	found := false
@@ -312,6 +314,7 @@ func (a *App) logsEventsProps(ctx context.Context, query map[string]string) map[
 	}
 
 	filter := store.EventFilter{
+		Scope: scope,
 		Since: since, Source: query["source"], Level: level, Site: query["site"], Search: search,
 	}
 
@@ -344,15 +347,19 @@ func (a *App) logsEventsProps(ctx context.Context, query map[string]string) map[
 		}
 	}
 
-	sources := []map[string]string{
-		{"key": store.EventsPanel, "label": "Panel activity"},
-		{"key": store.EventsLogins, "label": "Panel sign-ins"},
-		{"key": store.EventsSSH, "label": "SSH"},
-	}
-	for _, key := range []string{serverlog.SourceRequests, serverlog.SourceSite, serverlog.SourceNginx,
-		serverlog.SourcePHP, serverlog.SourceDatabase, serverlog.SourceFail2ban, serverlog.SourceAuth,
-		serverlog.SourceKernel, serverlog.SourceSystem, serverlog.SourceMail} {
-		sources = append(sources, map[string]string{"key": key, "label": serverlog.SourceLabels[key]})
+	sources := []map[string]string{}
+	if scope == "panel" {
+		sources = append(sources,
+			map[string]string{"key": store.EventsPanel, "label": "Panel activity"},
+			map[string]string{"key": store.EventsLogins, "label": "Panel sign-ins"},
+			map[string]string{"key": store.EventsSSH, "label": "SSH"},
+		)
+	} else {
+		for _, key := range []string{serverlog.SourceRequests, serverlog.SourceSite, serverlog.SourceNginx,
+			serverlog.SourcePHP, serverlog.SourceDatabase, serverlog.SourceFail2ban, serverlog.SourceAuth,
+			serverlog.SourceKernel, serverlog.SourceSystem, serverlog.SourceMail} {
+			sources = append(sources, map[string]string{"key": key, "label": serverlog.SourceLabels[key]})
+		}
 	}
 
 	if entries == nil {

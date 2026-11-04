@@ -343,7 +343,7 @@ func (a *App) serverLogs(ctx context.Context) []serverLog {
 }
 
 // serverLogPerPage is how many lines a page of a log file is.
-const serverLogPerPage = 200
+const serverLogPerPage = 20
 
 // readServerLog is one page of a file, counted from its end — page 1 is the
 // newest lines — or of the lines matching a search, a fixed string,

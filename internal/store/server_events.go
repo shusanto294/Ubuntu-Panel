@@ -77,6 +77,10 @@ const (
 
 // EventFilter narrows the combined list.
 type EventFilter struct {
+	// Scope is "server" for what the machine's programs logged, "panel" for
+	// what the panel ran, its sign-ins and SSH, or "" for both.
+	Scope string
+
 	Since  int64  // Unix seconds; 0 for everything kept
 	Source string // "" for all, a server source, or one of the three above
 	Level  string // "", "warning" (and worse) or "error" (and worse)
@@ -110,6 +114,10 @@ func eventParts(filter EventFilter) ([]string, []any) {
 	}[filter.Level]
 
 	want := func(source string) bool {
+		if filter.Scope == "server" && source != "server" || filter.Scope == "panel" && source == "server" {
+			return false
+		}
+
 		switch filter.Source {
 		case "":
 			return true

@@ -80,6 +80,18 @@ func TestEventsCombinesFiltersAndPages(t *testing.T) {
 		t.Fatalf("second page: %+v", second)
 	}
 
+	if _, total, _ := st.Events(ctx, EventFilter{Scope: "server"}, 10, 0); total != 3 {
+		t.Fatalf("the server's own: total %d", total)
+	}
+
+	if _, total, _ := st.Events(ctx, EventFilter{Scope: "panel"}, 10, 0); total != 3 {
+		t.Fatalf("the panel's: total %d", total)
+	}
+
+	if _, total, _ := st.Events(ctx, EventFilter{Scope: "panel", Source: "kernel"}, 10, 0); total != 0 {
+		t.Fatalf("a server source in the panel's scope: total %d", total)
+	}
+
 	if counts := st.EventCounts(ctx, day.Since); counts["nginx"] != 1 || counts[EventsSSH] != 1 || counts["kernel"] != 0 {
 		t.Fatalf("counts: %v", counts)
 	}

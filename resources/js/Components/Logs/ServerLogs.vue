@@ -13,7 +13,7 @@ import { router } from '@inertiajs/vue3';
 const props = defineProps({
     serverLogs: { type: Array, default: () => [] },
     serverLog: { type: Object, default: null },
-    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 200 }) },
+    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 20 }) },
     search: { type: String, default: '' },
 });
 

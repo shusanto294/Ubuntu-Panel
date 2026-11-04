@@ -8,11 +8,12 @@ import { confirmDanger } from '@/dialog';
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
 /*
- * The Logs page: what the server is doing (traffic and CPU, the default),
- * one list of everything that happened, and the log files themselves.
+ * The Logs page: what the server is doing and what its programs logged (the
+ * default), what the panel itself did, and the log files themselves. The
+ * tabs sit in the top bar, so the logs get the whole page.
  */
 const props = defineProps({
-    view: { type: String, default: 'traffic' },
+    view: { type: String, default: 'server' },
     retention: { type: Number, default: 90 },
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
     clearSources: { type: Array, default: () => [] },
@@ -27,7 +28,7 @@ const props = defineProps({
     // Everything that happened.
     events: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
-    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 50 }) },
+    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 20 }) },
     counts: { type: Object, default: () => ({}) },
     ranges: { type: Array, default: () => [] },
     sources: { type: Array, default: () => [] },
@@ -36,23 +37,15 @@ const props = defineProps({
     // Log files.
     serverLogs: { type: Array, default: () => [] },
     serverLog: { type: Object, default: null },
-    filePagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 200 }) },
+    filePagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 20 }) },
     search: { type: String, default: '' },
 });
 
 const VIEWS = [
-    { key: 'traffic', label: 'Traffic & stats', href: () => route('logs.index') },
-    { key: 'events', label: 'Everything that happened', href: () => `${route('logs.index')}?view=events` },
+    { key: 'server', label: 'Server logs', href: () => route('logs.index') },
+    { key: 'panel', label: 'Panel logs', href: () => `${route('logs.index')}?view=panel` },
     { key: 'files', label: 'Log files', href: () => `${route('logs.index')}?view=files` },
 ];
-
-const SUBTITLE = {
-    traffic:
-        'What the server is doing: which sites get the requests, who is sending them, what looks like an attack, and what is using the CPU',
-    events:
-        'Everything that happened on the server in one list — what the panel ran, sign-ins, SSH, and what nginx, PHP, the databases, fail2ban, the kernel, mail and each site logged',
-    files: 'The log files themselves, a page at a time, newest first',
-};
 
 // ---------------------------------------------------------------- clearing
 
@@ -89,15 +82,27 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
     <Head title="Logs" />
 
     <AuthenticatedLayout>
+        <!-- The tabs and Clear logs live in the top bar: no title, more room. -->
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="min-w-0">
-                    <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
-                    <p class="text-sm text-slate-500">{{ SUBTITLE[view] ?? SUBTITLE.traffic }}</p>
-                </div>
+                <nav class="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1" aria-label="Logs">
+                    <Link
+                        v-for="v in VIEWS"
+                        :key="v.key"
+                        :href="v.href()"
+                        class="rounded-lg px-4 py-2 text-sm font-medium transition"
+                        :class="
+                            view === v.key
+                                ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
+                                : 'text-slate-600 hover:text-slate-900'
+                        "
+                    >
+                        {{ v.label }}
+                    </Link>
+                </nav>
                 <button
                     type="button"
-                    class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                    class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                     @click="showClear = !showClear"
                 >
                     {{ showClear ? 'Close' : 'Clear logs' }}
@@ -178,33 +183,18 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
             </div>
         </div>
 
-        <!-- The three views. -->
-        <div class="mb-6 flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 sm:inline-flex">
-            <Link
-                v-for="v in VIEWS"
-                :key="v.key"
-                :href="v.href()"
-                class="rounded-lg px-4 py-2 text-sm font-medium transition"
-                :class="
-                    view === v.key
-                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
-                        : 'text-slate-600 hover:text-slate-900'
-                "
-            >
-                {{ v.label }}
-            </Link>
-        </div>
-
-        <Events
-            v-if="view === 'events'"
-            :events="events"
-            :filters="filters"
-            :pagination="pagination"
-            :counts="counts"
-            :ranges="ranges"
-            :sources="sources"
-            :sites="sites"
-        />
+        <template v-if="view === 'panel'">
+            <Events
+                view="panel"
+                :events="events"
+                :filters="filters"
+                :pagination="pagination"
+                :counts="counts"
+                :ranges="ranges"
+                :sources="sources"
+                :sites="sites"
+            />
+        </template>
 
         <ServerLogs
             v-else-if="view === 'files'"
@@ -214,13 +204,28 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
             :search="search"
         />
 
-        <Traffic
-            v-else
-            :window="window"
-            :windows="windows"
-            :traffic="traffic"
-            :processes="processes"
-            :fpm="fpm"
-        />
+        <div v-else class="space-y-10">
+            <Traffic
+                :window="window"
+                :windows="windows"
+                :traffic="traffic"
+                :processes="processes"
+                :fpm="fpm"
+            />
+
+            <section>
+                <h3 class="mb-3 font-semibold text-slate-900">What the server logged</h3>
+                <Events
+                    view="server"
+                    :events="events"
+                    :filters="filters"
+                    :pagination="pagination"
+                    :counts="counts"
+                    :ranges="ranges"
+                    :sources="sources"
+                    :sites="sites"
+                />
+            </section>
+        </div>
     </AuthenticatedLayout>
 </template>

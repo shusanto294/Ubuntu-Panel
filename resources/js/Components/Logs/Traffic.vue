@@ -38,11 +38,17 @@ const bytes = (n) => {
     return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 };
 
-const windowHref = (key) => `${route('logs.index')}?view=traffic&window=${key}`;
+// A different window reloads only the summary; the list below keeps its filters.
+const setWindow = (key) =>
+    router.get(
+        route('logs.index'),
+        { ...Object.fromEntries(new URLSearchParams(window.location.search)), window: key },
+        { preserveScroll: true, preserveState: true, only: ['window', 'traffic', 'processes', 'fpm'] },
+    );
 
 const logHref = (site, q) => {
     const source = site.startsWith('(') ? 'nginx-access' : `site:${site}:access`;
-    const query = new URLSearchParams({ view: 'files', source, lines: '500' });
+    const query = new URLSearchParams({ view: 'files', source });
     if (q) query.set('q', q);
     return `${route('logs.index')}?${query}`;
 };
@@ -202,32 +208,28 @@ const axisLabel = (b) => new Date(b.at * 1000).toLocaleTimeString(undefined, { h
 const showAllProcesses = ref(false);
 
 // Every list a page at a time.
-const sitePages = usePagination(() => t.value?.sites ?? [], 10);
-const ipPages = usePagination(() => t.value?.top_ips ?? [], 15);
-const pathPages = usePagination(() => t.value?.paths ?? [], 15);
-const agentPages = usePagination(() => t.value?.agents ?? [], 12);
-const groupPages = usePagination(() => props.processes?.groups ?? [], 10);
-const processPages = usePagination(() => props.processes?.top ?? [], 15);
+const sitePages = usePagination(() => t.value?.sites ?? [], 20);
+const ipPages = usePagination(() => t.value?.top_ips ?? [], 20);
+const pathPages = usePagination(() => t.value?.paths ?? [], 20);
+const agentPages = usePagination(() => t.value?.agents ?? [], 20);
+const groupPages = usePagination(() => props.processes?.groups ?? [], 20);
+const processPages = usePagination(() => props.processes?.top ?? [], 20);
 </script>
 
 <template>
     <div class="space-y-6">
         <!-- Window and refreshing -->
         <div class="flex flex-wrap items-center gap-2">
-            <a
-                v-for="key in windows"
-                :key="key"
-                :href="windowHref(key)"
-                @click.prevent="router.visit(windowHref(key), { preserveScroll: true })"
-                class="rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition"
-                :class="
-                    key === window
-                        ? 'bg-slate-900 text-white ring-slate-900'
-                        : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
-                "
-            >
-                {{ WINDOW_LABEL[key] ?? key }}
-            </a>
+            <label class="flex items-center gap-2 text-sm">
+                <span class="text-xs font-medium text-slate-700">Traffic over</span>
+                <select
+                    :value="window"
+                    class="rounded-lg border-slate-300 text-sm shadow-sm"
+                    @change="setWindow($event.target.value)"
+                >
+                    <option v-for="key in windows" :key="key" :value="key">{{ WINDOW_LABEL[key] ?? key }}</option>
+                </select>
+            </label>
 
             <div class="ml-auto flex items-center gap-3 text-xs text-slate-500">
                 <span v-if="traffic">
