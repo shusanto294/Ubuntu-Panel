@@ -37,7 +37,6 @@ type Protection struct {
 
 	RealIP bool `json:"real_ip"`
 	Kernel bool `json:"kernel"`
-	Scan   bool `json:"scan"`
 }
 
 // JailRule is one optional fail2ban jail: so many matches within FindTime seconds

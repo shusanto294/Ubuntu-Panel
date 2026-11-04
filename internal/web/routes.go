@@ -266,7 +266,6 @@ func (a *App) routes() *router {
 		a.securityInstallUpdates)
 	rt.post("/security/alerts", "security.alerts", authenticated, a.securityAlerts)
 	rt.post("/security/protection", "security.protection", authenticated, a.securityProtection)
-	rt.post("/security/scan", "security.scan", authenticated, a.securityScanNow)
 	rt.delete("/security/sessions/{session}", "security.sessions.destroy", authenticated,
 		a.securityRevokeSession)
 	rt.post("/security/sessions/others", "security.sessions.others", authenticated,

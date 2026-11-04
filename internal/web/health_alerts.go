@@ -18,8 +18,7 @@ import (
 
 // The alerts about the machine rather than about who signed in: a CPU that
 // stays pinned, a disk filling up, mail piling up in the queue, a certificate
-// that is not being renewed, files the malware scan found, and addresses the
-// Protection tab's jails banned. Each is a checkbox on the Alerts tab, and
+// that is not being renewed, and addresses the Protection tab's jails banned. Each is a checkbox on the Alerts tab, and
 // each is sent at most once in its cooldown, so a problem that lasts a day is
 // one email and not fourteen hundred.
 const (
@@ -27,7 +26,6 @@ const (
 	alertDiskSetting      = "alert_disk_full"
 	alertMailQueueSetting = "alert_mail_queue"
 	alertCertsSetting     = "alert_cert_expiry"
-	alertMalwareSetting   = "alert_malware"
 	alertWebBanSetting    = "alert_web_ban"
 	alertWebBannedSetting = "alert_web_banned"
 
@@ -44,7 +42,6 @@ var healthAlertDefaults = map[string]bool{
 	alertDiskSetting:      true,
 	alertMailQueueSetting: true,
 	alertCertsSetting:     true,
-	alertMalwareSetting:   true,
 	alertWebBanSetting:    false,
 	alertAttacksSetting:   true,
 	alertCriticalSetting:  true,
@@ -56,7 +53,6 @@ var healthAlertKeys = map[string]string{
 	"disk_full":   alertDiskSetting,
 	"mail_queue":  alertMailQueueSetting,
 	"cert_expiry": alertCertsSetting,
-	"malware":     alertMalwareSetting,
 	"web_ban":     alertWebBanSetting,
 	"attacks":     alertAttacksSetting,
 	"critical":    alertCriticalSetting,
@@ -150,28 +146,6 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 					"usually DNS that no longer points here. Request it again from the site's page.",
 					len(expiring), certAlertDays, strings.Join(expiring, "\n"))))
 			}
-		}
-	}
-
-	if a.healthAlert(alertMalwareSetting) {
-		if unreported, _ := strconv.Atoi(a.Store.Setting(scanUnreportedSetting, "0")); unreported > 0 {
-			a.Store.SetSetting(scanUnreportedSetting, "0")
-
-			lines := []string{}
-			if last := a.lastScan(); last != nil {
-				for i, finding := range last.Findings {
-					if i == 30 {
-						lines = append(lines, fmt.Sprintf("…and %d more", len(last.Findings)-30))
-						break
-					}
-					lines = append(lines, fmt.Sprintf("%s: %s — %s", finding.Site, finding.Path,
-						security.FindingLabels[finding.Kind]))
-				}
-			}
-
-			alerts = append(alerts, newAlert("malware", levelCritical, "/security?tab=protection", fmt.Sprintf("The malware scan found %d new file(s) to review\n\n%s\n\n"+
-				"Nothing was changed or deleted. The Protection tab on the Security page lists them all.",
-				unreported, strings.Join(lines, "\n"))))
 		}
 	}
 

@@ -20,7 +20,6 @@ const form = useForm({
     disk_full: props.alerts.disk_full,
     mail_queue: props.alerts.mail_queue,
     cert_expiry: props.alerts.cert_expiry,
-    malware: props.alerts.malware,
     web_ban: props.alerts.web_ban,
     attacks: props.alerts.attacks,
     critical: props.alerts.critical,
@@ -43,7 +42,6 @@ const health = [
     { key: 'disk_full', label: 'Disk nearly full', hint: 'Above 90%. At most twice a day.' },
     { key: 'mail_queue', label: 'Mail piling up', hint: '100 or more messages waiting to send — usually a stolen mailbox sending spam.' },
     { key: 'cert_expiry', label: 'Certificate not renewing', hint: 'A site’s Let’s Encrypt certificate expires within 14 days.' },
-    { key: 'malware', label: 'Malware scan findings', hint: 'The scan on the Protection tab found files it had not found before.' },
     { key: 'task_failed', label: 'Failed panel tasks', hint: 'A deployment, backup, certificate or install that stopped with an error.' },
     { key: 'critical', label: 'Critical errors in the server’s logs', hint: 'An out-of-memory kill, a crash, a fatal error. At most one email every 30 minutes, carrying everything since the last.' },
 ];

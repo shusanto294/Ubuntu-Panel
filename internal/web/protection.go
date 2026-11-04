@@ -17,14 +17,11 @@ import (
 )
 
 // The Protection tab: the optional protections in security/protect.go, each
-// switched on and off on its own, and the malware scan. See there for what
-// each one is; this is where they are stored, applied and kept applied.
+// switched on and off on its own. See there for what each one is; this is where they are stored, applied and kept applied.
 
 const (
 	protectionSetting     = "security_protection"
 	kernelPreviousSetting = "security_kernel_previous"
-	scanResultSetting     = "security_scan_result"
-	scanUnreportedSetting = "security_scan_unreported"
 	accessLogsSetting     = "security_access_logs"
 	protectFailSetting    = "security_protection_failures"
 )
@@ -145,6 +142,11 @@ func (a *App) applyProtection(ctx context.Context, p security.Protection) error 
 func (a *App) EnsureProtection(ctx context.Context) {
 	p := a.protection()
 
+	// The malware scan is gone (2.11.0); its last result and alert counter
+	// would otherwise sit in the settings table for ever.
+	a.Store.ForgetSetting("security_scan_result")
+	a.Store.ForgetSetting("security_scan_unreported")
+
 	if p.AnyJail() || p.RealIP || p.RateLogin.Enabled || p.RateFlood.Enabled ||
 		security.NginxCurrent() != "" {
 		want := security.NginxFile(p, a.nginxEnv(ctx))
@@ -177,7 +179,7 @@ var lastProtectionCheck struct {
 
 // checkProtection is the every-minute clock's: every ten minutes, a site added
 // since fail2ban started is a log the web jails are not reading yet, and the
-// jails are reloaded to pick it up. The daily scan is started from here too.
+// jails are reloaded to pick it up.
 func (a *App) checkProtection(ctx context.Context) {
 	lastProtectionCheck.Lock()
 	if time.Since(lastProtectionCheck.at) < 10*time.Minute {
@@ -197,10 +199,6 @@ func (a *App) checkProtection(ctx context.Context) {
 			security.ReloadJails()
 			a.Store.SetSetting(accessLogsSetting, logs)
 		}
-	}
-
-	if p.Scan && a.scanDue() {
-		go a.runScan(context.WithoutCancel(ctx))
 	}
 }
 
@@ -287,9 +285,6 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		label = "Real visitor addresses behind Cloudflare"
 	case "kernel":
 		label = "Network hardening"
-	case "scan":
-		p.Scan = enabled
-		label = "The daily malware scan"
 	default:
 		a.securityBack(w, r, "That is not one of the protections.", true)
 		return
@@ -326,14 +321,12 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if feature != "scan" {
-		if err := a.applyProtection(r.Context(), p); err != nil {
-			// What is on disk is what was there before; the setting says so too.
-			a.applyProtection(r.Context(), before)
-			a.recordProtection(feature, enabled, err)
-			a.securityBack(w, r, err.Error(), true)
-			return
-		}
+	if err := a.applyProtection(r.Context(), p); err != nil {
+		// What is on disk is what was there before; the setting says so too.
+		a.applyProtection(r.Context(), before)
+		a.recordProtection(feature, enabled, err)
+		a.securityBack(w, r, err.Error(), true)
+		return
 	}
 
 	a.saveProtection(p)
@@ -345,171 +338,7 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		message = label + " is on."
 	}
 
-	if feature == "scan" && enabled && a.scanDue() {
-		go a.runScan(context.WithoutCancel(r.Context()))
-		message += " The first scan has started."
-	}
-
 	a.securityBack(w, r, message, false)
-}
-
-// ------------------------------------------------------------------- scan
-
-// scanResult is the last scan.
-type scanResult struct {
-	StartedAt  int64              `json:"started_at"`
-	FinishedAt int64              `json:"finished_at"`
-	Sites      int                `json:"sites"`
-	Findings   []security.Finding `json:"findings"`
-	Errors     []string           `json:"errors"`
-	WPCLI      bool               `json:"wp_cli"`
-}
-
-var scanning struct {
-	sync.Mutex
-	running bool
-}
-
-func (a *App) scanRunning() bool {
-	scanning.Lock()
-	defer scanning.Unlock()
-	return scanning.running
-}
-
-func (a *App) lastScan() *scanResult {
-	stored := a.Store.Setting(scanResultSetting, "")
-	if stored == "" {
-		return nil
-	}
-
-	var result scanResult
-	if json.Unmarshal([]byte(stored), &result) != nil {
-		return nil
-	}
-
-	return &result
-}
-
-// scanDue is whether the daily scan should run now: never run, or a day since
-// the last, in the small hours where the machine is quietest — unless it has
-// not run for two days, in which case now is as good as any time.
-func (a *App) scanDue() bool {
-	if a.scanRunning() {
-		return false
-	}
-
-	last := a.lastScan()
-	if last == nil || last.FinishedAt == 0 {
-		return true
-	}
-
-	since := time.Since(time.Unix(last.FinishedAt, 0))
-	hour := time.Now().Hour()
-
-	return since > 48*time.Hour || (since > 20*time.Hour && hour >= 2 && hour < 6)
-}
-
-// runScan scans every site, one after another at the lowest priority, and
-// keeps the result. What it found that the previous scan had not is counted
-// for the alert clock to send.
-func (a *App) runScan(ctx context.Context) {
-	scanning.Lock()
-	if scanning.running {
-		scanning.Unlock()
-		return
-	}
-	scanning.running = true
-	scanning.Unlock()
-
-	defer func() {
-		scanning.Lock()
-		scanning.running = false
-		scanning.Unlock()
-
-		if problem := recover(); problem != nil {
-			a.Log.Error("the malware scan panicked", "panic", problem)
-		}
-	}()
-
-	previous := a.lastScan()
-
-	result := scanResult{StartedAt: time.Now().Unix(), Findings: []security.Finding{}, Errors: []string{},
-		WPCLI: proc.Which("wp")}
-
-	// Kept while it runs, so the page shows it started.
-	running := result
-	encoded, _ := json.Marshal(running)
-	if previous != nil {
-		running.Findings = previous.Findings
-		encoded, _ = json.Marshal(running)
-	}
-	a.Store.SetSetting(scanResultSetting, string(encoded))
-
-	sites, err := a.Store.Sites(ctx)
-	if err != nil {
-		result.Errors = append(result.Errors, err.Error())
-	}
-
-	for _, site := range sites {
-		if !site.IsPHP() {
-			continue
-		}
-
-		result.Sites++
-
-		findings, err := security.ScanSite(security.ScanTarget{
-			Domain: site.Domain, Root: site.DocumentRoot(), WordPress: site.Type == "wordpress",
-		}, result.WPCLI)
-		if err != nil {
-			result.Errors = append(result.Errors, err.Error())
-			continue
-		}
-
-		result.Findings = append(result.Findings, findings...)
-	}
-
-	if len(result.Findings) > 1000 {
-		result.Findings = result.Findings[:1000]
-	}
-
-	result.FinishedAt = time.Now().Unix()
-
-	known := map[string]bool{}
-	if previous != nil {
-		for _, finding := range previous.Findings {
-			known[finding.Site+" "+finding.Kind+" "+finding.Path] = true
-		}
-	}
-
-	fresh := 0
-	for _, finding := range result.Findings {
-		if !known[finding.Site+" "+finding.Kind+" "+finding.Path] {
-			fresh++
-		}
-	}
-
-	encoded, _ = json.Marshal(result)
-	a.Store.SetSetting(scanResultSetting, string(encoded))
-
-	if fresh > 0 {
-		unreported, _ := strconv.Atoi(a.Store.Setting(scanUnreportedSetting, "0"))
-		a.Store.SetSetting(scanUnreportedSetting, strconv.Itoa(unreported+fresh))
-	}
-
-	a.Log.Info("malware scan finished", "sites", result.Sites, "findings", len(result.Findings), "new", fresh)
-}
-
-// securityScanNow starts a scan whether or not the daily one is on.
-func (a *App) securityScanNow(w http.ResponseWriter, r *http.Request) {
-	if a.scanRunning() {
-		a.securityBack(w, r, "A scan is already running.", false)
-		return
-	}
-
-	go a.runScan(context.WithoutCancel(r.Context()))
-
-	a.securityBack(w, r, "The scan has started. It runs at low priority, so a large site takes a while; "+
-		"reload this tab to see the result.", false)
 }
 
 // ------------------------------------------------------------------ props
@@ -550,13 +379,9 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 			"fail2ban": proc.Which("fail2ban-client"),
 			"nginx":    a.Store.ServiceInstalled("nginx"),
 			"mail":     a.Store.ServiceInstalled("mail"),
-			"wp_cli":   proc.Which("wp"),
 		},
 		"kernel_applied": p.Kernel && security.KernelApplied(),
 		"edge_sites":     edgeSites,
-		"scan":           a.lastScan(),
-		"scan_running":   a.scanRunning(),
-		"finding_labels": security.FindingLabels,
 	}
 }
 
@@ -605,14 +430,6 @@ func (a *App) protectionChecks(ctx context.Context) []check {
 				false: "The kernel accepts ICMP redirects and has the default SYN backlog.",
 			}[p.Kernel],
 		},
-		{
-			Key: "scan", Label: "Daily malware scan", Level: "info", Tab: "protection",
-			OK: p.Scan,
-			Detail: map[bool]string{
-				true:  "Every PHP site is checked each night for changed WordPress files, PHP in uploads and web shells.",
-				false: "Nothing checks the sites' files for a backdoor left by an attack.",
-			}[p.Scan],
-		},
 	}
 
 	if a.Store.ServiceInstalled("mail") {
@@ -640,15 +457,6 @@ func (a *App) protectionChecks(ctx context.Context) []check {
 				})
 				break
 			}
-		}
-	}
-
-	if p.Scan {
-		if last := a.lastScan(); last != nil && last.FinishedAt > 0 && len(last.Findings) > 0 {
-			list = append(list, check{
-				Key: "scan_findings", Label: "Malware scan findings to review", Level: "warning", Tab: "protection",
-				Detail: fmt.Sprintf("The last scan found %d file(s) worth a look.", len(last.Findings)),
-			})
 		}
 	}
 

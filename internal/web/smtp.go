@@ -189,7 +189,6 @@ func (a *App) alertSettings(ctx context.Context) map[string]any {
 		"disk_full":     a.healthAlert(alertDiskSetting),
 		"mail_queue":    a.healthAlert(alertMailQueueSetting),
 		"cert_expiry":   a.healthAlert(alertCertsSetting),
-		"malware":       a.healthAlert(alertMalwareSetting),
 		"web_ban":       a.healthAlert(alertWebBanSetting),
 		"attacks":       a.healthAlert(alertAttacksSetting),
 		"task_failed":   a.Store.SettingBool(alertTaskFailedSetting, true),
