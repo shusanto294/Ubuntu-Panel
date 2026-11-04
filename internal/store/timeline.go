@@ -255,6 +255,7 @@ const (
 	LogsTasks  = "tasks"
 	LogsLogins = "logins"
 	LogsSSH    = "ssh"
+	LogsServer = "server"
 )
 
 // ClearLogs deletes records older than before — everything, given a zero
@@ -285,6 +286,8 @@ func (s *Store) ClearLogs(ctx context.Context, kinds []string, before time.Time)
 			result, err = s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE created_at < ?`, cutoff)
 		case LogsSSH:
 			result, err = s.db.ExecContext(ctx, `DELETE FROM ssh_events WHERE created_at < ?`, cutoff)
+		case LogsServer:
+			result, err = s.db.ExecContext(ctx, `DELETE FROM server_events WHERE created_at < ?`, cutoff)
 		default:
 			continue
 		}

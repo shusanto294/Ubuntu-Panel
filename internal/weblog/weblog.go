@@ -627,8 +627,8 @@ func (a *Analyzer) Report() Report {
 		}
 		return report.TopIPs[i].IP < report.TopIPs[j].IP
 	})
-	if len(report.TopIPs) > 30 {
-		report.TopIPs = report.TopIPs[:30]
+	if len(report.TopIPs) > 200 {
+		report.TopIPs = report.TopIPs[:200]
 	}
 
 	for _, p := range a.paths {
@@ -644,21 +644,21 @@ func (a *Analyzer) Report() Report {
 		}
 		return report.Paths[i].Site+report.Paths[i].Path < report.Paths[j].Site+report.Paths[j].Path
 	})
-	if len(report.Paths) > 30 {
-		report.Paths = report.Paths[:30]
+	if len(report.Paths) > 200 {
+		report.Paths = report.Paths[:200]
 	}
 
 	for kind, t := range a.threats {
 		report.Threats = append(report.Threats, ThreatStat{
 			Kind: kind, Label: ThreatLabels[kind], Requests: t.requests, IPs: len(t.ips),
-			TopIPs: top(t.ips, 5), Sites: top(t.sites, 5),
+			TopIPs: top(t.ips, 50), Sites: top(t.sites, 10),
 		})
 	}
 	sort.Slice(report.Threats, func(i, j int) bool {
 		return report.Threats[i].Requests > report.Threats[j].Requests
 	})
 
-	for _, c := range top(a.agents, 12) {
+	for _, c := range top(a.agents, 100) {
 		report.Agents = append(report.Agents, AgentStat{Agent: c.Name, Requests: c.Count, Bot: Bot(c.Name)})
 	}
 

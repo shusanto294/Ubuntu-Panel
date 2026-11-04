@@ -272,7 +272,7 @@ useLiveRefresh(busy, [
                 >
                     <h3 class="font-semibold text-slate-800">Recent activity</h3>
                     <Link
-                        :href="route('logs.index')"
+                        :href="`${route('logs.index')}?view=events&source=panel`"
                         class="text-xs font-medium text-brand-600 hover:underline"
                     >
                         All logs

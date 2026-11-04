@@ -341,6 +341,28 @@ var schema = []string{
 		ON ssh_events(created_at, ip_address, username, kind, method)`,
 	`CREATE INDEX IF NOT EXISTS ssh_events_kind ON ssh_events(kind, created_at)`,
 
+	// What the machine's own programs logged — nginx, PHP-FPM, the databases,
+	// fail2ban, sudo, the kernel, mail, each site's application — copied out
+	// of their files once a minute, so the Logs page can list it beside what
+	// the panel did, filtered and paged, without reading a month of files on
+	// every click. `log_cursors` is how far into each file the copy has got.
+	`CREATE TABLE IF NOT EXISTS server_events (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_at INTEGER NOT NULL,
+		source     TEXT NOT NULL,
+		site       TEXT NOT NULL DEFAULT '',
+		level      TEXT NOT NULL,
+		ip_address TEXT NOT NULL DEFAULT '',
+		message    TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS server_events_created ON server_events(created_at)`,
+	`CREATE INDEX IF NOT EXISTS server_events_source ON server_events(source, created_at)`,
+	`CREATE TABLE IF NOT EXISTS log_cursors (
+		path   TEXT PRIMARY KEY,
+		inode  TEXT NOT NULL,
+		offset INTEGER NOT NULL
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS ip_countries (
 		ip         TEXT PRIMARY KEY,
 		country    TEXT NOT NULL,

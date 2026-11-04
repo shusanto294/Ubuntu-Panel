@@ -252,6 +252,7 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		case <-ticker.C:
 			a.recordSSHEvents(ctx)
 			a.checkProtection(ctx)
+			go a.collectServerLogs(ctx)
 			a.checkAlerts(ctx)
 		}
 	}

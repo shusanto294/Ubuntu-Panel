@@ -342,20 +342,38 @@ func (a *App) serverLogs(ctx context.Context) []serverLog {
 	return found
 }
 
-var serverLogLines = []int{100, 200, 500, 1000, 2000}
+// serverLogPerPage is how many lines a page of a log file is.
+const serverLogPerPage = 200
 
-// readServerLog is the end of one file, or the last matches of a search in
-// the end of it. The search is a fixed string, case-insensitive, over the last
-// 100,000 lines: enough for a day of most logs, bounded for the busiest.
-func readServerLog(path string, lines int, search string) string {
-	command := fmt.Sprintf("sudo tail -n %d %s 2>/dev/null", lines, proc.Quote(path))
+// readServerLog is one page of a file, counted from its end — page 1 is the
+// newest lines — or of the lines matching a search, a fixed string,
+// case-insensitive. It returns the page and how many lines there are in all.
+func readServerLog(path string, page int, search string) (string, int) {
+	quoted := proc.Quote(path)
+	upTo := page * serverLogPerPage
+
+	count := fmt.Sprintf("sudo wc -l < %s 2>/dev/null", quoted)
+	read := fmt.Sprintf("sudo tail -n %d %s 2>/dev/null | head -n %d", upTo, quoted, serverLogPerPage)
 
 	if search != "" {
-		command = fmt.Sprintf("sudo tail -n 100000 %s 2>/dev/null | grep -F -i -a -- %s | tail -n %d",
-			proc.Quote(path), proc.Quote(search), lines)
+		match := "sudo grep -F -i -a -- " + proc.Quote(search) + " " + quoted + " 2>/dev/null"
+		count = match + " | wc -l"
+		read = fmt.Sprintf("%s | tail -n %d | head -n %d", match, upTo, serverLogPerPage)
 	}
 
-	return strings.TrimRight(proc.Run(command, time.Minute).Output, "\n")
+	total, _ := strconv.Atoi(strings.TrimSpace(proc.Run(count, time.Minute).Output))
+
+	// The last page is short: tail asked for more than there are, and head
+	// must only take what lies past the pages after it.
+	if total > 0 && upTo > total {
+		take := total - (page-1)*serverLogPerPage
+		if take <= 0 {
+			return "", total
+		}
+		read = strings.Replace(read, fmt.Sprintf("head -n %d", serverLogPerPage), fmt.Sprintf("head -n %d", take), 1)
+	}
+
+	return strings.TrimRight(proc.Run(read, time.Minute).Output, "\n"), total
 }
 
 // ------------------------------------------------------------------ props
@@ -395,11 +413,11 @@ func (a *App) logsTrafficProps(ctx context.Context, windowKey string) map[string
 	}
 }
 
-// logsFilesProps are the Server logs view's: the list of files, and the one
-// chosen.
-func (a *App) logsFilesProps(ctx context.Context, source string, lines int, search string) map[string]any {
-	if !slices.Contains(serverLogLines, lines) {
-		lines = 200
+// logsFilesProps are the Log files view's: the list of files, and a page of
+// the one chosen.
+func (a *App) logsFilesProps(ctx context.Context, source string, page int, search string) map[string]any {
+	if page < 1 {
+		page = 1
 	}
 
 	search = strings.TrimSpace(search)
@@ -420,21 +438,30 @@ func (a *App) logsFilesProps(ctx context.Context, source string, lines int, sear
 	}
 
 	props := map[string]any{
-		"serverLogs":     logs,
-		"serverLogLines": serverLogLines,
-		"lines":          lines,
-		"search":         search,
-		"serverLog":      nil,
+		"serverLogs": logs,
+		"search":     search,
+		"serverLog":  nil,
 	}
 
 	if chosen != nil {
+		contents, total := readServerLog(chosen.Path, page, search)
+
+		pages := max(1, (total+serverLogPerPage-1)/serverLogPerPage)
+		if page > pages {
+			page = pages
+			contents, total = readServerLog(chosen.Path, page, search)
+		}
+
 		props["serverLog"] = map[string]any{
 			"key":      chosen.Key,
 			"label":    chosen.Label,
 			"group":    chosen.Group,
 			"path":     chosen.Path,
 			"size":     chosen.Size,
-			"contents": readServerLog(chosen.Path, lines, search),
+			"contents": contents,
+		}
+		props["filePagination"] = map[string]any{
+			"page": page, "pages": pages, "total": total, "per_page": serverLogPerPage,
 		}
 	}
 

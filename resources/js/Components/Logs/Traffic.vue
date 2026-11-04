@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import IpAddress from '@/Components/IpAddress.vue';
+import Pagination from '@/Components/Pagination.vue';
+import { usePagination } from '@/Composables/usePagination';
 import { confirmDanger } from '@/dialog';
 import { router } from '@inertiajs/vue3';
 
@@ -198,6 +200,14 @@ const bucketTitle = (b) => {
 const axisLabel = (b) => new Date(b.at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
 const showAllProcesses = ref(false);
+
+// Every list a page at a time.
+const sitePages = usePagination(() => t.value?.sites ?? [], 10);
+const ipPages = usePagination(() => t.value?.top_ips ?? [], 15);
+const pathPages = usePagination(() => t.value?.paths ?? [], 15);
+const agentPages = usePagination(() => t.value?.agents ?? [], 12);
+const groupPages = usePagination(() => props.processes?.groups ?? [], 10);
+const processPages = usePagination(() => props.processes?.top ?? [], 15);
 </script>
 
 <template>
@@ -377,7 +387,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
-                            <tr v-for="s in traffic.sites" :key="s.domain" class="hover:bg-slate-50">
+                            <tr v-for="s in sitePages.visible.value" :key="s.domain" class="hover:bg-slate-50">
                                 <td class="whitespace-nowrap px-5 py-2.5 font-medium text-slate-900">{{ s.domain }}</td>
                                 <td class="min-w-[12rem] px-5 py-2.5">
                                     <div class="flex items-center gap-2">
@@ -405,6 +415,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </tbody>
                     </table>
+                    <Pagination v-model="sitePages.page.value" :pages="sitePages.pages.value" :total="sitePages.total.value" :per-page="sitePages.perPage" />
                 </div>
             </div>
 
@@ -436,7 +447,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
-                            <tr v-for="g in processes.groups" :key="g.name">
+                            <tr v-for="g in groupPages.visible.value" :key="g.name">
                                 <td class="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-900">{{ g.name }}</td>
                                 <td class="min-w-[12rem] px-5 py-2.5">
                                     <div class="flex items-center gap-2">
@@ -455,6 +466,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </tbody>
                     </table>
+                    <Pagination v-model="groupPages.page.value" :pages="groupPages.pages.value" :total="groupPages.total.value" :per-page="groupPages.perPage" />
                     <button
                         type="button"
                         class="w-full border-t border-slate-100 px-5 py-2.5 text-left text-xs font-medium text-brand-600 hover:bg-slate-50"
@@ -473,7 +485,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
-                            <tr v-for="p in processes.top" :key="p.pid">
+                            <tr v-for="p in processPages.visible.value" :key="p.pid">
                                 <td class="px-5 py-2 font-mono text-slate-500">{{ p.pid }}</td>
                                 <td class="px-5 py-2 text-slate-700">{{ p.user }}</td>
                                 <td class="px-5 py-2 text-right text-slate-900">{{ p.cpu }}%</td>
@@ -482,6 +494,13 @@ const showAllProcesses = ref(false);
                             </tr>
                         </tbody>
                     </table>
+                    <Pagination
+                        v-if="showAllProcesses"
+                        v-model="processPages.page.value"
+                        :pages="processPages.pages.value"
+                        :total="processPages.total.value"
+                        :per-page="processPages.perPage"
+                    />
                 </div>
             </div>
 
@@ -511,7 +530,7 @@ const showAllProcesses = ref(false);
                         </thead>
                         <tbody class="divide-y divide-slate-100">
                             <tr
-                                v-for="ip in traffic.top_ips"
+                                v-for="ip in ipPages.visible.value"
                                 :key="ip.ip"
                                 class="align-top hover:bg-slate-50"
                                 :class="ip.danger ? 'bg-rose-50/40' : ''"
@@ -571,6 +590,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </tbody>
                     </table>
+                    <Pagination v-model="ipPages.page.value" :pages="ipPages.pages.value" :total="ipPages.total.value" :per-page="ipPages.perPage" />
                 </div>
             </div>
 
@@ -592,7 +612,7 @@ const showAllProcesses = ref(false);
                         On {{ th.sites.map((s) => `${s.name} (${number(s.count)})`).join(', ') }}
                     </p>
                     <ul class="mt-2 space-y-1">
-                        <li v-for="ip in th.top_ips" :key="ip.name" class="flex items-center justify-between text-xs">
+                        <li v-for="ip in th.top_ips.slice(0, 8)" :key="ip.name" class="flex items-center justify-between text-xs">
                             <IpAddress :ip="ip.name" class="text-slate-700" />
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
@@ -614,7 +634,7 @@ const showAllProcesses = ref(false);
                 <h3 class="font-semibold text-slate-900">Browsers and bots</h3>
                 <p class="text-sm text-slate-500">What the requests said they were. A bot can lie; a browser rarely sends 1,000 requests.</p>
                 <ul class="mt-4 space-y-2">
-                    <li v-for="a in traffic?.agents ?? []" :key="a.agent" class="flex items-start justify-between gap-3 text-xs">
+                    <li v-for="a in agentPages.visible.value" :key="a.agent" class="flex items-start justify-between gap-3 text-xs">
                         <span class="min-w-0 break-all font-mono text-slate-700">
                             <span v-if="a.bot" class="mr-1 rounded bg-amber-100 px-1 py-0.5 font-sans text-[10px] font-medium text-amber-800">bot</span>
                             {{ a.agent || '(none)' }}
@@ -622,6 +642,13 @@ const showAllProcesses = ref(false);
                         <span class="shrink-0 text-slate-500">{{ number(a.requests) }}</span>
                     </li>
                 </ul>
+                <Pagination
+                    class="-mx-5 -mb-5 mt-3"
+                    v-model="agentPages.page.value"
+                    :pages="agentPages.pages.value"
+                    :total="agentPages.total.value"
+                    :per-page="agentPages.perPage"
+                />
             </div>
 
             <!-- URLs -->
@@ -643,7 +670,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
-                            <tr v-for="p in traffic.paths" :key="p.site + p.path" class="hover:bg-slate-50">
+                            <tr v-for="p in pathPages.visible.value" :key="p.site + p.path" class="hover:bg-slate-50">
                                 <td class="max-w-md px-5 py-2.5">
                                     <span class="block truncate font-mono text-xs text-slate-900" :title="p.path">{{ p.path }}</span>
                                     <span class="text-[11px] text-slate-400">{{ p.dynamic ? 'PHP / app' : 'static' }}</span>
@@ -663,6 +690,7 @@ const showAllProcesses = ref(false);
                             </tr>
                         </tbody>
                     </table>
+                    <Pagination v-model="pathPages.page.value" :pages="pathPages.pages.value" :total="pathPages.total.value" :per-page="pathPages.perPage" />
                 </div>
                 <p v-else class="px-5 py-8 text-center text-sm text-slate-500">No requests in this window.</p>
             </div>

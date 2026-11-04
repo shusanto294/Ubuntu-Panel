@@ -111,8 +111,8 @@ func SampleProcesses(wait time.Duration) Processes {
 		}
 		return all[i].Memory > all[j].Memory
 	})
-	if len(all) > 15 {
-		all = all[:15]
+	if len(all) > 60 {
+		all = all[:60]
 	}
 
 	// The command line only for the ones shown: it is a file read per process.
@@ -131,8 +131,8 @@ func SampleProcesses(wait time.Duration) Processes {
 		}
 		return result.Groups[i].Memory > result.Groups[j].Memory
 	})
-	if len(result.Groups) > 10 {
-		result.Groups = result.Groups[:10]
+	if len(result.Groups) > 40 {
+		result.Groups = result.Groups[:40]
 	}
 
 	return result

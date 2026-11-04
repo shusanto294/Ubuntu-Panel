@@ -1,26 +1,21 @@
 <script setup>
 import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import IpAddress from '@/Components/IpAddress.vue';
-import Pagination from '@/Components/Pagination.vue';
+import Events from '@/Components/Logs/Events.vue';
 import ServerLogs from '@/Components/Logs/ServerLogs.vue';
 import Traffic from '@/Components/Logs/Traffic.vue';
 import { confirmDanger } from '@/dialog';
-import { browser } from '@/Components/Security/ui';
-import { useLiveRefresh } from '@/Composables/useLiveRefresh';
-import { formatDuration, formatRelative, formatStamp } from '@/time';
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
+/*
+ * The Logs page: what the server is doing (traffic and CPU, the default),
+ * one list of everything that happened, and the log files themselves.
+ */
 const props = defineProps({
-    logs: { type: Array, default: () => [] },
-    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0 }) },
-    type: { type: String, default: null },
+    view: { type: String, default: 'traffic' },
     retention: { type: Number, default: 90 },
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
-
-    // Which of the page's three views this is: what the panel recorded, the
-    // sites' traffic added up, or the machine's own log files.
-    view: { type: String, default: 'activity' },
+    clearSources: { type: Array, default: () => [] },
 
     // Traffic.
     window: { type: String, default: '15m' },
@@ -29,118 +24,65 @@ const props = defineProps({
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
 
-    // Server logs.
+    // Everything that happened.
+    events: { type: Array, default: () => [] },
+    filters: { type: Object, default: () => ({}) },
+    pagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 50 }) },
+    counts: { type: Object, default: () => ({}) },
+    ranges: { type: Array, default: () => [] },
+    sources: { type: Array, default: () => [] },
+    sites: { type: Array, default: () => [] },
+
+    // Log files.
     serverLogs: { type: Array, default: () => [] },
-    serverLogLines: { type: Array, default: () => [100, 200, 500, 1000, 2000] },
     serverLog: { type: Object, default: null },
-    lines: { type: Number, default: 200 },
+    filePagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 200 }) },
     search: { type: String, default: '' },
 });
 
 const VIEWS = [
-    { key: 'activity', label: 'Panel activity', href: () => route('logs.index') },
-    { key: 'traffic', label: 'Website traffic', href: () => `${route('logs.index')}?view=traffic` },
-    { key: 'files', label: 'Server logs', href: () => `${route('logs.index')}?view=files` },
+    { key: 'traffic', label: 'Traffic & stats', href: () => route('logs.index') },
+    { key: 'events', label: 'Everything that happened', href: () => `${route('logs.index')}?view=events` },
+    { key: 'files', label: 'Log files', href: () => `${route('logs.index')}?view=files` },
 ];
 
 const SUBTITLE = {
-    activity: 'What the panel ran, every sign-in to it, and every SSH login or attempt, newest first',
     traffic:
-        'Every site’s requests added up — which site is busiest, who is sending the requests, what looks like an attack, and what is using the CPU',
-    files: 'nginx, PHP-FPM, MySQL, fail2ban, the system and every site’s own logs, read from the end',
+        'What the server is doing: which sites get the requests, who is sending them, what looks like an attack, and what is using the CPU',
+    events:
+        'Everything that happened on the server in one list — what the panel ran, sign-ins, SSH, and what nginx, PHP, the databases, fail2ban, the kernel, mail and each site logged',
+    files: 'The log files themselves, a page at a time, newest first',
 };
-
-const FILTERS = [
-    { key: null, label: 'Everything' },
-    { key: 'provision', label: 'System' },
-    { key: 'site', label: 'Sites' },
-    { key: 'database', label: 'Databases' },
-    { key: 'mail', label: 'Email' },
-    { key: 'mcp', label: 'AI' },
-    { key: 'panel-login', label: 'Panel sign-ins' },
-    { key: 'ssh', label: 'SSH' },
-];
-
-const reasonLabel = {
-    password: 'password',
-    two_factor: 'two-factor code',
-    recovery: 'recovery code',
-    locked: 'locked out',
-};
-
-// Tasks carry a UTC text stamp; sign-ins and SSH events carry Unix seconds.
-const stampOf = (entry) =>
-    entry.task?.created_at ?? entry.login?.created_at ?? entry.ssh?.created_at;
-
-const sshTitle = (event) =>
-    ({
-        accepted: 'SSH login',
-        failed: 'SSH: wrong password or key',
-        invalid: 'SSH: unknown user',
-    })[event.kind] ?? 'SSH attempt';
-
-const anyRunning = computed(() => props.logs.some((entry) => entry.task?.status === 'running'));
-
-useLiveRefresh(anyRunning, ['logs', 'pagination'], 3000, { onLoad: props.view === 'activity' });
-
-const statusClass = (status) => {
-    switch (status) {
-        case 'success':
-            return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-        case 'failed':
-            return 'bg-rose-50 text-rose-700 ring-rose-200';
-        case 'running':
-            return 'bg-brand-50 text-brand-700 ring-brand-200';
-        default:
-            return 'bg-slate-100 text-slate-600 ring-slate-200';
-    }
-};
-
-const filterHref = (key) =>
-    key ? `${route('logs.index')}?type=${key}` : route('logs.index');
-
-const pageHref = (page) => {
-    const query = new URLSearchParams();
-
-    if (props.type) query.set('type', props.type);
-    if (page > 1) query.set('page', page);
-
-    const string = query.toString();
-
-    return string ? `${route('logs.index')}?${string}` : route('logs.index');
-};
-
-// Paged on the server, so a page is a visit rather than a slice.
-const goToPage = (page) => router.visit(pageHref(page), { preserveScroll: true });
 
 // ---------------------------------------------------------------- clearing
 
 const showClear = ref(false);
 
-const clearForm = useForm({ what: 'all', older_than: '0' });
+const clearForm = useForm({ what: 'all', older_than: '0', files: false });
 
-const WHAT = {
-    all: 'every log',
-    tasks: 'the panel’s task logs',
-    logins: 'the panel sign-in history',
-    ssh: 'the SSH login history',
-};
+// A file cannot be emptied of only its older lines, and only the server's
+// entries came from files.
+const canEmptyFiles = computed(
+    () => clearForm.older_than === '0' && (clearForm.what === 'all' || clearForm.what.startsWith('server')),
+);
 
 const clearLogs = async () => {
-    const range =
-        clearForm.older_than === '0' ? 'all of it' : `entries older than ${clearForm.older_than} days`;
+    const label = props.clearSources.find((s) => s.key === clearForm.what)?.label ?? clearForm.what;
+    const range = clearForm.older_than === '0' ? 'all of it' : `entries older than ${clearForm.older_than} days`;
+    const files = canEmptyFiles.value && clearForm.files ? ' The log files on disk they came from are emptied too.' : '';
 
-    if (!(await confirmDanger('Clear logs?', `This deletes ${WHAT[clearForm.what]} — ${range}. It cannot be undone.`, 'Clear')))
+    if (!(await confirmDanger('Clear logs?', `This deletes ${label.toLowerCase()} — ${range}.${files} It cannot be undone.`, 'Clear')))
         return;
 
-    clearForm.post(route('logs.clear'), {
-        preserveScroll: true,
-        onSuccess: () => (showClear.value = false),
-    });
+    clearForm
+        .transform((data) => ({ ...data, files: canEmptyFiles.value && data.files }))
+        .post(route('logs.clear'), {
+            preserveScroll: true,
+            onSuccess: () => (showClear.value = false),
+        });
 };
 
-const setRetention = (days) =>
-    router.post(route('logs.retention'), { days }, { preserveScroll: true });
+const setRetention = (days) => router.post(route('logs.retention'), { days }, { preserveScroll: true });
 </script>
 
 <template>
@@ -149,15 +91,11 @@ const setRetention = (days) =>
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div class="min-w-0">
                     <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
-                    <p class="text-sm text-slate-500">
-                        {{ SUBTITLE[view] ?? SUBTITLE.activity }}
-                        <span v-if="view === 'activity' && pagination.total">· {{ pagination.total }} in total</span>
-                    </p>
+                    <p class="text-sm text-slate-500">{{ SUBTITLE[view] ?? SUBTITLE.traffic }}</p>
                 </div>
                 <button
-                    v-if="view === 'activity'"
                     type="button"
                     class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                     @click="showClear = !showClear"
@@ -167,73 +105,45 @@ const setRetention = (days) =>
             </div>
         </template>
 
-        <!-- The three views. -->
-        <div class="mb-6 flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 sm:inline-flex">
-            <Link
-                v-for="v in VIEWS"
-                :key="v.key"
-                :href="v.href()"
-                class="rounded-lg px-4 py-2 text-sm font-medium transition"
-                :class="
-                    view === v.key
-                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
-                        : 'text-slate-600 hover:text-slate-900'
-                "
-            >
-                {{ v.label }}
-            </Link>
-        </div>
-
-        <Traffic
-            v-if="view === 'traffic'"
-            :window="window"
-            :windows="windows"
-            :traffic="traffic"
-            :processes="processes"
-            :fpm="fpm"
-        />
-
-        <ServerLogs
-            v-else-if="view === 'files'"
-            :server-logs="serverLogs"
-            :server-log-lines="serverLogLines"
-            :server-log="serverLog"
-            :lines="lines"
-            :search="search"
-        />
-
-        <template v-else>
         <!-- Clearing, and how long logs are kept without anybody clearing them. -->
         <div v-if="showClear" class="mb-6 grid gap-6 lg:grid-cols-2">
-            <form
-                class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
-                @submit.prevent="clearLogs"
-            >
+            <form class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5" @submit.prevent="clearLogs">
                 <h3 class="font-semibold text-slate-900">Clear logs now</h3>
                 <p class="mt-1 text-sm text-slate-500">
-                    Deleted from the panel's database, which is then compacted so the space
-                    is given back. Tasks still running are kept.
+                    Deleted from the panel's database, which is then compacted so the space is given back.
+                    Tasks still running are kept. Single log files can also be emptied from the Log files tab.
                 </p>
                 <div class="mt-4 grid gap-3 sm:grid-cols-2">
                     <label class="block text-sm">
                         <span class="text-xs font-medium text-slate-700">Which</span>
                         <select v-model="clearForm.what" class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm">
-                            <option value="all">Everything</option>
-                            <option value="tasks">Panel tasks</option>
-                            <option value="logins">Panel sign-ins</option>
-                            <option value="ssh">SSH logins and attempts</option>
+                            <option v-for="source in clearSources" :key="source.key" :value="source.key">
+                                {{ source.label }}
+                            </option>
                         </select>
                     </label>
                     <label class="block text-sm">
                         <span class="text-xs font-medium text-slate-700">How much</span>
                         <select v-model="clearForm.older_than" class="mt-1 block w-full rounded-lg border-slate-300 text-sm shadow-sm">
                             <option value="0">All of it</option>
+                            <option value="1">Older than 1 day</option>
                             <option value="7">Older than 7 days</option>
                             <option value="30">Older than 30 days</option>
                             <option value="90">Older than 90 days</option>
                         </select>
                     </label>
                 </div>
+                <label v-if="canEmptyFiles" class="mt-4 flex items-start gap-2 text-sm">
+                    <input v-model="clearForm.files" type="checkbox" class="mt-0.5 rounded border-slate-300 text-rose-600" />
+                    <span>
+                        <span class="font-medium text-slate-700">Also empty the log files on disk</span>
+                        <span class="block text-xs text-slate-500">
+                            nginx's, PHP-FPM's, the databases', fail2ban's, the system's and each site's — whichever
+                            the choice above covers. The Website traffic view reads the access logs, so it starts
+                            from zero too.
+                        </span>
+                    </span>
+                </label>
                 <button
                     type="submit"
                     :disabled="clearForm.processing"
@@ -246,8 +156,8 @@ const setRetention = (days) =>
             <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
                 <h3 class="font-semibold text-slate-900">Keep logs for</h3>
                 <p class="mt-1 text-sm text-slate-500">
-                    Anything older is deleted automatically every hour, so the logs never grow
-                    past this.
+                    Anything older is deleted from the panel's database automatically every hour, so it never
+                    grows past this. The log files on disk are rotated by the system as usual.
                 </p>
                 <div class="mt-4 flex flex-wrap gap-2">
                     <button
@@ -268,166 +178,49 @@ const setRetention = (days) =>
             </div>
         </div>
 
-        <div class="mb-6 flex flex-wrap gap-2">
+        <!-- The three views. -->
+        <div class="mb-6 flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 sm:inline-flex">
             <Link
-                v-for="filter in FILTERS"
-                :key="filter.label"
-                :href="filterHref(filter.key)"
-                preserve-scroll
-                class="rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition"
+                v-for="v in VIEWS"
+                :key="v.key"
+                :href="v.href()"
+                class="rounded-lg px-4 py-2 text-sm font-medium transition"
                 :class="
-                    (type ?? null) === filter.key
-                        ? 'bg-brand-600 text-white ring-brand-600'
-                        : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                    view === v.key
+                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
+                        : 'text-slate-600 hover:text-slate-900'
                 "
             >
-                {{ filter.label }}
+                {{ v.label }}
             </Link>
         </div>
 
+        <Events
+            v-if="view === 'events'"
+            :events="events"
+            :filters="filters"
+            :pagination="pagination"
+            :counts="counts"
+            :ranges="ranges"
+            :sources="sources"
+            :sites="sites"
+        />
 
-        <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
-            <div v-if="!logs.length" class="px-5 py-12 text-center text-sm text-slate-500">
-                Nothing recorded here yet.
-            </div>
+        <ServerLogs
+            v-else-if="view === 'files'"
+            :server-logs="serverLogs"
+            :server-log="serverLog"
+            :pagination="filePagination"
+            :search="search"
+        />
 
-            <div v-else class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-slate-200">
-                    <thead class="bg-slate-50">
-                        <tr
-                            class="text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                        >
-                            <th class="px-5 py-3">When</th>
-                            <th class="px-5 py-3">What</th>
-                            <th class="px-5 py-3">Result</th>
-                            <th class="px-5 py-3">Details</th>
-                            <th class="px-5 py-3"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-100">
-                        <tr
-                            v-for="entry in logs"
-                            :key="`${entry.source}-${(entry.task ?? entry.login ?? entry.ssh).id}`"
-                            class="text-sm transition hover:bg-slate-50"
-                        >
-                            <td class="whitespace-nowrap px-5 py-3 align-top">
-                                <p class="text-slate-900">{{ formatStamp(stampOf(entry)) }}</p>
-                                <p class="text-xs text-slate-400">
-                                    {{ formatRelative(stampOf(entry)) }}
-                                </p>
-                            </td>
-
-                            <!-- A task the panel ran. -->
-                            <template v-if="entry.task">
-                                <td class="px-5 py-3 align-top">
-                                    <p class="font-medium text-slate-900">{{ entry.task.action }}</p>
-                                    <p class="max-w-md truncate text-xs text-slate-500">
-                                        {{ entry.task.message }}
-                                    </p>
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 align-top">
-                                    <span
-                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
-                                        :class="statusClass(entry.task.status)"
-                                    >
-                                        {{ entry.task.status }}
-                                    </span>
-                                    <span
-                                        v-if="entry.task.status === 'running'"
-                                        class="ml-2 text-xs text-slate-500"
-                                        >{{ entry.task.progress }}%</span
-                                    >
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 align-top text-xs text-slate-500">
-                                    {{
-                                        formatDuration(entry.task.started_at, entry.task.finished_at)
-                                            ? `Took ${formatDuration(entry.task.started_at, entry.task.finished_at)}`
-                                            : '—'
-                                    }}
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
-                                    <Link
-                                        :href="route('logs.show', entry.task.id)"
-                                        class="text-xs font-medium text-brand-600 hover:underline"
-                                    >
-                                        Open
-                                    </Link>
-                                </td>
-                            </template>
-
-                            <!-- A sign-in to this panel, right or wrong. -->
-                            <template v-else-if="entry.login">
-                                <td class="px-5 py-3 align-top">
-                                    <p class="font-medium text-slate-900">Panel sign-in</p>
-                                    <p class="max-w-md truncate text-xs text-slate-500">
-                                        {{ entry.login.email || 'no email typed' }} ·
-                                        {{ reasonLabel[entry.login.reason] ?? entry.login.reason }}
-                                    </p>
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 align-top">
-                                    <span
-                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
-                                        :class="statusClass(entry.login.success ? 'success' : 'failed')"
-                                    >
-                                        {{ entry.login.success ? 'signed in' : 'refused' }}
-                                    </span>
-                                </td>
-                                <td class="px-5 py-3 align-top text-xs text-slate-500">
-                                    <IpAddress :ip="entry.login.ip" class="text-slate-700" />
-                                    <p :title="entry.login.user_agent">{{ browser(entry.login.user_agent) }}</p>
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
-                                    <Link
-                                        :href="`${route('security.index')}?tab=logins`"
-                                        class="text-xs font-medium text-brand-600 hover:underline"
-                                    >
-                                        Security
-                                    </Link>
-                                </td>
-                            </template>
-
-                            <!-- An SSH login, or an attempt at one. -->
-                            <template v-else-if="entry.ssh">
-                                <td class="px-5 py-3 align-top">
-                                    <p class="font-medium text-slate-900">{{ sshTitle(entry.ssh) }}</p>
-                                    <p class="text-xs text-slate-500">
-                                        as <span class="font-mono">{{ entry.ssh.user || '—' }}</span>
-                                        · {{ entry.ssh.method }}
-                                    </p>
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 align-top">
-                                    <span
-                                        class="rounded-full px-2.5 py-0.5 text-xs font-medium ring-1"
-                                        :class="statusClass(entry.ssh.kind === 'accepted' ? 'success' : 'failed')"
-                                    >
-                                        {{ entry.ssh.kind === 'accepted' ? 'logged in' : 'refused' }}
-                                    </span>
-                                </td>
-                                <td class="px-5 py-3 align-top text-xs">
-                                    <IpAddress :ip="entry.ssh.ip" class="text-slate-700" />
-                                </td>
-                                <td class="whitespace-nowrap px-5 py-3 text-right align-top">
-                                    <Link
-                                        :href="`${route('security.index')}?tab=ssh`"
-                                        class="text-xs font-medium text-brand-600 hover:underline"
-                                    >
-                                        Security
-                                    </Link>
-                                </td>
-                            </template>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <Pagination
-                :model-value="pagination.page"
-                :pages="pagination.pages"
-                :total="pagination.total"
-                :per-page="25"
-                @update:model-value="goToPage"
-            />
-        </div>
-        </template>
+        <Traffic
+            v-else
+            :window="window"
+            :windows="windows"
+            :traffic="traffic"
+            :processes="processes"
+            :fpm="fpm"
+        />
     </AuthenticatedLayout>
 </template>

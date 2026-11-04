@@ -6,87 +6,65 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
-// logsIndex is everything that has happened to the panel and the machine,
-// newest first: the tasks the panel ran, every sign-in to the panel, and every
-// SSH login — with failed SSH attempts under their own filter.
+// logsIndex is the Logs page, in three views:
+//
+//   - traffic, the default: what the sites are being asked for and what the
+//     CPU is doing, read from the access logs and /proc (traffic.go);
+//   - events: one list of everything that happened — what the panel ran,
+//     sign-ins to it, SSH, and what nginx, PHP, the databases, fail2ban, the
+//     kernel, mail and each site logged — over a period, filtered and paged
+//     (events.go);
+//   - files: the log files themselves, a page at a time.
 func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
-	const perPage = 25
-
 	query := r.URL.Query()
 
-	// Traffic and Server logs read the machine's own files rather than the
-	// panel's database; see traffic.go.
-	switch view := query.Get("view"); view {
-	case "traffic", "files":
-		props := inertia.Props{
-			"view":             view,
-			"retention":        a.logRetentionDays(),
-			"retentionOptions": logRetentionOptions,
-		}
-
-		extra := a.logsTrafficProps(r.Context(), query.Get("window"))
-		if view == "files" {
-			lines, _ := strconv.Atoi(query.Get("lines"))
-			extra = a.logsFilesProps(r.Context(), query.Get("source"), lines, query.Get("q"))
-		}
-
-		for key, value := range extra {
-			props[key] = value
-		}
-
-		a.Render.Render(w, r, "Logs/Index", props)
-		return
+	view := query.Get("view")
+	switch view {
+	case "events", "files":
+	case "activity":
+		// The old address of the panel's own history.
+		view = "events"
+	default:
+		view = "traffic"
 	}
 
-	kind := query.Get("type")
-
-	page, err := strconv.Atoi(query.Get("page"))
-	if err != nil || page < 1 {
-		page = 1
-	}
-
-	entries, total, err := a.Store.Timeline(r.Context(), kind, perPage, (page-1)*perPage)
-	if err != nil {
-		a.serverError(w, r, "could not read the logs", err)
-		return
-	}
-
-	pages := (total + perPage - 1) / perPage
-	if pages < 1 {
-		pages = 1
-	}
-
-	// Past the end — a filter that has fewer pages than the one being read —
-	// shows the last page rather than an empty one.
-	if page > pages {
-		page = pages
-
-		entries, _, err = a.Store.Timeline(r.Context(), kind, perPage, (page-1)*perPage)
-		if err != nil {
-			a.serverError(w, r, "could not read the logs", err)
-			return
-		}
-	}
-
-	a.Render.Render(w, r, "Logs/Index", inertia.Props{
-		"logs": entries,
-		"pagination": map[string]any{
-			"page":  page,
-			"pages": pages,
-			"total": total,
-		},
-		"type":             nullable(kind),
-		"view":             "activity",
+	props := inertia.Props{
+		"view":             view,
 		"retention":        a.logRetentionDays(),
 		"retentionOptions": logRetentionOptions,
-	})
+		"clearSources":     a.clearSources(),
+	}
+
+	var extra map[string]any
+
+	switch view {
+	case "traffic":
+		extra = a.logsTrafficProps(r.Context(), query.Get("window"))
+	case "events":
+		flat := map[string]string{}
+		for key := range query {
+			flat[key] = query.Get(key)
+		}
+		extra = a.logsEventsProps(r.Context(), flat)
+	case "files":
+		page, _ := strconv.Atoi(query.Get("page"))
+		extra = a.logsFilesProps(r.Context(), query.Get("source"), page, query.Get("q"))
+	}
+
+	for key, value := range extra {
+		props[key] = value
+	}
+
+	a.Render.Render(w, r, "Logs/Index", props)
 }
 
 // logsShow is one task, with its console.
@@ -179,7 +157,7 @@ func (a *App) pruneLogs(ctx context.Context) {
 
 	before := time.Now().AddDate(0, 0, -a.logRetentionDays())
 
-	if removed := a.Store.ClearLogs(ctx, []string{store.LogsTasks, store.LogsLogins, store.LogsSSH}, before); removed > 0 {
+	if removed := a.Store.ClearLogs(ctx, []string{store.LogsTasks, store.LogsLogins, store.LogsSSH, store.LogsServer}, before); removed > 0 {
 		a.Log.Info("old logs removed", "rows", removed, "older_than_days", a.logRetentionDays())
 	}
 }
@@ -210,8 +188,28 @@ func (a *App) logsRetention(w http.ResponseWriter, r *http.Request) {
 	a.okBack(w, r, fmt.Sprintf("Logs are kept for %d days now; anything older was removed.", days))
 }
 
-// logsClear deletes logs on request: all of them, or one kind, and either
-// everything or only what is older than a number of days. The database is
+// clearSources are the kinds of log the Clear form offers, by key.
+func (a *App) clearSources() []map[string]string {
+	list := []map[string]string{
+		{"key": "all", "label": "Everything"},
+		{"key": "tasks", "label": "Panel activity"},
+		{"key": "logins", "label": "Panel sign-ins"},
+		{"key": "ssh", "label": "SSH logins and attempts"},
+		{"key": "server", "label": "Everything the server logged"},
+	}
+
+	for _, key := range []string{serverlog.SourceRequests, serverlog.SourceSite, serverlog.SourceNginx,
+		serverlog.SourcePHP, serverlog.SourceDatabase, serverlog.SourceFail2ban, serverlog.SourceAuth,
+		serverlog.SourceKernel, serverlog.SourceSystem, serverlog.SourceMail} {
+		list = append(list, map[string]string{"key": "server:" + key, "label": "Server · " + serverlog.SourceLabels[key]})
+	}
+
+	return list
+}
+
+// logsClear deletes logs on request: every kind or one, everything or only
+// what is older than a number of days, and — when asked — empties the log
+// files on disk the server's entries were read from, too. The database is
 // compacted afterwards, so the space is actually given back.
 func (a *App) logsClear(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
@@ -220,14 +218,24 @@ func (a *App) logsClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kinds := map[string][]string{
-		"all":    {store.LogsTasks, store.LogsLogins, store.LogsSSH},
-		"tasks":  {store.LogsTasks},
-		"logins": {store.LogsLogins},
-		"ssh":    {store.LogsSSH},
-	}[input["what"]]
+	what := input["what"]
 
-	if kinds == nil {
+	var (
+		kinds   []string
+		sources []string // server sources; nil with server set means all of them
+		server  bool
+	)
+
+	switch {
+	case what == "all":
+		kinds, server = []string{store.LogsTasks, store.LogsLogins, store.LogsSSH}, true
+	case what == "tasks" || what == "logins" || what == "ssh":
+		kinds = []string{what}
+	case what == "server":
+		server = true
+	case strings.HasPrefix(what, "server:") && serverlog.SourceLabels[strings.TrimPrefix(what, "server:")] != "":
+		server, sources = true, []string{strings.TrimPrefix(what, "server:")}
+	default:
 		a.failBack(w, r, "Choose which logs to clear.")
 		return
 	}
@@ -238,17 +246,77 @@ func (a *App) logsClear(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removed := a.Store.ClearLogs(r.Context(), kinds, before)
+	if server {
+		removed += a.Store.ClearServerEvents(r.Context(), sources, before)
+	}
+
+	// The files themselves, only for "everything" in time: a file cannot be
+	// emptied of only its older lines.
+	emptied := 0
+	if server && boolInput(input, "files", false) && before.IsZero() {
+		for _, file := range a.collectFiles(r.Context()) {
+			if sources != nil && !slices.Contains(sources, file.Source) {
+				continue
+			}
+			if err := clearLogFile(file.Path); err != nil {
+				a.Log.Warn("could not empty a log file", "path", file.Path, "error", err)
+				continue
+			}
+			emptied++
+		}
+	}
 
 	if err := a.Store.Compact(r.Context()); err != nil {
 		a.Log.Warn("could not compact the database after clearing logs", "error", err)
 	}
 
-	a.Log.Info("logs cleared", "what", input["what"], "older_than", input["older_than"], "rows", removed)
+	a.Log.Info("logs cleared", "what", what, "older_than", input["older_than"], "rows", removed, "files", emptied)
 
-	if removed == 0 {
+	switch {
+	case removed == 0 && emptied == 0:
 		a.okBack(w, r, "There was nothing to clear.")
+	case emptied > 0:
+		a.okBack(w, r, fmt.Sprintf("Cleared %d log entries and emptied %d log files.", removed, emptied))
+	default:
+		a.okBack(w, r, fmt.Sprintf("Cleared %d log entries.", removed))
+	}
+}
+
+// logsFilesClear empties one log file, or every one the Log files view lists.
+func (a *App) logsFilesClear(w http.ResponseWriter, r *http.Request) {
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
 		return
 	}
 
-	a.okBack(w, r, fmt.Sprintf("Cleared %d log entries.", removed))
+	key := input["source"]
+	emptied := 0
+
+	for _, log := range a.serverLogs(r.Context()) {
+		if key != "all" && log.Key != key {
+			continue
+		}
+
+		if err := clearLogFile(log.Path); err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		emptied++
+	}
+
+	if emptied == 0 {
+		a.failBack(w, r, "Choose a log file to clear.")
+		return
+	}
+
+	a.Log.Info("log files emptied", "which", key, "files", emptied)
+
+	if emptied == 1 {
+		a.okBack(w, r, "The log file was emptied.")
+		return
+	}
+
+	a.okBack(w, r, fmt.Sprintf("Emptied %d log files.", emptied))
 }
