@@ -118,7 +118,13 @@ const NEEDS = {
 const forms = reactive({});
 for (const key of Object.keys(FEATURES)) {
     const saved = s.value[key];
-    forms[key] = typeof saved === 'object' ? { ...props.protection.defaults[key], ...saved } : {};
+    if (typeof saved !== 'object') {
+        forms[key] = {};
+        continue;
+    }
+    // The thresholds only: whether it is on is the button pressed, never the form.
+    const { enabled: _ignored, ...values } = { ...props.protection.defaults[key], ...saved };
+    forms[key] = values;
 }
 
 const busy = ref('');
@@ -168,7 +174,10 @@ const submit = async (key, on) => {
 
     router.post(
         route('security.protection'),
-        { feature: key, enabled: on, ...(forms[key] ?? {}) },
+        // The switch last: the form is seeded from the saved settings, which
+        // carry their own `enabled`, and spread after it that saved value won —
+        // every Turn on was sent as the off it was replacing.
+        { ...(forms[key] ?? {}), feature: key, enabled: on },
         {
             preserveScroll: true,
             onStart: () => (busy.value = key),
