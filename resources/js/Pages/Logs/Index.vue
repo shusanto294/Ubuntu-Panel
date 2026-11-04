@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
+import ServerLogs from '@/Components/Logs/ServerLogs.vue';
+import Traffic from '@/Components/Logs/Traffic.vue';
 import { confirmDanger } from '@/dialog';
 import { browser } from '@/Components/Security/ui';
 import { useLiveRefresh } from '@/Composables/useLiveRefresh';
@@ -15,7 +17,38 @@ const props = defineProps({
     type: { type: String, default: null },
     retention: { type: Number, default: 90 },
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
+
+    // Which of the page's three views this is: what the panel recorded, the
+    // sites' traffic added up, or the machine's own log files.
+    view: { type: String, default: 'activity' },
+
+    // Traffic.
+    window: { type: String, default: '15m' },
+    windows: { type: Array, default: () => ['15m', '1h', '6h', '24h'] },
+    traffic: { type: Object, default: null },
+    processes: { type: Object, default: null },
+    fpm: { type: Array, default: () => [] },
+
+    // Server logs.
+    serverLogs: { type: Array, default: () => [] },
+    serverLogLines: { type: Array, default: () => [100, 200, 500, 1000, 2000] },
+    serverLog: { type: Object, default: null },
+    lines: { type: Number, default: 200 },
+    search: { type: String, default: '' },
 });
+
+const VIEWS = [
+    { key: 'activity', label: 'Panel activity', href: () => route('logs.index') },
+    { key: 'traffic', label: 'Website traffic', href: () => `${route('logs.index')}?view=traffic` },
+    { key: 'files', label: 'Server logs', href: () => `${route('logs.index')}?view=files` },
+];
+
+const SUBTITLE = {
+    activity: 'What the panel ran, every sign-in to it, and every SSH login or attempt, newest first',
+    traffic:
+        'Every site’s requests added up — which site is busiest, who is sending the requests, what looks like an attack, and what is using the CPU',
+    files: 'nginx, PHP-FPM, MySQL, fail2ban, the system and every site’s own logs, read from the end',
+};
 
 const FILTERS = [
     { key: null, label: 'Everything' },
@@ -48,7 +81,7 @@ const sshTitle = (event) =>
 
 const anyRunning = computed(() => props.logs.some((entry) => entry.task?.status === 'running'));
 
-useLiveRefresh(anyRunning, ['logs', 'pagination']);
+useLiveRefresh(anyRunning, ['logs', 'pagination'], 3000, { onLoad: props.view === 'activity' });
 
 const statusClass = (status) => {
     switch (status) {
@@ -119,12 +152,12 @@ const setRetention = (days) =>
                 <div>
                     <h2 class="text-xl font-semibold text-slate-900">Logs</h2>
                     <p class="text-sm text-slate-500">
-                        What the panel ran, every sign-in to it, and every SSH login or attempt,
-                        newest first
-                        <span v-if="pagination.total">· {{ pagination.total }} in total</span>
+                        {{ SUBTITLE[view] ?? SUBTITLE.activity }}
+                        <span v-if="view === 'activity' && pagination.total">· {{ pagination.total }} in total</span>
                     </p>
                 </div>
                 <button
+                    v-if="view === 'activity'"
                     type="button"
                     class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                     @click="showClear = !showClear"
@@ -134,6 +167,42 @@ const setRetention = (days) =>
             </div>
         </template>
 
+        <!-- The three views. -->
+        <div class="mb-6 flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 sm:inline-flex">
+            <Link
+                v-for="v in VIEWS"
+                :key="v.key"
+                :href="v.href()"
+                class="rounded-lg px-4 py-2 text-sm font-medium transition"
+                :class="
+                    view === v.key
+                        ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
+                        : 'text-slate-600 hover:text-slate-900'
+                "
+            >
+                {{ v.label }}
+            </Link>
+        </div>
+
+        <Traffic
+            v-if="view === 'traffic'"
+            :window="window"
+            :windows="windows"
+            :traffic="traffic"
+            :processes="processes"
+            :fpm="fpm"
+        />
+
+        <ServerLogs
+            v-else-if="view === 'files'"
+            :server-logs="serverLogs"
+            :server-log-lines="serverLogLines"
+            :server-log="serverLog"
+            :lines="lines"
+            :search="search"
+        />
+
+        <template v-else>
         <!-- Clearing, and how long logs are kept without anybody clearing them. -->
         <div v-if="showClear" class="mb-6 grid gap-6 lg:grid-cols-2">
             <form
@@ -359,5 +428,6 @@ const setRetention = (days) =>
                 @update:model-value="goToPage"
             />
         </div>
+        </template>
     </AuthenticatedLayout>
 </template>

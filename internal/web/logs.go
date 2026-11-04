@@ -19,9 +19,35 @@ import (
 func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 	const perPage = 25
 
-	kind := r.URL.Query().Get("type")
+	query := r.URL.Query()
 
-	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	// Traffic and Server logs read the machine's own files rather than the
+	// panel's database; see traffic.go.
+	switch view := query.Get("view"); view {
+	case "traffic", "files":
+		props := inertia.Props{
+			"view":             view,
+			"retention":        a.logRetentionDays(),
+			"retentionOptions": logRetentionOptions,
+		}
+
+		extra := a.logsTrafficProps(r.Context(), query.Get("window"))
+		if view == "files" {
+			lines, _ := strconv.Atoi(query.Get("lines"))
+			extra = a.logsFilesProps(r.Context(), query.Get("source"), lines, query.Get("q"))
+		}
+
+		for key, value := range extra {
+			props[key] = value
+		}
+
+		a.Render.Render(w, r, "Logs/Index", props)
+		return
+	}
+
+	kind := query.Get("type")
+
+	page, err := strconv.Atoi(query.Get("page"))
 	if err != nil || page < 1 {
 		page = 1
 	}
@@ -57,6 +83,7 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 			"total": total,
 		},
 		"type":             nullable(kind),
+		"view":             "activity",
 		"retention":        a.logRetentionDays(),
 		"retentionOptions": logRetentionOptions,
 	})
