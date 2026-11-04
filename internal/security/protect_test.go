@@ -108,15 +108,21 @@ func TestProtectJailFile(t *testing.T) {
 
 	for _, want := range []string{
 		"[panel-web-login]", "filter   = ubuntu-panel-web-login", "port     = http,https",
-		"logpath  = /var/log/nginx/*access.log",
+		"logpath  = /var/log/nginx/*-access.log",
 		"[panel-mail-smtp]", "filter   = postfix[mode=auth]", "[panel-mail-imap]", "filter   = dovecot",
 		"logpath  = /var/log/mail.log",
-		"[recidive]", "banaction = iptables-allports", "bantime  = 604800",
+		"[recidive]", "banaction = iptables-allports", "maxretry = 5", "findtime = 600", "bantime  = -1",
 		"203.0.113.10", "173.245.48.0/20",
 	} {
 		if !strings.Contains(file, want) {
 			t.Errorf("jail file is missing %q:\n%s", want, file)
 		}
+	}
+
+	// nginx's own access.log is the panel's: its sign-ins and file manager
+	// must never count as an attack.
+	if strings.Contains(file, "/var/log/nginx/*access.log") || strings.Contains(file, "nginx/access.log") {
+		t.Error("the website jails read the log the panel's own pages are written to")
 	}
 
 	if strings.Contains(file, "[panel-web-scan]") {

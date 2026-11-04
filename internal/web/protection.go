@@ -26,7 +26,45 @@ const (
 	scanResultSetting     = "security_scan_result"
 	scanUnreportedSetting = "security_scan_unreported"
 	accessLogsSetting     = "security_access_logs"
+	protectFailSetting    = "security_protection_failures"
 )
+
+// protectionFailure is why a protection could not be switched, kept on its
+// card until it is switched successfully.
+//
+// It used to be a flash, at the top of the page, gone after five seconds —
+// and the person who pressed Turn on is scrolled down to the card, so what
+// they saw was the button saying Turn on again and no reason why.
+type protectionFailure struct {
+	Message string `json:"message"`
+	On      bool   `json:"on"`
+	At      int64  `json:"at"`
+}
+
+func (a *App) protectionFailures() map[string]protectionFailure {
+	failures := map[string]protectionFailure{}
+	json.Unmarshal([]byte(a.Store.Setting(protectFailSetting, "{}")), &failures)
+
+	return failures
+}
+
+// recordProtection notes how switching feature went: the reason when it
+// failed, nothing when it worked.
+func (a *App) recordProtection(feature string, on bool, err error) {
+	failures := a.protectionFailures()
+
+	if err == nil {
+		if _, ok := failures[feature]; !ok {
+			return
+		}
+		delete(failures, feature)
+	} else {
+		failures[feature] = protectionFailure{Message: err.Error(), On: on, At: time.Now().Unix()}
+	}
+
+	encoded, _ := json.Marshal(failures)
+	a.Store.SetSetting(protectFailSetting, string(encoded))
+}
 
 // protection is what was saved, over the defaults, so a field added later has
 // a value on machines that saved before it existed.
@@ -35,6 +73,23 @@ func (a *App) protection() security.Protection {
 
 	if stored := a.Store.Setting(protectionSetting, ""); stored != "" {
 		json.Unmarshal([]byte(stored), &p)
+	}
+
+	// A jail that is off is only the values it would be turned on with, and
+	// a saved copy of old defaults is not a choice anybody made: it shows
+	// the current ones. One that is on keeps what it is running with.
+	for _, jail := range []struct {
+		rule     *security.JailRule
+		fallback security.JailRule
+	}{
+		{&p.WebLogin, security.ProtectionDefaults.WebLogin},
+		{&p.WebScan, security.ProtectionDefaults.WebScan},
+		{&p.Mail, security.ProtectionDefaults.Mail},
+		{&p.Recidive, security.ProtectionDefaults.Recidive},
+	} {
+		if !jail.rule.Enabled {
+			*jail.rule = jail.fallback
+		}
 	}
 
 	return p
@@ -258,12 +313,14 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal([]byte(a.Store.Setting(kernelPreviousSetting, "{}")), &previous)
 
 		if err := security.ApplyKernel(enabled, previous); err != nil {
+			a.recordProtection(feature, enabled, err)
 			a.securityBack(w, r, err.Error(), true)
 			return
 		}
 
 		p.Kernel = enabled
 		a.saveProtection(p)
+		a.recordProtection(feature, enabled, nil)
 		a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
 		a.securityBack(w, r, label+map[bool]string{true: " is on.", false: " is off; the previous values are back."}[enabled], false)
 		return
@@ -273,12 +330,14 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		if err := a.applyProtection(r.Context(), p); err != nil {
 			// What is on disk is what was there before; the setting says so too.
 			a.applyProtection(r.Context(), before)
+			a.recordProtection(feature, enabled, err)
 			a.securityBack(w, r, err.Error(), true)
 			return
 		}
 	}
 
 	a.saveProtection(p)
+	a.recordProtection(feature, enabled, nil)
 	a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
 
 	message := label + " is off."
@@ -485,6 +544,7 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 	return map[string]any{
 		"settings": p,
 		"defaults": security.ProtectionDefaults,
+		"failures": a.protectionFailures(),
 		"jails":    jails,
 		"ready": map[string]bool{
 			"fail2ban": proc.Which("fail2ban-client"),

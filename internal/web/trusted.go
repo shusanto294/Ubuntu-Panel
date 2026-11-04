@@ -19,7 +19,11 @@ import (
 //   - every address that signed in to the panel in the last 30 days, which is
 //     the owner's phone, office and home whether or not they thought to list
 //     them;
-//   - the server's own addresses — the panel and the sites talk to it.
+//   - the server's own addresses — the panel and the sites talk to it;
+//   - the private networks the server is on: Docker's bridge, where an app
+//     the panel runs reaches the host's mail server and sites, and the LAN
+//     behind a NAT or load balancer, which every visitor would appear to come
+//     from. Never a public network: on a VPS that is a neighbour's address.
 //
 // Nothing flags them, nothing offers to ban them, and none of the panel's
 // jails or rate limits ever applies to them: fail2ban is given them as its
@@ -35,6 +39,7 @@ const (
 	trustNeverBan    = "on the never-ban list"
 	trustSignedIn    = "signed in to this panel"
 	trustThisServer  = "this server"
+	trustPrivate     = "a private network this server is on"
 	trustedSetting   = "security_trusted_applied"
 	trustedRecheckAt = 10 * time.Minute
 )
@@ -55,6 +60,11 @@ func (a *App) trusted(ctx context.Context) map[string]string {
 		for _, address := range addresses {
 			if network, ok := address.(*net.IPNet); ok && !network.IP.IsLinkLocalUnicast() {
 				reasons[network.IP.String()] = trustThisServer
+
+				if network.IP.IsPrivate() {
+					masked := &net.IPNet{IP: network.IP.Mask(network.Mask), Mask: network.Mask}
+					reasons[masked.String()] = trustPrivate
+				}
 			}
 		}
 	}

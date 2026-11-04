@@ -66,6 +66,19 @@ func TestLevelsAndAddresses(t *testing.T) {
 		t.Errorf("third: %+v", events[2])
 	}
 
+	// An old worker leaving after a reload is not an emergency.
+	reload := read(File{Source: SourceNginx},
+		`2026/11/04 15:18:00 [alert] 258241#258241: *142713 open socket #3 left in connection 8`,
+		`2026/11/04 15:18:00 [alert] 258241#258241: aborting`,
+		`2026/11/04 15:18:01 [alert] 812#812: socket() failed (24: Too many open files)`,
+	)
+	if len(reload) != 3 || reload[0].Level != LevelWarning || reload[1].Level != LevelWarning {
+		t.Errorf("reload chatter: %+v", reload)
+	}
+	if reload[2].Level != LevelCritical {
+		t.Errorf("a real alert was downgraded: %+v", reload[2])
+	}
+
 	oom := read(File{Source: SourceKernel}, `Nov  4 10:00:00 web1 kernel: Out of memory: Killed process 4242 (php-fpm8.3)`)
 	if len(oom) != 1 || oom[0].Level != LevelCritical {
 		t.Errorf("OOM kill: %+v", oom)

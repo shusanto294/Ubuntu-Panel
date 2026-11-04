@@ -57,14 +57,17 @@ type Rate struct {
 	Burst   int  `json:"burst"`
 }
 
-// ProtectionDefaults are the values a switch turns on with. Thresholds are set
-// well above what a person does by hand: twenty login posts in ten minutes is
-// a script, not somebody who forgot their password.
+// ProtectionDefaults are the values a switch turns on with: five within ten
+// minutes, banned for good. Strict, and safe to be strict about because
+// nothing the panel does is ever counted — its own addresses, its private
+// networks and everyone who signed in to it are on every jail's ignore list,
+// and the website jails read the sites' logs only, never the one the panel's
+// own pages are logged to.
 var ProtectionDefaults = Protection{
-	WebLogin:  JailRule{MaxRetry: 20, FindTime: 600, BanTime: 86400},
-	WebScan:   JailRule{MaxRetry: 5, FindTime: 600, BanTime: 86400},
-	Mail:      JailRule{MaxRetry: 5, FindTime: 3600, BanTime: 86400},
-	Recidive:  JailRule{MaxRetry: 3, FindTime: 86400, BanTime: 7 * 86400},
+	WebLogin:  JailRule{MaxRetry: 5, FindTime: 600, BanTime: Permanent},
+	WebScan:   JailRule{MaxRetry: 5, FindTime: 600, BanTime: Permanent},
+	Mail:      JailRule{MaxRetry: 5, FindTime: 600, BanTime: Permanent},
+	Recidive:  JailRule{MaxRetry: 3, FindTime: 86400, BanTime: Permanent},
 	RateLogin: Rate{Rate: 10, Burst: 10},
 	RateFlood: Rate{Rate: 20, Burst: 100},
 }
@@ -231,8 +234,12 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 		fmt.Fprintf(&file, "ignoreip = %s\n", strings.Join(ignore, " "))
 	}
 
-	// Every site's access log, and nginx's own for requests no site matched.
-	const nginxLogs = "logpath  = /var/log/nginx/*access.log"
+	// Every site's access log — and only those. nginx's own access.log is
+	// where the panel's pages are logged, along with phpMyAdmin behind it:
+	// panel sign-ins are posts to /login, and the file manager asks for
+	// .env and ../ paths, so reading that file would have the panel's own
+	// use counted as an attack on it.
+	nginxLogs := "logpath  = " + SiteAccessLogs
 
 	if p.WebLogin.Enabled {
 		section(JailWebLogin, p.WebLogin, "filter   = ubuntu-panel-web-login",
@@ -293,8 +300,9 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 		return errors.New("this needs fail2ban, which is not installed — the SSH protection tab installs it")
 	}
 
-	if (p.WebLogin.Enabled || p.WebScan.Enabled) && !proc.Ok("sudo sh -c 'ls /var/log/nginx/*access.log' >/dev/null 2>&1") {
-		return errors.New("website protection reads nginx's access logs, and there are none yet")
+	if (p.WebLogin.Enabled || p.WebScan.Enabled) && !proc.Ok("sudo sh -c 'ls "+SiteAccessLogs+"' >/dev/null 2>&1") {
+		return errors.New("website protection reads the sites' access logs, and there are none yet — " +
+			"add a site first, then turn it on")
 	}
 
 	if p.Mail.Enabled && !proc.Ok("command -v postfix >/dev/null 2>&1 || test -x /usr/sbin/postfix") {
@@ -373,10 +381,15 @@ func UnbanFrom(jail, address string) error {
 	return unban(jail, address)
 }
 
+// SiteAccessLogs is the access logs the website jails read: one per site and
+// per webmail host, each named after its hostname. Not nginx's own
+// access.log, which holds the panel's requests.
+const SiteAccessLogs = "/var/log/nginx/*-access.log"
+
 // AccessLogs is the access logs the web jails read, for noticing a site that
 // was added since fail2ban expanded the pattern.
 func AccessLogs() string {
-	return strings.TrimSpace(proc.Run("sudo sh -c 'ls /var/log/nginx/*access.log' 2>/dev/null | sort", 30*time.Second).Output)
+	return strings.TrimSpace(proc.Run("sudo sh -c 'ls "+SiteAccessLogs+"' 2>/dev/null | sort", 30*time.Second).Output)
 }
 
 // ReloadJails has fail2ban read the jails again, so a pattern like

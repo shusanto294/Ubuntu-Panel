@@ -139,6 +139,26 @@ const total = (key) =>
 
 const running = (key) => (FEATURES[key].jails ?? []).every((jail) => props.protection.jails?.[jail]?.running);
 
+// What the card says about itself, in one word and a colour: on and working,
+// on but not doing its job, or off.
+const state = (key) => {
+    if (!enabled(key)) return 'off';
+    if (FEATURES[key].kind === 'jail' && !running(key)) return 'stalled';
+    if (key === 'kernel' && !props.protection.kernel_applied) return 'stalled';
+    return 'on';
+};
+
+const STATE = {
+    on: { label: 'On', badge: 'bg-emerald-600 text-white', dot: 'bg-white', card: 'ring-2 !ring-emerald-500/60' },
+    stalled: { label: 'On — not working', badge: 'bg-amber-500 text-white', dot: 'bg-white', card: 'ring-2 !ring-amber-400/70' },
+    off: { label: 'Off', badge: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200', dot: 'bg-slate-400', card: '' },
+};
+
+// Why the last attempt to switch it did not take, until one does.
+const failure = (key) => props.protection.failures?.[key] ?? null;
+
+const onCount = computed(() => Object.keys(FEATURES).filter((key) => enabled(key)).length);
+
 const submit = async (key, on) => {
     const feature = FEATURES[key] ?? {};
     lastKey.value = key;
@@ -184,6 +204,14 @@ const reload = () => router.reload({ only: ['protection'], preserveScroll: true 
 
 <template>
     <div class="space-y-8">
+        <div :class="card" class="flex flex-wrap items-center justify-between gap-3 !py-4">
+            <p class="text-sm text-slate-700">
+                <span class="text-lg font-semibold text-slate-900">{{ onCount }} of {{ Object.keys(FEATURES).length }}</span>
+                protections are on.
+                <span class="text-slate-500">A card with a green border and a green <b>On</b> badge is protecting the server now.</span>
+            </p>
+        </div>
+
         <p class="max-w-3xl text-sm text-slate-500">
             Every protection here is optional and off until you turn it on. Addresses on the never-ban list
             (SSH protection tab) are never banned or rate limited by any of them<span v-if="myIp">
@@ -195,16 +223,10 @@ const reload = () => router.reload({ only: ['protection'], preserveScroll: true 
             <p class="mt-0.5 text-sm text-slate-500">{{ section.text }}</p>
 
             <div class="mt-3 grid gap-4 lg:grid-cols-2">
-                <div v-for="key in section.features" :key="key" :class="card" class="flex flex-col">
+                <div v-for="key in section.features" :key="key" :class="[card, STATE[state(key)].card]" class="flex flex-col">
                     <div class="flex items-start justify-between gap-3">
                         <h4 class="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
                             {{ FEATURES[key].title }}
-                            <span
-                                class="rounded-full px-2 py-0.5 text-xs font-medium"
-                                :class="enabled(key) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
-                            >
-                                {{ enabled(key) ? 'on' : 'off' }}
-                            </span>
                             <span
                                 v-if="key === 'real_ip' && protection.edge_sites?.length && !enabled(key)"
                                 class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
@@ -212,6 +234,13 @@ const reload = () => router.reload({ only: ['protection'], preserveScroll: true 
                                 recommended — {{ protection.edge_sites.length }} site{{ protection.edge_sites.length === 1 ? '' : 's' }} behind Cloudflare
                             </span>
                         </h4>
+                        <span
+                            class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold"
+                            :class="STATE[state(key)].badge"
+                        >
+                            <span class="h-2 w-2 rounded-full" :class="STATE[state(key)].dot" />
+                            {{ STATE[state(key)].label }}
+                        </span>
                     </div>
                     <p class="mt-1 text-sm text-slate-500">{{ FEATURES[key].text }}</p>
 
@@ -273,6 +302,20 @@ const reload = () => router.reload({ only: ['protection'], preserveScroll: true 
 
                     <p v-if="blocked(key) && !enabled(key)" class="mt-3 text-xs text-amber-700">{{ blocked(key) }}</p>
 
+                    <div
+                        v-if="failure(key) && busy !== key"
+                        class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
+                    >
+                        <p class="font-semibold">
+                            Could not turn it {{ failure(key).on ? 'on' : 'off' }}
+                            <span class="font-normal text-rose-600">· {{ when(failure(key).at) }}</span>
+                        </p>
+                        <p class="mt-0.5 whitespace-pre-line break-words">{{ failure(key).message }}</p>
+                        <p class="mt-1 text-rose-600">
+                            Nothing was changed, so it is still {{ enabled(key) ? 'on' : 'off' }}. Fix the cause and try again.
+                        </p>
+                    </div>
+
                     <div class="mt-auto flex flex-wrap gap-2 pt-4">
                         <template v-if="enabled(key)">
                             <button
@@ -316,16 +359,20 @@ const reload = () => router.reload({ only: ['protection'], preserveScroll: true 
                 anything. It runs at the lowest CPU and disk priority.
             </p>
 
-            <div :class="card" class="mt-3">
+            <div :class="[card, s.scan ? STATE.on.card : '']" class="mt-3">
+                <p v-if="failure('scan')" class="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                    Could not turn it {{ failure('scan').on ? 'on' : 'off' }}: {{ failure('scan').message }}
+                </p>
                 <div class="flex flex-wrap items-start justify-between gap-4">
                     <div>
                         <h4 class="flex items-center gap-2 font-semibold text-slate-900">
                             Scan every night
                             <span
-                                class="rounded-full px-2 py-0.5 text-xs font-medium"
-                                :class="s.scan ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'"
+                                class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold"
+                                :class="STATE[s.scan ? 'on' : 'off'].badge"
                             >
-                                {{ s.scan ? 'on' : 'off' }}
+                                <span class="h-2 w-2 rounded-full" :class="STATE[s.scan ? 'on' : 'off'].dot" />
+                                {{ STATE[s.scan ? 'on' : 'off'].label }}
                             </span>
                         </h4>
                         <p class="mt-1 text-sm text-slate-500">

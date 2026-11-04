@@ -300,8 +300,20 @@ var (
 	warned   = regexp.MustCompile(`(?i)\[warn\]|\bwarning\b|\bwarn\b|\bnotice\b.*\bban\b|\bban\b|invalid user|\brefused\b|\bdeprecated\b|max_children|limiting requests`)
 )
 
+// reloadChatter is what an nginx worker says on its way out after a reload,
+// when it still held connections — a keep-alive, a websocket, a download in
+// progress. nginx files it under [alert], but nothing is wrong: the new
+// workers are already serving, and the old one has finished. Every reload the
+// panel does — a site added, a certificate, a protection switched on — can
+// produce a handful, and grading them critical sent an alert email for each.
+// They are kept, as warnings, so a reload that does this all the time can
+// still be seen.
+var reloadChatter = regexp.MustCompile(`\[alert\] \d+#\d+: (?:\*\d+ )?(?:open socket #\d+ left in connection \d+|aborting)\s*$`)
+
 func level(message string) string {
 	switch {
+	case reloadChatter.MatchString(message):
+		return LevelWarning
 	case critical.MatchString(message):
 		return LevelCritical
 	case errored.MatchString(message):
