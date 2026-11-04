@@ -195,6 +195,9 @@ type securitySnapshot struct {
 	Events   []security.Event
 	Users    []security.SSHUser
 	Protect  map[string]security.JailStatus
+
+	// BanTimes are when each jail banned each address, and until when.
+	BanTimes map[string]map[string]security.BanTime
 	Taken    time.Time
 }
 
@@ -302,9 +305,24 @@ func (a *App) readSnapshot() *securitySnapshot {
 	// The optional jails, only those that are on: asking fail2ban is a Python
 	// start-up each.
 	snapshot.Protect = map[string]security.JailStatus{}
-	if p := a.protection(); p.AnyJail() {
+	p := a.protection()
+	if p.AnyJail() {
 		wait.Add(1)
 		go func() { defer wait.Done(); snapshot.Protect = security.ProtectStatus(p) }()
+	}
+
+	// When each jail banned each address.
+	snapshot.BanTimes = map[string]map[string]security.BanTime{}
+	var times sync.Mutex
+	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
+		wait.Add(1)
+		go func(jail string) {
+			defer wait.Done()
+			found := security.BanTimes(jail)
+			times.Lock()
+			snapshot.BanTimes[jail] = found
+			times.Unlock()
+		}(jail)
 	}
 
 	wait.Wait()
@@ -744,6 +762,7 @@ func (a *App) securityBan(w http.ResponseWriter, r *http.Request) {
 			a.securityBack(w, r, err.Error(), true)
 			return
 		}
+		a.recordBlockTime(address)
 
 		a.Log.Warn("banned from the server by hand", "ip", address)
 		a.securityBack(w, r, address+" is banned from the whole server.", false)
@@ -1017,6 +1036,7 @@ func (a *App) securityFirewallBlock(w http.ResponseWriter, r *http.Request) {
 		a.securityBack(w, r, err.Error(), true)
 		return
 	}
+	a.recordBlockTime(address)
 
 	a.Log.Warn("blocked at the firewall", "ip", address)
 	a.securityBack(w, r, address+" is blocked on every port.", false)

@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Pagination from '@/Components/Pagination.vue';
 import { confirmDanger } from '@/dialog';
@@ -32,25 +32,57 @@ const visit = (page = 1) => {
 
 const markAll = () => router.post(route('notifications.read'), { all: '1' }, { preserveScroll: true });
 
-const openOne = (n) => {
-    if (!n.read_at) {
-        router.post(route('notifications.read'), { ids: String(n.id) }, {
-            preserveScroll: true,
-            onSuccess: () => n.link && router.visit(n.link),
-        });
-        return;
-    }
-    if (n.link) router.visit(n.link);
-};
+// Its own page marks it seen, and has what it is about.
+const openOne = (n) => router.visit(route('notifications.show', n.id));
 
 const markOne = (n) => router.post(route('notifications.read'), { ids: String(n.id) }, { preserveScroll: true });
+
+const deleteOne = (n) =>
+    router.post(route('notifications.delete'), { ids: String(n.id) }, { preserveScroll: true });
+
+// ---------------------------------------------------------- choosing several
+
+const selected = ref(new Set());
+
+// A new page of the list is a new set to choose from.
+watch(
+    () => props.notifications,
+    () => (selected.value = new Set()),
+);
+
+const allChosen = computed(
+    () => props.notifications.length > 0 && props.notifications.every((n) => selected.value.has(n.id)),
+);
+
+const toggleChoice = (id) => {
+    const next = new Set(selected.value);
+    next.has(id) ? next.delete(id) : next.add(id);
+    selected.value = next;
+};
+
+const toggleAll = () => {
+    selected.value = allChosen.value ? new Set() : new Set(props.notifications.map((n) => n.id));
+};
+
+const chosenIds = () => [...selected.value].join(',');
+
+const markChosen = () =>
+    router.post(route('notifications.read'), { ids: chosenIds() }, { preserveScroll: true });
+
+const deleteChosen = async () => {
+    const count = selected.value.size;
+    if (!(await confirmDanger(`Delete ${count} notification${count === 1 ? '' : 's'}?`, 'It cannot be undone.', 'Delete')))
+        return;
+
+    router.post(route('notifications.delete'), { ids: chosenIds() }, { preserveScroll: true });
+};
 
 const clear = async (which) => {
     const text =
         which === 'all'
-            ? 'Every notification is deleted, read or not. It cannot be undone.'
-            : 'The notifications you have read are deleted. It cannot be undone.';
-    if (!(await confirmDanger(which === 'all' ? 'Clear every notification?' : 'Clear read notifications?', text, 'Clear')))
+            ? 'Every notification is deleted, seen or not. It cannot be undone.'
+            : 'The notifications you have seen are deleted. It cannot be undone.';
+    if (!(await confirmDanger(which === 'all' ? 'Delete every notification?' : 'Delete the seen notifications?', text, 'Delete')))
         return;
 
     router.post(route('notifications.clear'), { which }, { preserveScroll: true });
@@ -78,7 +110,7 @@ const toggle = (id) => {
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-lg font-semibold text-slate-900">
                     Notifications
-                    <span v-if="unreadTotal" class="ml-1 text-sm font-normal text-slate-500">· {{ unreadTotal }} unread</span>
+                    <span v-if="unreadTotal" class="ml-1 text-sm font-normal text-slate-500">· {{ unreadTotal }} not seen yet</span>
                 </h2>
                 <div class="flex flex-wrap gap-2">
                     <button
@@ -87,21 +119,21 @@ const toggle = (id) => {
                         class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                         @click="markAll"
                     >
-                        Mark all as read
+                        Mark all as seen
                     </button>
                     <button
                         type="button"
                         class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
                         @click="clear('read')"
                     >
-                        Clear read
+                        Delete seen
                     </button>
                     <button
                         type="button"
                         class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-rose-600 ring-1 ring-slate-900/10 transition hover:bg-rose-50"
                         @click="clear('all')"
                     >
-                        Clear all
+                        Delete all
                     </button>
                 </div>
             </div>
@@ -113,7 +145,7 @@ const toggle = (id) => {
                     <span class="text-xs font-medium text-slate-700">Show</span>
                     <select v-model="filter" class="mt-1 block rounded-lg border-slate-300 text-sm shadow-sm" @change="visit()">
                         <option value="all">All notifications</option>
-                        <option value="unread">Unread only</option>
+                        <option value="unread">Not seen yet</option>
                     </select>
                 </label>
                 <label class="block text-sm">
@@ -136,6 +168,32 @@ const toggle = (id) => {
             </div>
 
             <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+                <!-- Choosing several: the page's own, then seen or deleted at once. -->
+                <div
+                    v-if="notifications.length"
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50 px-5 py-2.5 text-sm"
+                >
+                    <label class="flex items-center gap-2 text-slate-600">
+                        <input
+                            type="checkbox"
+                            class="rounded border-slate-300 text-brand-600"
+                            :checked="allChosen"
+                            @change="toggleAll"
+                        />
+                        Select all on this page
+                    </label>
+                    <template v-if="selected.size">
+                        <span class="text-slate-400">·</span>
+                        <span class="text-slate-600">{{ selected.size }} selected</span>
+                        <button type="button" class="font-medium text-brand-600 hover:underline" @click="markChosen">
+                            Mark as seen
+                        </button>
+                        <button type="button" class="font-medium text-rose-600 hover:underline" @click="deleteChosen">
+                            Delete
+                        </button>
+                    </template>
+                </div>
+
                 <p v-if="!notifications.length" class="px-5 py-12 text-center text-sm text-slate-500">
                     {{ filter === 'unread' ? 'Nothing unread.' : 'Nothing yet. Attacks, new sign-ins, server problems and failed tasks show up here.' }}
                 </p>
@@ -147,10 +205,22 @@ const toggle = (id) => {
                         class="flex gap-4 px-5 py-4"
                         :class="n.read_at ? '' : 'bg-brand-50/40'"
                     >
+                        <input
+                            type="checkbox"
+                            class="mt-1 shrink-0 rounded border-slate-300 text-brand-600"
+                            :checked="selected.has(n.id)"
+                            :aria-label="`Select: ${n.title}`"
+                            @change="toggleChoice(n.id)"
+                        />
                         <span class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" :class="LEVEL[n.level]?.dot ?? LEVEL.info.dot" />
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
-                                <p class="text-sm text-slate-900" :class="n.read_at ? '' : 'font-semibold'">{{ n.title }}</p>
+                                <Link
+                                    :href="route('notifications.show', n.id)"
+                                    class="text-sm text-slate-900 hover:text-brand-700 hover:underline"
+                                    :class="n.read_at ? '' : 'font-semibold'"
+                                    >{{ n.title }}</Link
+                                >
                                 <span class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase" :class="LEVEL[n.level]?.badge ?? LEVEL.info.badge">
                                     {{ LEVEL[n.level]?.label ?? n.level }}
                                 </span>
@@ -170,11 +240,14 @@ const toggle = (id) => {
                                 >
                                     {{ expanded.has(n.id) ? 'Less' : 'More' }}
                                 </button>
-                                <button v-if="n.link" type="button" class="font-medium text-brand-600 hover:underline" @click="openOne(n)">
-                                    Open
+                                <button type="button" class="font-medium text-brand-600 hover:underline" @click="openOne(n)">
+                                    Details
                                 </button>
                                 <button v-if="!n.read_at" type="button" class="font-medium text-slate-500 hover:underline" @click="markOne(n)">
-                                    Mark as read
+                                    Mark as seen
+                                </button>
+                                <button type="button" class="font-medium text-rose-600 hover:underline" @click="deleteOne(n)">
+                                    Delete
                                 </button>
                             </div>
                         </div>

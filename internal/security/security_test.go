@@ -188,3 +188,23 @@ func TestAptPeriodic(t *testing.T) {
 		t.Fatal("expected it to be off")
 	}
 }
+
+func TestParseBanTimes(t *testing.T) {
+	output := "203.0.113.9 \t2026-11-04 10:00:00 + 86400 = 2026-11-05 10:00:00\n" +
+		"198.51.100.7 \t2026-11-04 11:30:00 + -1 = 9999-12-31 23:59:59\n" +
+		"garbage line\n"
+
+	times := parseBanTimes(output, time.UTC)
+
+	if len(times) != 2 {
+		t.Fatalf("times = %+v", times)
+	}
+
+	at := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
+	if got := times["203.0.113.9"]; got.At != at || got.Until != at+86400 {
+		t.Errorf("a day's ban: %+v", got)
+	}
+	if got := times["198.51.100.7"]; got.Until != 0 {
+		t.Errorf("a permanent ban has no end: %+v", got)
+	}
+}

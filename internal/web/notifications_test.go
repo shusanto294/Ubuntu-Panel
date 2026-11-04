@@ -59,4 +59,16 @@ func TestAlertsBecomeNotificationsAndAQueuedEmail(t *testing.T) {
 	if unread := app.Store.UnreadNotifications(ctx); unread != 0 {
 		t.Fatalf("unread after reading all = %d", unread)
 	}
+
+	list, _, _ = app.Store.Notifications(ctx, false, "", 10, 0)
+	if removed := app.Store.DeleteNotifications(ctx, []int64{list[0].ID, list[1].ID}); removed != 2 {
+		t.Fatalf("deleted %d", removed)
+	}
+	if _, total, _ := app.Store.Notifications(ctx, false, "", 10, 0); total != 2 {
+		t.Fatalf("left %d", total)
+	}
+
+	if ids := notificationIDs("3, x, 7,,-1"); len(ids) != 2 || ids[0] != 3 || ids[1] != 7 {
+		t.Fatalf("ids = %v", ids)
+	}
 }

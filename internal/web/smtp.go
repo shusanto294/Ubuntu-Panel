@@ -308,7 +308,7 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 				"Account: %s\nAddress: %s\nBrowser: %s\nTime: %s\n\n"+
 				"This address had not signed in before. If it was not you, change your password "+
 				"and sign the other browsers out on the Security page.",
-				attempt.IP, attempt.Email, attempt.IP, attempt.UserAgent, when)))
+				attempt.IP, attempt.Email, attempt.IP, attempt.UserAgent, when)).with("ips", []string{attempt.IP}))
 		}
 
 		if !attempt.Success && attempt.Reason != store.LoginLocked && !lockedSeen[attempt.IP] &&
@@ -321,7 +321,7 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 				alerts = append(alerts, newAlert("panel_lockout", levelWarning, "/security?tab=logins", fmt.Sprintf("%s was locked out of the panel\n\n"+
 					"%d failed sign-ins in %d minutes, the last for %q at %s. It cannot try again "+
 					"for %d minutes.", attempt.IP, limit, int(window.Minutes()), attempt.Email, when,
-					int(window.Minutes()))))
+					int(window.Minutes()))).with("ips", []string{attempt.IP}))
 			}
 		}
 	}
@@ -352,7 +352,7 @@ func (a *App) sshAlerts() []alert {
 				"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
 				"If this was not you, ban the address on the Security page and change the "+
 				"account's password or keys.", event.User, event.IP, event.User, event.IP,
-				event.Method, event.Time.Format(time.RFC1123))))
+				event.Method, event.Time.Format(time.RFC1123))).with("ips", []string{event.IP}))
 		}
 	}
 
@@ -396,7 +396,7 @@ func (a *App) sshAlerts() []alert {
 				"Each failed to log in too many times. They are refused on the SSH port; "+
 				"unban one from the Security page.", len(fresh),
 				map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1],
-				strings.Join(shown, "\n"))))
+				strings.Join(shown, "\n"))).with("ips", shown))
 		}
 	}
 

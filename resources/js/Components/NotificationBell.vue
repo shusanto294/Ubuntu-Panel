@@ -71,8 +71,9 @@ const markRead = async (ids) => {
 
 const openOne = async (notification) => {
     open.value = false;
-    if (!notification.read_at) await markRead([notification.id]);
-    if (notification.link) router.visit(notification.link);
+    // Its own page marks it seen, and has what it is about.
+    router.visit(route('notifications.show', notification.id));
+    if (!notification.read_at) refresh();
 };
 
 const DOT = {
@@ -117,7 +118,7 @@ const DOT = {
                     class="text-xs font-medium text-brand-600 hover:underline"
                     @click="markRead(null)"
                 >
-                    Mark all as read
+                    Mark all as seen
                 </button>
             </div>
 

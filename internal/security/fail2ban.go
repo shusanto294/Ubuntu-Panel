@@ -288,3 +288,55 @@ func lastLines(text string, count int) string {
 
 	return strings.Join(lines, " ")
 }
+
+// BanTime is when fail2ban banned an address and when the ban ends; Until is
+// zero for a permanent one.
+type BanTime struct {
+	At    int64 `json:"at"`
+	Until int64 `json:"until"`
+}
+
+var banTimeLine = regexp.MustCompile(`^(\S+)\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*\+\s*(-?\d+)`)
+
+// BanTimes asks fail2ban when each address in a jail was banned. A fail2ban
+// too old to say (before 0.11) gives an empty map, and the page says nothing
+// rather than something wrong.
+func BanTimes(jail string) map[string]BanTime {
+	times := map[string]BanTime{}
+
+	if !proc.Which("fail2ban-client") {
+		return times
+	}
+
+	result := proc.Run("sudo fail2ban-client get "+jail+" banip --with-time 2>/dev/null", 30*time.Second)
+	if !result.OK() {
+		return times
+	}
+
+	return parseBanTimes(result.Output, time.Local)
+}
+
+func parseBanTimes(output string, loc *time.Location) map[string]BanTime {
+	times := map[string]BanTime{}
+
+	for _, line := range strings.Split(output, "\n") {
+		m := banTimeLine.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil || !ValidIP(m[1]) {
+			continue
+		}
+
+		at, err := time.ParseInLocation("2006-01-02 15:04:05", m[2], loc)
+		if err != nil {
+			continue
+		}
+
+		ban := BanTime{At: at.Unix()}
+		if seconds, err := strconv.ParseInt(m[3], 10, 64); err == nil && seconds > 0 {
+			ban.Until = at.Unix() + seconds
+		}
+
+		times[m[1]] = ban
+	}
+
+	return times
+}

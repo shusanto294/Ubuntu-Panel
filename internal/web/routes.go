@@ -51,6 +51,8 @@ func (a *App) routes() *router {
 	rt.get("/notifications/summary", "notifications.summary", authenticated, a.notificationsJSON)
 	rt.post("/notifications/read", "notifications.read", authenticated, a.notificationsRead)
 	rt.post("/notifications/clear", "notifications.clear", authenticated, a.notificationsClear)
+	rt.post("/notifications/delete", "notifications.delete", authenticated, a.notificationsDelete)
+	rt.get("/notifications/{notification}", "notifications.show", authenticated, a.notificationShow)
 	rt.get("/system/metrics", "system.metrics", authenticated, a.metricsEndpoint)
 	rt.get("/system/metrics/history", "system.metrics.history", authenticated, a.metricHistory)
 	rt.get("/system/credentials", "system.credentials", authenticated, a.credentials)
@@ -86,6 +88,7 @@ func (a *App) routes() *router {
 	// rather than carrying a console each.
 	rt.get("/logs", "logs.index", authenticated, a.logsIndex)
 	rt.get("/logs/stats/{section}", "logs.stats", authenticated, a.logsStatsPage)
+	rt.get("/logs/ip/{ip}", "logs.ip", authenticated, a.logsIP)
 	rt.get("/logs/{task}", "logs.show", authenticated, a.logsShow)
 
 	rt.get("/tasks/latest", "tasks.latest", authenticated, a.tasksLatest)

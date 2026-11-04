@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -15,6 +16,39 @@ type Notification struct {
 	Body      string `json:"body"`
 	Link      string `json:"link"`
 	ReadAt    *int64 `json:"read_at"`
+
+	// Data is what the notification is about, for its page: "ips", "task",
+	// "events_after" and "events_until".
+	Data map[string]any `json:"data"`
+}
+
+const notificationColumns = `id, created_at, kind, level, title, body, link, read_at, data`
+
+func scanNotification(row interface{ Scan(...any) error }) (Notification, error) {
+	var (
+		n    Notification
+		data string
+	)
+
+	if err := row.Scan(&n.ID, &n.CreatedAt, &n.Kind, &n.Level, &n.Title, &n.Body, &n.Link, &n.ReadAt, &data); err != nil {
+		return n, err
+	}
+
+	n.Data = map[string]any{}
+	json.Unmarshal([]byte(data), &n.Data)
+
+	return n, nil
+}
+
+// FindNotification is one, by id.
+func (s *Store) FindNotification(ctx context.Context, id int64) (*Notification, error) {
+	n, err := scanNotification(s.db.QueryRowContext(ctxOrBackground(ctx),
+		`SELECT `+notificationColumns+` FROM notifications WHERE id = ?`, id))
+	if err != nil {
+		return nil, notFound(err)
+	}
+
+	return &n, nil
 }
 
 // AddNotification keeps one and returns its id.
@@ -23,9 +57,16 @@ func (s *Store) AddNotification(ctx context.Context, n Notification) (int64, err
 		n.CreatedAt = time.Now().Unix()
 	}
 
+	data := "{}"
+	if len(n.Data) > 0 {
+		if encoded, err := json.Marshal(n.Data); err == nil {
+			data = string(encoded)
+		}
+	}
+
 	result, err := s.db.ExecContext(ctxOrBackground(ctx),
-		`INSERT INTO notifications (created_at, kind, level, title, body, link) VALUES (?, ?, ?, ?, ?, ?)`,
-		n.CreatedAt, n.Kind, n.Level, n.Title, n.Body, n.Link)
+		`INSERT INTO notifications (created_at, kind, level, title, body, link, data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		n.CreatedAt, n.Kind, n.Level, n.Title, n.Body, n.Link, data)
 	if err != nil {
 		return 0, err
 	}
@@ -56,7 +97,7 @@ func (s *Store) Notifications(ctx context.Context, unreadOnly bool, level string
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, created_at, kind, level, title, body, link, read_at
+		`SELECT `+notificationColumns+`
 		   FROM notifications WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
@@ -67,8 +108,8 @@ func (s *Store) Notifications(ctx context.Context, unreadOnly bool, level string
 	list := []Notification{}
 
 	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.CreatedAt, &n.Kind, &n.Level, &n.Title, &n.Body, &n.Link, &n.ReadAt); err != nil {
+		n, err := scanNotification(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		list = append(list, n)
@@ -111,6 +152,28 @@ func (s *Store) ClearNotifications(ctx context.Context, readOnly bool) int64 {
 	}
 
 	result, err := s.db.ExecContext(ctxOrBackground(ctx), query)
+	if err != nil {
+		return 0
+	}
+
+	count, _ := result.RowsAffected()
+
+	return count
+}
+
+// DeleteNotifications deletes the ids given, and says how many went.
+func (s *Store) DeleteNotifications(ctx context.Context, ids []int64) int64 {
+	if len(ids) == 0 {
+		return 0
+	}
+
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	result, err := s.db.ExecContext(ctxOrBackground(ctx),
+		`DELETE FROM notifications WHERE id IN (`+placeholders(len(ids))+`)`, args...)
 	if err != nil {
 		return 0
 	}

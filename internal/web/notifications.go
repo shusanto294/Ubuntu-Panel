@@ -41,10 +41,26 @@ type alert struct {
 	Level string
 	Link  string
 	Text  string
+
+	// Data is what it is about — the addresses, the task, the log lines —
+	// for the notification's own page.
+	Data map[string]any
 }
 
 func newAlert(kind, level, link, text string) alert {
 	return alert{Kind: kind, Level: level, Link: link, Text: text}
+}
+
+// with is the alert carrying one more thing it is about, for its page.
+func (al alert) with(key string, value any) alert {
+	data := map[string]any{}
+	for k, v := range al.Data {
+		data[k] = v
+	}
+	data[key] = value
+	al.Data = data
+
+	return al
 }
 
 func (al alert) title() string {
@@ -66,7 +82,7 @@ func (a *App) deliver(ctx context.Context, alerts []alert) {
 
 	for _, al := range alerts {
 		if _, err := a.Store.AddNotification(ctx, store.Notification{
-			Kind: al.Kind, Level: al.Level, Title: al.title(), Body: al.body(), Link: al.Link,
+			Kind: al.Kind, Level: al.Level, Title: al.title(), Body: al.body(), Link: al.Link, Data: al.Data,
 		}); err != nil {
 			a.Log.Warn("could not keep a notification", "kind", al.Kind, "error", err)
 		}
@@ -197,7 +213,7 @@ func (a *App) taskAlerts(ctx context.Context) []alert {
 		}
 
 		alerts = append(alerts, newAlert("task_failed", levelWarning, "/logs/"+strconv.FormatInt(task.ID, 10),
-			fmt.Sprintf("Failed: %s\n\n%s\n\nThe whole output is on the task's page in Logs.", task.Action, message)))
+			fmt.Sprintf("Failed: %s\n\n%s\n\nThe whole output is on the task's page in Logs.", task.Action, message)).with("task", task.ID))
 	}
 
 	return alerts
@@ -272,12 +288,7 @@ func (a *App) notificationsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids := []int64{}
-	for _, part := range strings.Split(input["ids"], ",") {
-		if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && id > 0 {
-			ids = append(ids, id)
-		}
-	}
+	ids := notificationIDs(input["ids"])
 
 	if len(ids) == 0 && input["all"] != "1" {
 		a.failBack(w, r, "Choose which notifications to mark as read.")
@@ -292,6 +303,42 @@ func (a *App) notificationsRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inertia.Back(w, r, "/notifications")
+}
+
+// notificationIDs reads a comma-separated list of ids.
+func notificationIDs(text string) []int64 {
+	ids := []int64{}
+	for _, part := range strings.Split(text, ",") {
+		if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+
+	return ids
+}
+
+// notificationsDelete deletes the ones chosen.
+func (a *App) notificationsDelete(w http.ResponseWriter, r *http.Request) {
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	ids := notificationIDs(input["ids"])
+	if len(ids) == 0 {
+		a.failBack(w, r, "Choose which notifications to delete.")
+		return
+	}
+
+	removed := a.Store.DeleteNotifications(r.Context(), ids)
+
+	if removed == 1 {
+		a.okBack(w, r, "Deleted the notification.")
+		return
+	}
+
+	a.okBack(w, r, fmt.Sprintf("Deleted %d notifications.", removed))
 }
 
 // notificationsClear deletes the read ones, or every one.

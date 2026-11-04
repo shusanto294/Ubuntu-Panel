@@ -112,7 +112,7 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 
 	// The web bans list moves forward whether or not anything is sent, like
 	// the SSH one, so switching the alert on is about bans from then on.
-	webBans := a.webBanAlert(a.healthAlert(alertWebBanSetting))
+	webBans, webBanned := a.webBanAlert(a.healthAlert(alertWebBanSetting))
 
 	if hot >= cpuAlertMinutes && a.healthAlert(alertCPUSetting) && a.cooled("cpu", time.Hour) {
 		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/logs", a.cpuAlert(ctx, hot)))
@@ -184,18 +184,19 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 		health.Unlock()
 
 		if due {
-			if text := a.attackAlert(ctx); text != "" {
-				alerts = append(alerts, newAlert("attacks", levelWarning, "/logs", text))
+			if text, ips := a.attackAlert(ctx); text != "" {
+				alerts = append(alerts, newAlert("attacks", levelWarning, "/logs", text).with("ips", ips))
 			}
 		}
 	}
 
-	if text := a.criticalAlert(ctx); text != "" {
-		alerts = append(alerts, newAlert("critical", levelCritical, "/logs?view=server&level=error", text))
+	if text, after, until := a.criticalAlert(ctx); text != "" {
+		alerts = append(alerts, newAlert("critical", levelCritical, "/logs?view=server&level=error", text).
+			with("events_after", after).with("events_until", until))
 	}
 
-	for _, text := range webBans {
-		alerts = append(alerts, newAlert("web_ban", levelInfo, "/security?tab=bans", text))
+	if webBans != "" {
+		alerts = append(alerts, newAlert("web_ban", levelInfo, "/security?tab=bans", webBans).with("ips", webBanned))
 	}
 
 	return alerts
@@ -204,7 +205,7 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 // attackAlert is the addresses the last hour of traffic says are attacking —
 // the ones the Logs page's "What stands out" names — that have not been
 // emailed about in the last day. Trusted addresses are never in it.
-func (a *App) attackAlert(ctx context.Context) string {
+func (a *App) attackAlert(ctx context.Context) (string, []string) {
 	report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
 
 	var seen map[string]int64
@@ -221,6 +222,7 @@ func (a *App) attackAlert(ctx context.Context) string {
 	}
 
 	fresh := []string{}
+	addresses := []string{}
 	for _, ip := range report.TopIPs {
 		if !ip.Danger || ip.Trusted != "" {
 			continue
@@ -236,13 +238,14 @@ func (a *App) attackAlert(ctx context.Context) string {
 			site = " on " + ip.Sites[0].Name
 		}
 		fresh = append(fresh, fmt.Sprintf("  %s — %s%s (%d requests in the last hour)", ip.IP, ip.Verdict, site, ip.Requests))
+		addresses = append(addresses, ip.IP)
 	}
 
 	encoded, _ := json.Marshal(seen)
 	a.Store.SetSetting(alertAttacksSeenSetting, string(encoded))
 
 	if len(fresh) == 0 {
-		return ""
+		return "", nil
 	}
 
 	if len(fresh) > 30 {
@@ -267,37 +270,41 @@ func (a *App) attackAlert(ctx context.Context) string {
 			" in Security → Protection."
 	}
 
+	if len(addresses) > 30 {
+		addresses = addresses[:30]
+	}
+
 	return fmt.Sprintf("%d %s attacking the sites\n\n%s\n\n%s",
 		len(fresh), map[bool]string{true: "address is", false: "addresses are"}[len(fresh) == 1],
-		strings.Join(fresh, "\n"), next)
+		strings.Join(fresh, "\n"), next), addresses
 }
 
 // criticalAlert is the critical lines the server's logs gained since the last
 // look — an out-of-memory kill, a crash, a fatal error — at most one email
 // every half hour, each carrying everything since the one before.
-func (a *App) criticalAlert(ctx context.Context) string {
+func (a *App) criticalAlert(ctx context.Context) (string, int64, int64) {
 	cursor, _ := strconv.ParseInt(a.Store.Setting(alertCriticalCursor, ""), 10, 64)
 	latest := a.Store.LatestServerEventID(ctx)
 
 	// From now on, the first time: not a month of the past.
 	if cursor == 0 || !a.healthAlert(alertCriticalSetting) {
 		a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
-		return ""
+		return "", 0, 0
 	}
 
 	if latest <= cursor {
-		return ""
+		return "", 0, 0
 	}
 
 	events, total := a.Store.ServerEventsAfter(ctx, cursor, []string{"critical"}, 30)
 	if total == 0 {
 		a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
-		return ""
+		return "", 0, 0
 	}
 
 	// Held, not lost, while the cooldown runs: the next email has them.
 	if !a.cooled("critical", 30*time.Minute) {
-		return ""
+		return "", 0, 0
 	}
 
 	a.Store.SetSetting(alertCriticalCursor, strconv.FormatInt(latest, 10))
@@ -326,7 +333,7 @@ func (a *App) criticalAlert(ctx context.Context) string {
 
 	return fmt.Sprintf("%d critical %s in the server's logs\n\n%s\n\n"+
 		"Logs → Server logs on the panel lists them, with errors only under Level.",
-		total, map[bool]string{true: "line", false: "lines"}[total == 1], strings.Join(lines, "\n"))
+		total, map[bool]string{true: "line", false: "lines"}[total == 1], strings.Join(lines, "\n")), cursor, latest
 }
 
 // cpuAlert says what the CPU is busy with: the busiest programs now, and
@@ -416,14 +423,14 @@ func (a *App) expiringCertificates(ctx context.Context) []string {
 }
 
 // webBanAlert is the addresses the optional jails banned since the last look.
-func (a *App) webBanAlert(want bool) []string {
+func (a *App) webBanAlert(want bool) (string, []string) {
 	p := a.protection()
 	if !p.AnyJail() {
-		return nil
+		return "", nil
 	}
 
 	if !want && a.Store.Setting(alertWebBannedSetting, "") == "" {
-		return nil
+		return "", nil
 	}
 
 	current := []string{}
@@ -447,9 +454,11 @@ func (a *App) webBanAlert(want bool) []string {
 	}
 
 	fresh := []string{}
+	freshIPs := []string{}
 	for _, ip := range current {
 		if !known[ip] {
 			fresh = append(fresh, ip+"  ("+byAddress[ip]+")")
+			freshIPs = append(freshIPs, ip)
 		}
 	}
 
@@ -462,7 +471,7 @@ func (a *App) webBanAlert(want bool) []string {
 	a.Store.SetSetting(alertWebBannedSetting, string(encoded))
 
 	if !want || len(previous) == 0 || len(fresh) == 0 {
-		return nil
+		return "", nil
 	}
 
 	sort.Strings(fresh)
@@ -471,7 +480,11 @@ func (a *App) webBanAlert(want bool) []string {
 		shown = shown[:50]
 	}
 
-	return []string{fmt.Sprintf("%d %s banned by website or mail protection\n\n%s\n\n"+
+	if len(freshIPs) > 50 {
+		freshIPs = freshIPs[:50]
+	}
+
+	return fmt.Sprintf("%d %s banned by website or mail protection\n\n%s\n\n"+
 		"Unban one from the Banned IPs tab on the Security page.", len(fresh),
-		map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1], strings.Join(shown, "\n"))}
+		map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1], strings.Join(shown, "\n")), freshIPs
 }

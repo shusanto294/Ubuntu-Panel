@@ -4,8 +4,8 @@ import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
 import { confirmAction, confirmDanger } from '@/dialog';
-import { card, field, smallButton, when } from './ui';
-import { router, useForm } from '@inertiajs/vue3';
+import { ago, card, field, smallButton, when } from './ui';
+import { Link, router, useForm } from '@inertiajs/vue3';
 
 /*
  * Every address this server refuses, whatever refuses it. The four sources
@@ -85,6 +85,9 @@ const ban = async () => {
 
     banForm.post(route('security.bans.store'), { preserveScroll: true, onSuccess: () => banForm.reset() });
 };
+
+// The most recent ban of an address, of all the things refusing it.
+const bannedAt = (row) => Math.max(0, ...row.sources.map((s) => s.at ?? 0)) || null;
 
 const release = async (row) => {
     const names = row.sources.map((s) => sources[s.kind].label.toLowerCase()).join(', ');
@@ -184,8 +187,13 @@ const release = async (row) => {
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="row in visible" :key="row.ip">
                             <td class="whitespace-nowrap px-6 py-2">
-                                <IpAddress :ip="row.ip" class="text-slate-700" />
+                                <Link :href="route('logs.ip', row.ip)" class="hover:underline" title="What this address did">
+                                    <IpAddress :ip="row.ip" class="text-slate-700" />
+                                </Link>
                                 <span v-if="row.ip === myIp" class="ml-1 text-xs font-medium text-amber-700">you</span>
+                                <span v-if="bannedAt(row)" class="block text-xs text-slate-400" :title="when(bannedAt(row))">
+                                    banned {{ ago(bannedAt(row)) }}
+                                </span>
                             </td>
                             <td class="px-2 py-2">
                                 <span class="flex flex-wrap gap-1">
@@ -204,8 +212,13 @@ const release = async (row) => {
                             </td>
                             <td class="hidden px-2 py-2 text-xs text-slate-500 md:table-cell">
                                 <template v-for="s in row.sources" :key="'d' + s.kind + (s.rule ?? '')">
-                                    <span v-if="s.kind === 'panel'" class="block">until {{ when(s.until) }}</span>
-                                    <span v-else-if="s.kind === 'firewall'" class="block">
+                                    <span v-if="s.at || s.until" class="block">
+                                        <span class="font-medium text-slate-700">{{ sources[s.kind].label }}:</span>
+                                        <template v-if="s.at"> banned {{ ago(s.at) }} ({{ when(s.at) }})</template>
+                                        <template v-if="s.until"> · until {{ when(s.until) }}</template>
+                                        <template v-else-if="s.at && s.kind !== 'panel'"> · permanently</template>
+                                    </span>
+                                    <span v-if="s.kind === 'firewall'" class="block">
                                         rule #{{ s.rule }}<template v-if="s.comment"> · {{ s.comment }}</template>
                                     </span>
                                 </template>

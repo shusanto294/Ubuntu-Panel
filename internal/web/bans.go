@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -36,7 +38,10 @@ type banSource struct {
 	// Comment is the ufw rule's note, for a firewall block.
 	Comment string `json:"comment,omitempty"`
 
-	// Until is when a panel lockout ends, in Unix seconds.
+	// At is when the ban began and Until when it ends, in Unix seconds; zero
+	// where that is not known — a firewall rule added before the panel kept
+	// the time, or a permanent ban's end.
+	At    int64 `json:"at,omitempty"`
 	Until int64 `json:"until,omitempty"`
 }
 
@@ -161,10 +166,70 @@ func (a *App) bans(ctx context.Context, snap *securitySnapshot) map[string]any {
 	list := mergeBans(snap.Jail.Banned, protect, blocks, locked)
 	counts.Total = len(list)
 
+	a.addBanTimes(list, snap, int64(window.Seconds()))
+
 	return map[string]any{
 		"list":            list,
 		"counts":          counts,
 		"firewall_active": snap.Firewall.Active,
+	}
+}
+
+// blockTimesSetting is when the panel added each firewall block, which ufw
+// does not keep.
+const blockTimesSetting = "security_block_times"
+
+func (a *App) recordBlockTime(address string) {
+	times := map[string]int64{}
+	json.Unmarshal([]byte(a.Store.Setting(blockTimesSetting, "{}")), &times)
+
+	times[strings.TrimSpace(address)] = time.Now().Unix()
+
+	// Bounded: a list that only grows is a setting that only grows.
+	if len(times) > 5000 {
+		oldest, at := "", int64(1<<62)
+		for ip, t := range times {
+			if t < at {
+				oldest, at = ip, t
+			}
+		}
+		delete(times, oldest)
+	}
+
+	encoded, _ := json.Marshal(times)
+	a.Store.SetSetting(blockTimesSetting, string(encoded))
+}
+
+// addBanTimes fills in when each ban began and ends, from fail2ban, the
+// panel's record of its firewall blocks, and its own lockouts.
+func (a *App) addBanTimes(list []bannedAddress, snap *securitySnapshot, lockout int64) {
+	blocks := map[string]int64{}
+	json.Unmarshal([]byte(a.Store.Setting(blockTimesSetting, "{}")), &blocks)
+
+	jailOf := map[string][]string{banSSH: {security.Jail}}
+	for jail, kind := range protectJailKinds {
+		jailOf[kind] = append(jailOf[kind], jail)
+	}
+
+	for i := range list {
+		for j := range list[i].Sources {
+			source := &list[i].Sources[j]
+
+			switch source.Kind {
+			case banFirewall:
+				source.At = blocks[list[i].IP]
+			case banPanel:
+				if source.Until > 0 {
+					source.At = source.Until - lockout
+				}
+			default:
+				for _, jail := range jailOf[source.Kind] {
+					if ban, ok := snap.BanTimes[jail][list[i].IP]; ok && ban.At > source.At {
+						source.At, source.Until = ban.At, ban.Until
+					}
+				}
+			}
+		}
 	}
 }
 

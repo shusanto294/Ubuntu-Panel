@@ -182,3 +182,43 @@ func TestTrustedAddressesAreNeverFlagged(t *testing.T) {
 		t.Fatalf("threats = %+v", report.Threats)
 	}
 }
+
+func TestGoodBotsAreNotFlaggedForCrawling(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	a := New(now.Add(-time.Hour), now, 30)
+
+	google := "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+	gpt := "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"
+
+	// Busy, and mostly following links to pages that are gone.
+	for i := 0; i < 400; i++ {
+		at := now.Add(-time.Duration(i%60) * time.Second)
+		a.Line("blog.example", line("66.249.66.1", at, "GET", fmt.Sprintf("/old-post-%d/", i), 404, google))
+		a.Line("blog.example", line("20.171.207.1", at, "GET", fmt.Sprintf("/page-%d/", i), 200, gpt))
+	}
+
+	// Calling itself Googlebot, and asking for secrets: not Google.
+	for i := 0; i < 10; i++ {
+		a.Line("blog.example", line("203.0.113.66", now.Add(-time.Duration(i)*time.Second), "GET", "/.env", 404, google))
+	}
+
+	for _, ip := range a.Report().TopIPs {
+		switch ip.IP {
+		case "66.249.66.1", "20.171.207.1":
+			if ip.Danger || ip.GoodBot == nil {
+				t.Errorf("a useful bot was flagged: %+v", ip)
+			}
+		case "203.0.113.66":
+			if !ip.Danger {
+				t.Errorf("a scanner using Googlebot's name was not flagged: %+v", ip)
+			}
+		}
+	}
+
+	if bot := FindGoodBot("Mozilla/5.0 (Macintosh) AppleWebKit (KHTML, like Gecko) Applebot-Extended/0.1"); bot == nil || bot.Kind != "ai" {
+		t.Errorf("the most specific match should win: %+v", bot)
+	}
+	if FindGoodBot("Mozilla/5.0 (Windows NT 10.0) Chrome/130") != nil || FindGoodBot("python-requests/2.31") != nil {
+		t.Error("a browser or a script is not a useful bot")
+	}
+}

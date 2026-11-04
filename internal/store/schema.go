@@ -473,6 +473,10 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN backup_destination TEXT`,
 	`ALTER TABLE site_backups ADD COLUMN destination TEXT`,
 	`ALTER TABLE site_backups ADD COLUMN remote_key TEXT`,
+
+	// What a notification is about, for its own page: the addresses an attack
+	// came from, the task that failed, the log lines that were critical. JSON.
+	`ALTER TABLE notifications ADD COLUMN data TEXT NOT NULL DEFAULT '{}'`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

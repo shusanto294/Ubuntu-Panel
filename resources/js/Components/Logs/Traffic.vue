@@ -4,7 +4,7 @@ import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
 import { confirmDanger } from '@/dialog';
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 
 /*
  * Every site's access log, added up over a window, beside what the processor
@@ -559,7 +559,11 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                         >trusted · {{ ip.trusted }}</span
                                     >
                                     <p class="max-w-[16rem] truncate text-xs text-slate-400" :title="ip.agent">
-                                        {{ ip.bot ? '🤖 ' : '' }}{{ ip.agent || 'no user agent' }}
+                                        <span
+                                            v-if="ip.good_bot"
+                                            class="mr-1 rounded bg-sky-50 px-1 py-0.5 font-sans text-[10px] font-medium text-sky-700"
+                                            >{{ ip.good_bot.name }}</span
+                                        >{{ ip.bot && !ip.good_bot ? '🤖 ' : '' }}{{ ip.agent || 'no user agent' }}
                                     </p>
                                 </td>
                                 <td class="px-5 py-2.5 text-right text-slate-900">{{ number(ip.requests) }}</td>
@@ -588,13 +592,12 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                     <span v-else class="text-slate-400">—</span>
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-2.5 text-right">
-                                    <a
-                                        v-if="ip.sites[0]"
-                                        :href="logHref(ip.sites[0].name, ip.ip)"
+                                    <Link
+                                        :href="route('logs.ip', ip.ip)"
                                         class="mr-3 text-xs font-medium text-brand-600 hover:underline"
                                     >
-                                        Lines
-                                    </a>
+                                        Details
+                                    </Link>
                                     <button
                                         v-if="!ip.trusted && !trustedIps[ip.ip]"
                                         type="button"

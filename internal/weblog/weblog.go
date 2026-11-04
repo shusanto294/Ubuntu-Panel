@@ -538,7 +538,11 @@ type IPStat struct {
 	Threats    map[string]int `json:"threats"`
 	Agent      string         `json:"agent"`
 	Bot        bool           `json:"bot"`
-	Last       int64          `json:"last"`
+
+	// GoodBot is the useful bot the user agent says this is — a search
+	// engine, an AI crawler, a link preview, an uptime monitor — or nil.
+	GoodBot *GoodBot `json:"good_bot,omitempty"`
+	Last    int64    `json:"last"`
 
 	// Verdict is the one-line reading of this address: "" for nothing
 	// remarkable, or why it stands out.
@@ -652,7 +656,7 @@ func (a *Analyzer) Report() Report {
 			IP: address, Requests: ip.requests, Dynamic: ip.dynamic,
 			NotFound: ip.notFound, Errors: ip.errors, PeakMinute: peak(ip.minutes),
 			Sites: top(ip.sites, 3), Paths: top(ip.paths, 5), Threats: ip.threats,
-			Agent: ip.agent, Bot: Bot(ip.agent), Last: ip.last.Unix(),
+			Agent: ip.agent, Bot: Bot(ip.agent), GoodBot: FindGoodBot(ip.agent), Last: ip.last.Unix(),
 		}
 		if address != overflowAddress && !a.Trusted[address] {
 			stat.Verdict, stat.Danger = verdict(stat, minutes)
@@ -727,6 +731,13 @@ func verdict(ip IPStat, minutes int) (string, bool) {
 		return strconv.Itoa(login) + " login form posts — brute force", true
 	case probe >= 5:
 		return strconv.Itoa(probe) + " requests for known-vulnerable files — a scanner", true
+
+	// A useful bot crawls, follows dead links and comes back often: none of
+	// the rules below is held against it. The ones above still are — no
+	// search engine guesses passwords or asks for .env.
+	case ip.GoodBot != nil:
+		return "", false
+
 	case ip.NotFound >= 50 && ip.NotFound*2 >= ip.Requests:
 		return strconv.Itoa(ip.NotFound) + " not-found requests — crawling for files that are not there", true
 	case ip.PeakMinute >= 120 && ip.Dynamic*2 >= ip.Requests:
