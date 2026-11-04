@@ -116,7 +116,7 @@ func (a *App) Start(ctx context.Context) {
 		a.EnsureMailConfigured()
 		a.EnsureNameserverConfigured(ctx)
 		a.EnsurePhpMyAdminReady(nil)
-		a.EnsureMySQLReachable(ctx)
+		a.EnsureMySQLAccess(ctx)
 
 		// After the helpers, because it rewrites vhosts and reloads nginx, and
 		// the configuration those write is what nginx is being asked to take.

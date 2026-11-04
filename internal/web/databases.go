@@ -209,7 +209,7 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 		port = engine.Port
 	}
 
-	body := databaseCredentials(database, port)
+	body := a.databaseCredentials(database, port)
 
 	a.writeJSON(w, http.StatusOK, body)
 }
@@ -217,17 +217,20 @@ func (a *App) databasesCredentials(w http.ResponseWriter, r *http.Request) {
 // databaseCredentials is everything needed to connect to one database, in the
 // shape both the credentials endpoint and the database's own page use.
 //
-// The host is the address an application should actually use, which is not
-// always loopback. MariaDB and MongoDB are both listening on every interface
-// here — the panel opens them so an application on another machine can connect
-// with the credentials it prints — so naming 127.0.0.1 would be printing an
-// address that only works in one of the two places the credentials are for.
-//
-// PostgreSQL keeps loopback, because the panel has not opened it.
-func databaseCredentials(database *store.Database, port int) map[string]any {
+// The host is the address an application should actually use. A MariaDB
+// database reachable from this server only is 127.0.0.1, which is what the
+// sites use; one that allows other addresses is the server's own address, which
+// works from those and from here. MongoDB listens on every interface;
+// PostgreSQL on loopback.
+func (a *App) databaseCredentials(database *store.Database, port int) map[string]any {
 	host := "127.0.0.1"
 
-	if database.Engine == "mysql" || database.Engine == "mongodb" {
+	switch database.Engine {
+	case "mysql":
+		if a.Databases.Access(database.ID).Mode != databases.AccessLocal {
+			host = serverAddress()
+		}
+	case "mongodb":
 		host = serverAddress()
 	}
 
@@ -421,7 +424,10 @@ func (a *App) databasesShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	summary := database.Summary()
-	summary["credentials"] = databaseCredentials(database, port)
+	summary["credentials"] = a.databaseCredentials(database, port)
+	if database.Engine == "mysql" {
+		summary["access"] = a.accessProps(database)
+	}
 
 	users, err := a.Databases.Users(r.Context(), database.ID)
 	if err != nil {
@@ -500,14 +506,9 @@ func (a *App) databasesPassword(w http.ResponseWriter, r *http.Request) {
 	inertia.Back(w, r, "/databases")
 }
 
-// databasesRepair puts a database's account back at every host the panel
-// creates accounts for, with the password the panel holds.
-//
-// For a database made before MariaDB was opened to the network: its account
-// exists for localhost and nowhere else, so the credentials this page prints
-// are correct and the connection from anywhere else is refused — which reads
-// as a password that does not work.
-func (a *App) databasesRepair(w http.ResponseWriter, r *http.Request) {
+// databasesAccess sets who may connect to a MariaDB database: this server
+// only, a list of IPs, networks and domains, or anywhere.
+func (a *App) databasesAccess(w http.ResponseWriter, r *http.Request) {
 	sess := session.FromContext(r.Context())
 	id := routeID(r, "database")
 
@@ -516,16 +517,47 @@ func (a *App) databasesRepair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.Databases.RepairAccount(r.Context(), id); err != nil {
-		a.Log.Error("could not repair the database account", "database", id, "error", err)
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	mode := input["mode"]
+
+	if err := a.Databases.SetAccess(r.Context(), id, mode, input["allow"]); err != nil {
+		a.Log.Warn("could not change who can connect to a database", "database", id, "error", err)
+		sess.Error("allow", err.Error())
 		a.failBack(w, r, err.Error())
 
 		return
 	}
 
-	sess.Flash("success", "The account was rebuilt. It now works from this server and from off it.")
+	a.Log.Info("database access changed", "database", id, "mode", mode, "ip", session.ClientIP(r))
+
+	sess.Flash("success", map[string]string{
+		databases.AccessLocal:    "This database can now be reached from this server only.",
+		databases.AccessList:     "This database can now be reached from this server and the addresses listed.",
+		databases.AccessAnywhere: "This database can now be reached from any address, with its password.",
+	}[mode])
 
 	inertia.Back(w, r, "/databases")
+}
+
+// accessProps is the "Who can connect" card's: the setting, and what an
+// application off the machine needs to know to use it.
+func (a *App) accessProps(database *store.Database) map[string]any {
+	access := a.Databases.Access(database.ID)
+
+	return map[string]any{
+		"mode":      access.Mode,
+		"allow":     strings.Join(access.Allow, "\n"),
+		"addresses": access.Addresses(),
+		"server":    serverAddress(),
+		"port":      3306,
+		"ssh_port":  system.SSHPort(),
+		"firewall":  databases.FirewallActive(),
+	}
 }
 
 // databasesUsers is the one endpoint behind the users table: add, change a

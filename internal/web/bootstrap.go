@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
-	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
@@ -506,54 +505,24 @@ func (a *App) reportApps(ctx context.Context, progress func(string)) {
 	}
 }
 
-// mysqlAccountsOpened records that every MariaDB account the panel created has
-// been rebuilt at every host, so the sweep below runs once.
-const mysqlAccountsOpened = "mysql_accounts_opened"
-
-// EnsureMySQLReachable makes the credentials the panel prints true.
+// EnsureMySQLAccess makes MariaDB, its accounts and the firewall match what
+// each database allows on its page — this server only, unless it was given
+// addresses.
 //
-// The Databases pages now name the server's own address for MariaDB, because
-// the credentials are for applications that connect from off the machine. Two
-// things have to be so for that to work, and on a server set up by an earlier
-// panel neither is: MariaDB listens on loopback only, and every account it
-// created exists for 'localhost' and nowhere else.
-//
-// Printing an address that is refused is worse than printing loopback. So the
-// server is opened and the accounts are rebuilt — once, on the first start
-// after the update, and never again.
-//
-// Rebuilt with the password the panel already holds, so nothing that works
-// today stops working. It restarts MariaDB, which is why it is guarded by a
-// setting rather than run on every start.
-func (a *App) EnsureMySQLReachable(ctx context.Context) {
-	if !a.Store.ServiceInstalled("mysql") || a.Store.SettingBool(mysqlAccountsOpened, false) {
+// Earlier panels opened every database to the whole internet: MariaDB on every
+// interface, 3306 open in the firewall, every account valid from any address.
+// The first start after the update closes all of that; a database used from
+// off the machine is given its addresses again on its page.
+func (a *App) EnsureMySQLAccess(ctx context.Context) {
+	if !a.Store.ServiceInstalled("mysql") {
 		return
 	}
 
-	if err := databases.EnsureMySQLRemote(a.Store, nil); err != nil {
-		a.Log.Warn("could not open MariaDB to the network", "error", err)
-
+	if err := a.Databases.SyncMySQLAccess(ctx, true); err != nil {
+		a.Log.Warn("could not apply the MariaDB access settings", "error", err)
 		return
 	}
 
-	rows, err := a.Store.Databases(ctx)
-	if err != nil {
-		return
-	}
-
-	for _, database := range rows {
-		if database.Engine != "mysql" {
-			continue
-		}
-
-		if err := a.Databases.RepairAccount(ctx, database.ID); err != nil {
-			a.Log.Warn("could not rebuild a MariaDB account",
-				"database", database.Name, "error", err)
-
-			return
-		}
-	}
-
-	a.Store.SetSetting(mysqlAccountsOpened, "1")
-	a.Log.Info("MariaDB now accepts connections from off this machine")
+	a.Store.ForgetSetting("mysql_listens_everywhere")
+	a.Store.ForgetSetting("mysql_accounts_opened")
 }

@@ -192,6 +192,13 @@ func (a *App) checkProtection(ctx context.Context) {
 	// An address that signed in, or one aged out of the thirty days.
 	a.syncTrusted(ctx)
 
+	// A domain allowed to reach a database may have moved.
+	if a.Store.ServiceInstalled("mysql") && a.Databases.HasDomains(ctx) {
+		if err := a.Databases.SyncMySQLAccess(ctx, true); err != nil {
+			a.Log.Warn("could not refresh the MariaDB access settings", "error", err)
+		}
+	}
+
 	p := a.protection()
 
 	if p.WebLogin.Enabled || p.WebScan.Enabled {

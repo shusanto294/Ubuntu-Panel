@@ -341,7 +341,7 @@ var panelGuide = []guideArea{
 				Steps: []string{
 					"A site the panel deploys gets one by itself — check get_site's `database` first.",
 					"Otherwise create_database with a name; the user and password are generated and returned.",
-					"get_database has everything needed to connect, including the host to use from off the machine.",
+					"get_database has everything needed to connect; a MariaDB database is reachable from this server only until set_database_access allows other addresses.",
 				},
 			},
 			{

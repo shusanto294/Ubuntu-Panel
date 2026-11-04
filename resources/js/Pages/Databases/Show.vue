@@ -166,12 +166,88 @@ const removeUser = async (user) => {
     submit('delete', { username: user.name });
 };
 
-const repair = () =>
-    router.post(
-        route('databases.repair', props.database.id),
-        {},
-        { preserveScroll: true },
-    );
+// Who can connect, for MariaDB: this server only, a list of addresses, or
+// anywhere. The accounts and the firewall follow what is saved.
+const access = computed(() => props.database.access ?? null);
+const accessForm = ref({ mode: access.value?.mode ?? 'local', allow: access.value?.allow ?? '' });
+const savingAccess = ref(false);
+
+const ACCESS_CHOICES = [
+    {
+        value: 'local',
+        title: 'Only this server',
+        text: 'Sites and apps on this server connect to 127.0.0.1. Nothing on the internet can reach the database. Recommended for WordPress.',
+    },
+    {
+        value: 'list',
+        title: 'This server and specific addresses',
+        text: 'Also allow the IP addresses, networks or domains you list — your office, or the server your app runs on.',
+    },
+    {
+        value: 'anywhere',
+        title: 'Anywhere',
+        text: 'Any address can connect if it has the password. Use only when the app’s address keeps changing.',
+    },
+];
+
+const saveAccess = async () => {
+    if (
+        accessForm.value.mode === 'anywhere' &&
+        access.value?.mode !== 'anywhere' &&
+        !(await confirmDanger(
+            'Allow connections from anywhere?',
+            'Port 3306 opens to the whole internet for this database, and its password becomes the only thing keeping others out. Listing your app’s address is safer.',
+            'Allow anywhere',
+        ))
+    )
+        return;
+
+    router.post(route('databases.access', props.database.id), accessForm.value, {
+        preserveScroll: true,
+        onStart: () => (savingAccess.value = true),
+        onFinish: () => (savingAccess.value = false),
+        onSuccess: () => {
+            accessForm.value = { mode: access.value?.mode ?? 'local', allow: access.value?.allow ?? '' };
+        },
+    });
+};
+
+const accessChanged = computed(
+    () =>
+        accessForm.value.mode !== (access.value?.mode ?? 'local') ||
+        (accessForm.value.mode === 'list' && accessForm.value.allow.trim() !== (access.value?.allow ?? '').trim()),
+);
+
+const tunnelText = computed(() => {
+    const it = credentials.value;
+    const a = access.value ?? {};
+    return [
+        'Connection type: MySQL / MariaDB over SSH',
+        `SSH host:     ${a.server}`,
+        `SSH port:     ${a.ssh_port}`,
+        'SSH user:     your SSH user (and its password or key)',
+        'MySQL host:   127.0.0.1',
+        `MySQL port:   ${a.port}`,
+        `Username:     ${it.username}`,
+        `Password:     ${it.password}`,
+        `Database:     ${it.database}`,
+    ].join('\n');
+});
+
+const remoteText = computed(() => {
+    const it = credentials.value;
+    const a = access.value ?? {};
+    return [
+        `Host:     ${a.server}`,
+        `Port:     ${a.port}`,
+        `Username: ${it.username}`,
+        `Password: ${it.password}`,
+        `Database: ${it.database}`,
+        '',
+        `Command line:  mysql -h ${a.server} -P ${a.port} -u ${it.username} -p ${it.database}`,
+        `URL:           mysql://${encodeURIComponent(it.username)}:${encodeURIComponent(it.password)}@${a.server}:${a.port}/${it.database}`,
+    ].join('\n');
+});
 
 const destroy = async () => {
     const go = await confirmDanger(
@@ -286,14 +362,16 @@ const destroy = async () => {
                     </div>
                 </div>
 
-                <!--
-                    The address is the server's own, not loopback: both engines
-                    the panel opens are listening on every interface, so these
-                    credentials work from an application on this machine and
-                    from one somewhere else.
-                -->
                 <p class="mt-5 border-t border-slate-200 pt-4 text-xs text-slate-500">
-                    <template v-if="isMySQL || database.engine === 'mongodb'">
+                    <template v-if="isMySQL && access?.mode === 'local'">
+                        These work from sites and apps on this server. To connect
+                        from somewhere else, see Who can connect below.
+                    </template>
+                    <template v-else-if="isMySQL">
+                        These work from this server and from the addresses allowed
+                        under Who can connect below.
+                    </template>
+                    <template v-else-if="database.engine === 'mongodb'">
                         These work from an application on this server and from
                         one anywhere else — the engine listens on every
                         interface, so a password is the only thing keeping other
@@ -397,34 +475,143 @@ const destroy = async () => {
             </div>
         </div>
 
-        <!--
-            For a database created before the panel opened MariaDB to the
-            network: its account exists for localhost and nowhere else, so the
-            details above are correct and a connection from another machine is
-            refused with an error about the password.
-        -->
-        <div
-            v-if="isMySQL"
-            class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
-        >
-            <div class="flex flex-wrap items-center justify-between gap-4">
+        <!-- Who can connect, and how an app off this server does. -->
+        <div v-if="isMySQL && access" class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <h3 class="font-semibold text-slate-800">
-                        Cannot connect from another machine?
-                    </h3>
+                    <h3 class="font-semibold text-slate-800">Who can connect</h3>
                     <p class="mt-1 text-sm text-slate-500">
-                        A database created before this panel opened MariaDB to
-                        the network has an account that only works on the server
-                        itself. This rebuilds it at every address, with the
-                        password above. Nothing in the database is touched.
+                        Where this database accepts connections from. The database accounts and the firewall
+                        follow what you choose.
                     </p>
                 </div>
-                <button
-                    @click="repair"
-                    class="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                <span
+                    class="rounded-full px-3 py-1 text-xs font-semibold"
+                    :class="{
+                        'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200': access.mode === 'local',
+                        'bg-amber-50 text-amber-700 ring-1 ring-amber-200': access.mode === 'list',
+                        'bg-rose-50 text-rose-700 ring-1 ring-rose-200': access.mode === 'anywhere',
+                    }"
                 >
-                    Rebuild the account
+                    {{ ACCESS_CHOICES.find((c) => c.value === access.mode)?.title }}
+                </span>
+            </div>
+
+            <div class="mt-4 grid gap-3 md:grid-cols-3">
+                <label
+                    v-for="choice in ACCESS_CHOICES"
+                    :key="choice.value"
+                    class="flex cursor-pointer gap-3 rounded-xl p-4 ring-1 transition"
+                    :class="accessForm.mode === choice.value ? 'bg-brand-50/50 ring-2 ring-brand-500' : 'ring-slate-200 hover:bg-slate-50'"
+                >
+                    <input v-model="accessForm.mode" type="radio" :value="choice.value" class="mt-1 text-brand-600 focus:ring-brand-500" />
+                    <span>
+                        <span class="block text-sm font-semibold text-slate-800">{{ choice.title }}</span>
+                        <span class="mt-1 block text-xs text-slate-500">{{ choice.text }}</span>
+                    </span>
+                </label>
+            </div>
+
+            <div v-if="accessForm.mode === 'list'" class="mt-4">
+                <label class="text-sm font-medium text-slate-700" for="allow">Allowed addresses</label>
+                <textarea
+                    id="allow"
+                    v-model="accessForm.allow"
+                    rows="4"
+                    placeholder="203.0.113.10&#10;198.51.100.0/24&#10;app.example.com"
+                    class="mt-1 w-full rounded-xl border-slate-300 font-mono text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                />
+                <p class="mt-1 text-xs text-slate-500">
+                    One per line: an IP address (IPv4 or IPv6), an IPv4 network such as 198.51.100.0/24, or a
+                    domain name. A domain is looked up when you save and again every 10 minutes, so it can
+                    point to an app whose address changes. Use the address your app connects <em>from</em> —
+                    the outgoing IP of the server or office it runs in.
+                </p>
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                    type="button"
+                    class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+                    :disabled="savingAccess || !accessChanged"
+                    @click="saveAccess"
+                >
+                    {{ savingAccess ? 'Saving…' : 'Save' }}
                 </button>
+                <span v-if="savingAccess" class="text-xs text-slate-500">
+                    MariaDB may restart for a few seconds while it starts or stops listening on the network.
+                </span>
+            </div>
+
+            <div v-if="access.mode === 'list' && access.addresses.length" class="mt-4 text-sm">
+                <p class="font-medium text-slate-700">Allowed now</p>
+                <ul class="mt-1 space-y-1 font-mono text-xs text-slate-600">
+                    <li v-for="item in access.addresses" :key="item.entry">
+                        {{ item.entry }}
+                        <span v-if="item.kind === 'domain'" class="font-sans text-slate-400">
+                            → {{ item.resolved.length ? item.resolved.join(', ') : 'not resolving' }}
+                        </span>
+                    </li>
+                </ul>
+            </div>
+
+            <p
+                v-if="access.mode !== 'local' && !access.firewall"
+                class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+            >
+                The firewall is off, so port 3306 is not filtered by address. The database accounts still
+                only accept the addresses allowed here; turning the firewall on (Security → Firewall) adds a
+                second layer.
+            </p>
+
+            <!-- How to connect from an app that is not on this server. -->
+            <div class="mt-6 border-t border-slate-200 pt-5">
+                <h4 class="text-sm font-semibold text-slate-800">Connecting from an external app</h4>
+
+                <template v-if="access.mode === 'local'">
+                    <p class="mt-1 text-sm text-slate-500">
+                        This database is closed to the internet. You can still open it from a desktop app such as
+                        TablePlus, HeidiSQL, DBeaver or MySQL Workbench through an <strong>SSH tunnel</strong>:
+                        the app logs in to the server over SSH and connects to the database from inside it, so
+                        nothing has to be opened. Choose “MySQL over SSH” (or the SSH tab) in the app and enter:
+                    </p>
+                    <div class="mt-3 flex justify-end">
+                        <button class="text-xs font-medium text-brand-600 hover:underline" @click="copy(tunnelText, 'tunnel')">
+                            {{ copied === 'tunnel' ? 'Copied' : 'Copy all' }}
+                        </button>
+                    </div>
+                    <pre class="mt-1 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">{{ tunnelText }}</pre>
+                    <p class="mt-3 text-sm text-slate-500">
+                        For an app on another server that connects directly (a hosted app, a script, a BI tool),
+                        choose <strong>This server and specific addresses</strong> above and list that server’s IP
+                        address or domain.
+                    </p>
+                </template>
+
+                <template v-else>
+                    <ol class="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-600">
+                        <li v-if="access.mode === 'list'">
+                            Make sure the app connects from one of the addresses allowed above. A connection from
+                            any other address is refused, even with the right password.
+                        </li>
+                        <li>In the app, choose MySQL or MariaDB as the database type.</li>
+                        <li>Enter the details below. SSL is not required.</li>
+                        <li>
+                            Test the connection. “Access denied” usually means the app is connecting from an
+                            address that is not allowed; “timed out” means something on the app’s side is blocking
+                            port 3306.
+                        </li>
+                    </ol>
+                    <div class="mt-3 flex justify-end">
+                        <button class="text-xs font-medium text-brand-600 hover:underline" @click="copy(remoteText, 'remote')">
+                            {{ copied === 'remote' ? 'Copied' : 'Copy all' }}
+                        </button>
+                    </div>
+                    <pre class="mt-1 overflow-x-auto rounded-xl bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">{{ remoteText }}</pre>
+                    <p class="mt-3 text-xs text-slate-500">
+                        Sites on this server keep using 127.0.0.1 — nothing about them changes.
+                    </p>
+                </template>
             </div>
         </div>
 

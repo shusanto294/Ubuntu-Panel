@@ -83,7 +83,10 @@ func (a *App) mcpGetDatabase() *mcp.Tool {
 			}
 
 			summary := database.Summary()
-			summary["credentials"] = databaseCredentials(database, databasePort(database.Engine))
+			summary["credentials"] = a.databaseCredentials(database, databasePort(database.Engine))
+			if database.Engine == "mysql" {
+				summary["access"] = a.accessProps(database)
+			}
 
 			if users, err := a.Databases.Users(ctx, database.ID); err == nil {
 				summary["users"] = users
@@ -198,9 +201,9 @@ func (a *App) mcpRepairDatabase() *mcp.Tool {
 		Name:       "repair_database",
 		Capability: capDatabases,
 		Title:      "Repair a database account",
-		Description: "Put a database's own account back at every host the panel creates accounts " +
-			"for, with the password the panel holds. This is the answer to credentials that are " +
-			"correct and refused from off the machine.",
+		Description: "Put a database's own account back at the hosts its access setting allows, " +
+			"with the password the panel holds. This is the answer to credentials that are " +
+			"correct and refused.",
 		Properties: map[string]mcp.Property{
 			"database": {Description: "The database's id, or its name."},
 		},
@@ -219,7 +222,42 @@ func (a *App) mcpRepairDatabase() *mcp.Tool {
 				"database_id": database.ID,
 				"name":        database.Name,
 				"repaired":    true,
-				"credentials": databaseCredentials(database, databasePort(database.Engine)),
+				"credentials": a.databaseCredentials(database, databasePort(database.Engine)),
+			}, nil
+		},
+	}
+}
+
+func (a *App) mcpDatabaseAccess() *mcp.Tool {
+	return &mcp.Tool{
+		Name:       "set_database_access",
+		Capability: capDatabases,
+		Title:      "Set who can connect to a database",
+		Description: "Who may connect to a MariaDB database: `local` (this server only — the sites " +
+			"on it connect to 127.0.0.1 and keep working), `list` (this server and the IP " +
+			"addresses, IPv4 networks or domains in `allow`), or `anywhere` (any address, with the " +
+			"password). The accounts and the firewall follow.",
+		Properties: map[string]mcp.Property{
+			"database": {Description: "The database's id, or its name."},
+			"mode":     {Description: "Who may connect.", Enum: []string{"local", "list", "anywhere"}},
+			"allow":    {Description: "For `list`: IPs, networks like 203.0.113.0/24, or domains, comma-separated."},
+		},
+		Required: []string{"database", "mode"},
+		Run: func(ctx context.Context, args mcp.Args) (any, error) {
+			database, err := a.mcpDatabase(ctx, args)
+			if err != nil {
+				return nil, err
+			}
+
+			if err := a.Databases.SetAccess(ctx, database.ID, args.String("mode"), args.String("allow")); err != nil {
+				return nil, err
+			}
+
+			return map[string]any{
+				"database_id": database.ID,
+				"name":        database.Name,
+				"access":      a.accessProps(database),
+				"credentials": a.databaseCredentials(database, databasePort(database.Engine)),
 			}, nil
 		},
 	}

@@ -409,6 +409,7 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpDeleteDatabase(),
 		a.mcpSetDatabasePassword(),
 		a.mcpRepairDatabase(),
+		a.mcpDatabaseAccess(),
 		a.mcpDatabaseUsers(),
 		a.mcpMongoConnection(),
 		a.mcpServiceCredentials(),

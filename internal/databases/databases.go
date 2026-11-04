@@ -209,15 +209,11 @@ if (target.getCollectionNames().length === 0) {
 `, database.Name, database.Username, jsQuote(database.Password))
 
 	default:
-		// The server has to be listening off the machine before an account
-		// that may only be used from off the machine is worth creating.
-		if err := EnsureMySQLRemote(s.Store, runner); err != nil {
-			return fail(err)
-		}
-
+		// At the hosts this database allows — this server only, unless it was
+		// given addresses on its page.
 		script = mysqlAccountScript(database.Name, database.Username, database.Password,
 			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s COLLATE %s_unicode_ci;\n",
-				database.Name, charset, charset))
+				database.Name, charset, charset), s.Hosts(database.ID))
 	}
 
 	if err := runSQL(runner, database.Engine, script); err != nil {
@@ -261,13 +257,8 @@ if (target.getUser("%[2]s")) {
 target.dropDatabase();
 `, database.Name, database.Username)
 	default:
-		script = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;\n", database.Name)
-
-		for _, host := range mysqlHosts {
-			script += fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s';\n", database.Username, host)
-		}
-
-		script += "FLUSH PRIVILEGES;\n"
+		script = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;\n", database.Name) +
+			dropMySQLUserScript(database.Username, s.Hosts(database.ID)) + "FLUSH PRIVILEGES;\n"
 	}
 
 	if err := runSQL(runner, database.Engine, script); err != nil {
@@ -277,6 +268,16 @@ target.dropDatabase();
 	}
 
 	s.Store.DeleteDatabase(databaseID)
+
+	// The firewall may have been open for this database alone.
+	if database.Engine == "mysql" {
+		opened := s.Access(databaseID).Mode != AccessLocal
+		s.ForgetAccess(databaseID)
+
+		if opened {
+			s.SyncMySQLAccess(ctx, false)
+		}
+	}
 
 	return nil
 }
@@ -385,7 +386,7 @@ func (s *Service) SetPassword(ctx context.Context, databaseID int64, password st
 		// Every host the account exists at, or the application connecting from
 		// one of the others goes on using the old password — which is the
 		// whole thing this was called to stop.
-		script = mysqlAccountScript(database.Name, database.Username, password, "")
+		script = mysqlAccountScript(database.Name, database.Username, password, "", s.Hosts(database.ID))
 	}
 
 	if err := runSQL(nil, database.Engine, script); err != nil {
@@ -396,13 +397,8 @@ func (s *Service) SetPassword(ctx context.Context, databaseID int64, password st
 }
 
 // RepairAccount puts a database's account back the way the panel means it to
-// be: existing at every host, with the password the panel holds, and granted
-// its own database.
-//
-// For the databases created before the panel opened MariaDB to the network,
-// whose accounts exist for localhost and nowhere else — the credentials the
-// panel prints are right and the connection is refused, which reads as a
-// password that does not work.
+// be: existing at the hosts the database allows, with the password the panel
+// holds, and granted its own database.
 func (s *Service) RepairAccount(ctx context.Context, databaseID int64) error {
 	database, err := s.Store.FindDatabase(ctx, databaseID)
 	if err != nil {
@@ -417,10 +413,10 @@ func (s *Service) RepairAccount(ctx context.Context, databaseID int64) error {
 		return errors.New("Refusing to touch an account whose name is not a plain identifier.")
 	}
 
-	if err := EnsureMySQLRemote(s.Store, nil); err != nil {
+	if err := runSQL(nil, database.Engine,
+		mysqlAccountScript(database.Name, database.Username, database.Password, "", s.Hosts(database.ID))); err != nil {
 		return err
 	}
 
-	return runSQL(nil, database.Engine,
-		mysqlAccountScript(database.Name, database.Username, database.Password, ""))
+	return s.SyncMySQLAccess(ctx, false)
 }

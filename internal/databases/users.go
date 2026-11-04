@@ -111,7 +111,7 @@ func (s *Service) Users(ctx context.Context, databaseID int64) ([]DatabaseUser, 
 
 	if database.Engine == "mysql" {
 		for i := range users {
-			users[i].Hosts = strings.Join(mysqlHosts, ", ")
+			users[i].Hosts = strings.Join(s.Hosts(database.ID), ", ")
 		}
 	}
 
@@ -162,9 +162,9 @@ if (target.getUser("%[2]s")) {
 `, database.Name, username, jsQuote(password))
 
 	default:
-		// The same three hosts every panel account exists at, so a second user
-		// works from this machine and from off it exactly as the first does.
-		script = mysqlAccountScript(database.Name, username, password, "")
+		// The hosts the database allows, so a second user works from exactly
+		// where the first does.
+		script = mysqlAccountScript(database.Name, username, password, "", s.Hosts(database.ID))
 	}
 
 	return runSQL(nil, database.Engine, script)
@@ -237,13 +237,7 @@ if (target.getUser("%s")) {
 `, database.Name, username, username)
 
 	default:
-		script = ""
-
-		for _, host := range mysqlHosts {
-			script += fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s';\n", username, host)
-		}
-
-		script += "FLUSH PRIVILEGES;\n"
+		script = dropMySQLUserScript(username, s.Hosts(database.ID)) + "FLUSH PRIVILEGES;\n"
 	}
 
 	return runSQL(nil, database.Engine, script)
