@@ -89,3 +89,28 @@ func TestAutoBanJail(t *testing.T) {
 		}
 	}
 }
+
+// A banned address is refused by nginx everywhere but the panel, so an owner
+// who banned themselves can still sign in and unban.
+func TestPanelVhostAllowsBannedAddresses(t *testing.T) {
+	for _, file := range []string{
+		panelVhost("", 8443, 8080, "8.3", false),
+		panelVhost("panel.example.com", 8443, 8080, "8.3", false),
+		panelVhost("panel.example.com", 8443, 8080, "8.3", true),
+	} {
+		serving := 0
+		for _, block := range strings.Split(file, "server {")[1:] {
+			// A block that serves the panel, or redirects to it.
+			if !strings.Contains(block, "    location / {") {
+				continue
+			}
+			serving++
+			if !strings.Contains(block, panelAllowAll) {
+				t.Errorf("a block serving the panel does not allow everyone:\nserver {%s", block)
+			}
+		}
+		if serving == 0 {
+			t.Errorf("no block serves the panel:\n%s", file)
+		}
+	}
+}

@@ -827,6 +827,7 @@ func panelPortVhost(domain string, panelPort, port int, php string, certificate 
 		"server {\n"+
 			"%s"+
 			"    server_name %s;\n"+
+			panelAllowAll+
 			"\n"+
 			"%s"+
 			"%s\n"+
@@ -894,6 +895,7 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 			"    listen 80;\n"+
 			"    listen [::]:80;\n"+
 			"    server_name %[1]s;\n"+
+			panelAllowAll+
 			"\n"+
 			"%[2]s"+
 			"}\n"+
@@ -901,6 +903,7 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 			"    listen 443 ssl;\n"+
 			"    listen [::]:443 ssl;\n"+
 			"    server_name %[1]s;\n"+
+			panelAllowAll+
 			"\n"+
 			"    ssl_certificate     %[3]s;\n"+
 			"    ssl_certificate_key %[4]s;\n"+
@@ -913,6 +916,13 @@ func panelHostVhost(domain string, port int, php string, secure bool) string {
 		domain, plain, certificate, key, acmeLocation(),
 		sites.PhpMyAdminLocation(php, phpMyAdminGatePath, port), panelProxyBlock(port))
 }
+
+// panelAllowAll keeps the panel open to every address, banned or not. The
+// banned addresses are refused by nginx for the whole http block (conf.d's
+// panel-banned.conf); an allow in the server block replaces that list here, so
+// an owner who banned themselves by accident can still sign in and unban.
+// Sign-ins have their own lockout, which this does not touch.
+const panelAllowAll = "    allow all;\n"
 
 // panelVhost is the whole file: the panel on its own port, plus the panel on the
 // hostname when one has been set.

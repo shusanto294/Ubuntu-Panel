@@ -37,6 +37,9 @@ type Protection struct {
 
 	RealIP bool `json:"real_ip"`
 	Kernel bool `json:"kernel"`
+
+	// EdgeOnly lets only Cloudflare reach ports 80 and 443. See edge.go.
+	EdgeOnly bool `json:"edge_only"`
 }
 
 // JailRule is one optional fail2ban jail: so many matches within FindTime seconds
@@ -213,11 +216,30 @@ var scanTargets = []string{
 // Only the path is looked at, never the query string: the panel's own file
 // manager asks for /sites/1/files?path=.env, and this jail also reads the log
 // the panel's requests are written to.
+//
+// An .xml or .txt file that is not there or is refused counts too: that is a
+// script guessing at what a site might have. Not .php — people follow old links
+// to pages that moved. Not the files every crawler
+// asks for whether or not a site has them — robots.txt, sitemaps, feeds,
+// ads.txt — and not a search engine following a dead link to an .xml or .txt.
 var webScanFilterFile = "# Managed by Ubuntu Panel: vulnerability scanners.\n" +
 	"[Definition]\n" +
 	"failregex = " + accessPrefix + `(?:GET|POST|HEAD|PUT|OPTIONS) /[^\s?]*(?:` +
 	strings.Join(scanTargets, "|") + `)[^\s?]*(?:\?\S*)? HTTP/[^"]*" [345]\d\d ` + "\n" +
-	"ignoreregex =\n"
+	"            " + accessPrefix + `(?:GET|POST|HEAD) /[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+	"ignoreregex = " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:robots|ads|app-ads|security|humans|llms|llms-full)\.txt(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+	"              " + anyPrefix + `\S+ /(?:[^\s?]*/)?(?:crossdomain|browserconfig|BingSiteAuth|opensearch|wlwmanifest)\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+	"              " + anyPrefix + `\S+ /[^\s?]*(?:sitemap|feed|rss|atom)[^\s?/]*\.xml(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+	"              " + anyPrefix + `\S+ /[^\s?]*\.well-known/[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] ` + "\n" +
+	"              " + anyPrefix + `\S+ /[^\s?]*\.(?:xml|txt)(?:\?\S*)? HTTP/[^"]*" 40[34] \S+ "[^"]*" "[^"]*(?:` + goodBotAgents + `)` + "\n"
+
+// anyPrefix is accessPrefix without the address, for ignoreregex.
+const anyPrefix = `^\S+ \S+ \S+ \[[^\]]*\] "`
+
+// goodBotAgents are the crawlers that follow a dead link to an .xml or .txt
+// file without being a scanner.
+const goodBotAgents = `Googlebot|bingbot|Applebot|DuckDuckBot|YandexBot|Baiduspider|GPTBot|ClaudeBot|` +
+	`PerplexityBot|facebookexternalhit|Twitterbot|LinkedInBot|AhrefsBot|SemrushBot|UptimeRobot`
 
 // secretTargets are files that hold passwords and keys. No visitor, search
 // engine or application asks a web server for one, so a single request is
@@ -228,6 +250,9 @@ var secretTargets = []string{
 	scanDot + `aws` + scanSlash, scanDot + `ssh` + scanSlash, scanDot + `docker` + scanSlash,
 	scanDot + `htpasswd`, scanDot + `npmrc`, scanDot + `pgpass`,
 	`wp-config\.php\.\w+`, `wp-config\.(?:bak|old|txt|save|orig)`, `sftp-config\.json`,
+	// WordPress's installer: the panel installs from the command line, so only
+	// a bot hoping for an unfinished WordPress to take over opens it.
+	`wp-admin/install\.php`, `wp-admin/setup-config\.php`,
 }
 
 // webSecretFilterFile counts requests for those files, by path only — the

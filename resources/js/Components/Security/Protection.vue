@@ -39,8 +39,8 @@ const FIND_TIMES = [
 const SECTIONS = [
     {
         title: 'Websites',
-        text: 'What reaches the sites. Bans apply to the web ports only. For a site behind Cloudflare a ban cannot stop the visitor — their requests arrive from Cloudflare — so the rate limits, with real visitor addresses on, are what protect it.',
-        features: ['web_login', 'rate_login', 'web_scan', 'rate_flood', 'real_ip'],
+        text: 'What reaches the sites. A banned address is refused by the firewall on the web ports, and by nginx itself — which is what stops it on a site behind Cloudflare, where its requests arrive from Cloudflare’s addresses. For that, turn on real visitor addresses.',
+        features: ['web_login', 'rate_login', 'web_scan', 'rate_flood', 'real_ip', 'edge_only'],
     },
     { title: 'Mail', text: 'Password guessing against mailboxes.', features: ['mail'] },
     { title: 'Server', text: 'The machine as a whole.', features: ['recidive', 'kernel'] },
@@ -84,6 +84,12 @@ const FEATURES = {
         title: 'Real visitor addresses behind Cloudflare',
         text: 'For sites proxied through Cloudflare: nginx takes the visitor’s address from Cloudflare’s header — trusted only from Cloudflare’s own addresses — so logs, Website traffic and rate limits see the visitor instead of Cloudflare. Cloudflare’s addresses are never banned or rate limited either way.',
         needs: 'nginx',
+    },
+    edge_only: {
+        kind: 'switch',
+        title: 'Only Cloudflare reaches the websites',
+        text: 'For servers whose sites are all proxied through Cloudflare (orange cloud): the firewall lets only Cloudflare’s addresses reach ports 80 and 443. Nobody can reach the sites around Cloudflare, and bots sweeping IP addresses get nothing from this server. SSH, mail and the panel’s own port are not affected. It will not turn on while a site or the panel is not proxied, since that one would stop answering.',
+        confirm: 'Ports 80 and 443 will refuse every address except Cloudflare’s. Any site or hostname that is not proxied through Cloudflare stops answering. Needs the firewall on.',
     },
     mail: {
         kind: 'jail',
@@ -151,6 +157,7 @@ const state = (key) => {
     if (!enabled(key)) return 'off';
     if (FEATURES[key].kind === 'jail' && !running(key)) return 'stalled';
     if (key === 'kernel' && !props.protection.kernel_applied) return 'stalled';
+    if (key === 'edge_only' && !props.protection.edge_applied) return 'stalled';
     return 'on';
 };
 
@@ -215,7 +222,7 @@ const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.la
                         <h4 class="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
                             {{ FEATURES[key].title }}
                             <span
-                                v-if="key === 'real_ip' && protection.edge_sites?.length && !enabled(key)"
+                                v-if="(key === 'real_ip' || key === 'edge_only') && protection.edge_sites?.length && !enabled(key)"
                                 class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
                             >
                                 recommended — {{ protection.edge_sites.length }} site{{ protection.edge_sites.length === 1 ? '' : 's' }} behind Cloudflare
@@ -282,6 +289,9 @@ const labelOf = (list, value) => list.find((o) => o.value === Number(value))?.la
                             </button>
                         </template>
                         <span v-else class="text-amber-700">fail2ban is not running this jail right now.</span>
+                    </p>
+                    <p v-if="key === 'edge_only' && enabled(key) && !protection.edge_applied" class="mt-3 text-xs text-amber-700">
+                        The firewall is off or opens 80/443 to everyone again; the panel puts the Cloudflare-only rules back within ten minutes.
                     </p>
                     <p v-if="key === 'kernel' && enabled(key) && !protection.kernel_applied" class="mt-3 text-xs text-amber-700">
                         The settings file is missing; the panel puts it back when it restarts.

@@ -68,7 +68,8 @@ func TestThreat(t *testing.T) {
 
 	for _, c := range cases {
 		status := 404
-		if strings.HasPrefix(c.path, "/phpmyadmin") {
+		// Pages that are there: the panel's phpMyAdmin, WordPress's own.
+		if strings.HasPrefix(c.path, "/phpmyadmin") || c.path == "/wp-login.php" || c.path == "/wp-admin/admin-ajax.php" {
 			status = 200
 		}
 		if got := Threat(Entry{Method: c.method, Path: c.path, Status: status}); got != c.want {
@@ -255,5 +256,38 @@ func TestGoodBotsAreNotFlaggedForCrawling(t *testing.T) {
 	}
 	if FindGoodBot("Mozilla/5.0 (Windows NT 10.0) Chrome/130") != nil || FindGoodBot("python-requests/2.31") != nil {
 		t.Error("a browser or a script is not a useful bot")
+	}
+}
+
+func TestMissingScript(t *testing.T) {
+	probe := func(path string, status int, agent string) string {
+		return Threat(Entry{Method: "GET", Path: path, Status: status, UserAgent: agent})
+	}
+
+	for _, path := range []string{"/config.xml", "/credentials.txt", "/%2fbackup.txt"} {
+		if got := probe(path, 404, "Mozilla/5.0"); got != ThreatProbe {
+			t.Errorf("a missing %s should be a probe, got %q", path, got)
+		}
+	}
+
+	for _, path := range []string{"/robots.txt", "/ads.txt", "/sitemap_index.xml", "/wp-sitemap-posts-post-1.xml", "/feed/rss.xml", "/.well-known/security.txt", "/llms.txt"} {
+		if got := probe(path, 404, "Mozilla/5.0"); got != "" {
+			t.Errorf("a missing %s is not a probe, got %q", path, got)
+		}
+	}
+
+	if got := probe("/index.php", 200, "Mozilla/5.0"); got != "" {
+		t.Errorf("a page that answered is not a probe, got %q", got)
+	}
+	if got := probe("/news.xml", 404, "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"); got != "" {
+		t.Errorf("Googlebot following a dead link is not a probe, got %q", got)
+	}
+	if got := probe("/old-page.php", 404, "Mozilla/5.0"); got != "" {
+		t.Errorf("a missing .php is someone following an old link, not a probe, got %q", got)
+	}
+
+	// The installer, whatever the answer.
+	if got := probe("/wp-admin/install.php", 200, "Mozilla/5.0"); got != ThreatSecret {
+		t.Errorf("asking for the WordPress installer is an attack, got %q", got)
 	}
 }

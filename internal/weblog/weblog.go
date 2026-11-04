@@ -163,6 +163,55 @@ var secrets = []string{
 	"/.env", "/.git/", "/.git-credentials", "/.gitconfig", "/.aws/", "/.ssh/", "/.docker/",
 	"/.htpasswd", "/.npmrc", "/.pgpass", "/wp-config.php.", "/wp-config.bak", "/wp-config.old",
 	"/wp-config.txt", "/wp-config.save", "/wp-config.orig", "/sftp-config.json",
+
+	// WordPress's installer. The panel installs WordPress from the command
+	// line, so nobody opens these — except a bot hoping to find a WordPress
+	// nobody finished setting up, and take it over.
+	"/wp-admin/install.php", "/wp-admin/setup-config.php",
+}
+
+// publicFiles are .txt and .xml files a site is asked for by search engines,
+// ad networks and feed readers whether or not it has them. Missing, they are
+// not a probe.
+var publicFiles = []string{
+	"robots.txt", "ads.txt", "app-ads.txt", "security.txt", "humans.txt", "llms.txt", "llms-full.txt",
+	"crossdomain.xml", "browserconfig.xml", "bingsiteauth.xml", "opensearch.xml", "wlwmanifest.xml",
+}
+
+// MissingScript is whether a request for an .xml or .txt file that was not
+// there or was refused looks like probing: a script guessing at files a site
+// might have. The ones every crawler asks for — robots.txt, sitemaps, feeds,
+// ads.txt — are not, and neither is a useful bot asking. A missing .php is not
+// counted: people follow old links to pages that moved.
+func MissingScript(entry Entry) bool {
+	if entry.Status != 403 && entry.Status != 404 {
+		return false
+	}
+
+	p := decodePath(strings.ToLower(entry.Path))
+	name := p[strings.LastIndexByte(p, '/')+1:]
+
+	if !strings.HasSuffix(name, ".xml") && !strings.HasSuffix(name, ".txt") {
+		return false
+	}
+
+	if FindGoodBot(entry.UserAgent) != nil || strings.Contains(p, "/.well-known/") {
+		return false
+	}
+
+	for _, public := range publicFiles {
+		if name == public {
+			return false
+		}
+	}
+
+	for _, word := range []string{"sitemap", "feed", "rss", "atom"} {
+		if strings.Contains(name, word) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // decodePath undoes the percent-encoding scanners use to slip past patterns
@@ -234,6 +283,10 @@ func Threat(entry Entry) string {
 				return ThreatProbe
 			}
 		}
+	}
+
+	if MissingScript(entry) {
+		return ThreatProbe
 	}
 
 	if entry.Method == "POST" {

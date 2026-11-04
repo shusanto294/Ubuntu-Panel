@@ -43,6 +43,50 @@ func failRegexes(t *testing.T, filter string) []*regexp.Regexp {
 	return expressions
 }
 
+// ignoreRegexes are a filter's ignoreregex lines, as Go expressions.
+func ignoreRegexes(t *testing.T, filter string) []*regexp.Regexp {
+	t.Helper()
+
+	var expressions []*regexp.Regexp
+
+	inside := false
+	for _, line := range strings.Split(filter, "\n") {
+		switch {
+		case strings.HasPrefix(line, "ignoreregex = "):
+			inside = true
+			line = strings.TrimPrefix(line, "ignoreregex = ")
+		case inside && strings.HasPrefix(line, "              "):
+			line = strings.TrimSpace(line)
+		default:
+			inside = false
+			continue
+		}
+
+		if line == "" {
+			continue
+		}
+		compiled, err := regexp.Compile(strings.ReplaceAll(line, "%%", "%"))
+		if err != nil {
+			t.Fatalf("ignoreregex does not compile: %v\n%s", err, line)
+		}
+		expressions = append(expressions, compiled)
+	}
+
+	return expressions
+}
+
+// banned is the address fail2ban would count for a line: matched, and not
+// ignored.
+func banned(fail, ignore []*regexp.Regexp, line string) string {
+	host := matches(fail, line)
+	for _, expression := range ignore {
+		if expression.MatchString(line) {
+			return ""
+		}
+	}
+	return host
+}
+
 func matches(expressions []*regexp.Regexp, line string) string {
 	for _, expression := range expressions {
 		if m := expression.FindStringSubmatch(line); m != nil {
@@ -296,5 +340,53 @@ func TestSecretJailRunsWithTheScanner(t *testing.T) {
 
 	if jails := p.ProtectJails(); len(jails) != 2 || jails[1] != JailWebSecret {
 		t.Errorf("jails = %v", jails)
+	}
+}
+
+func TestScanFilterMissingFiles(t *testing.T) {
+	fail, ignore := failRegexes(t, webScanFilterFile), ignoreRegexes(t, webScanFilterFile)
+	if len(ignore) != 5 {
+		t.Fatalf("want 5 ignoreregex lines, got %d", len(ignore))
+	}
+
+	cases := map[string]string{
+		`203.0.113.9 - - [] "GET /config.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                           "203.0.113.9",
+		`203.0.113.9 - - [] "GET /credentials.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                      "203.0.113.9",
+		`203.0.113.9 - - [] "GET /old-page.php HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                         "",
+		`203.0.113.9 - - [] "GET /index.php HTTP/1.1" 200 1 "-" "Mozilla/5.0"`:                            "",
+		`203.0.113.9 - - [] "GET /robots.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                           "",
+		`203.0.113.9 - - [] "GET /ads.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                              "",
+		`203.0.113.9 - - [] "GET /sitemap_index.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                    "",
+		`203.0.113.9 - - [] "GET /blog/feed/atom.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:                   "",
+		`203.0.113.9 - - [] "GET /.well-known/security.txt HTTP/1.1" 404 1 "-" "Mozilla/5.0"`:             "",
+		`203.0.113.9 - - [] "GET /news.xml HTTP/1.1" 404 1 "-" "Mozilla/5.0 (compatible; Googlebot/2.1)"`: "",
+	}
+
+	for line, want := range cases {
+		if got := banned(fail, ignore, line); got != want {
+			t.Errorf("%s\n  counted %q, want %q", line, got, want)
+		}
+	}
+
+	// The secret-file and vulnerable-file lines are never ignored, whatever
+	// the bot says it is.
+	if got := banned(fail, ignore, `203.0.113.9 - - [] "GET /.env HTTP/1.1" 404 1 "-" "Googlebot"`); got == "" {
+		t.Error("a Googlebot asking for .env is a scanner")
+	}
+}
+
+func TestInstallerIsASecret(t *testing.T) {
+	fail := failRegexes(t, webSecretFilterFile)
+	for _, line := range []string{
+		`203.0.113.9 - - [] "GET /wp-admin/install.php?step=1 HTTP/1.1" 200 1 "http://tulibuilderonline.com/wp-admin/install.php?step=1" "x"`,
+		`203.0.113.9 - - [] "GET /wp-admin/install.php HTTP/1.1" 301 1 "-" "x"`,
+		`203.0.113.9 - - [] "GET /wp-admin/setup-config.php HTTP/1.1" 404 1 "-" "x"`,
+	} {
+		if matches(fail, line) == "" {
+			t.Errorf("one request for the installer should ban: %s", line)
+		}
+	}
+	if matches(fail, `203.0.113.9 - - [] "GET /wp-admin/upgrade.php HTTP/1.1" 200 1 "-" "x"`) != "" {
+		t.Error("upgrade.php follows a core update; it is not the installer")
 	}
 }

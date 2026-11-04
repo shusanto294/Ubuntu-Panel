@@ -165,6 +165,12 @@ func (a *App) EnsureProtection(ctx context.Context) {
 		}
 	}
 
+	if p.EdgeOnly && !security.EdgeOnlyApplied() {
+		if err := security.ApplyEdgeOnly(true); err != nil {
+			a.Log.Error("could not keep the web ports to Cloudflare only", "error", err)
+		}
+	}
+
 	if p.Kernel && !security.KernelApplied() {
 		if err := security.ApplyKernel(true, nil); err != nil {
 			a.Log.Error("could not apply the kernel network settings", "error", err)
@@ -191,6 +197,14 @@ func (a *App) checkProtection(ctx context.Context) {
 
 	// An address that signed in, or one aged out of the thirty days.
 	a.syncTrusted(ctx)
+
+	// Turning the firewall off and on again, or a reset, opens the web ports to
+	// everyone; Cloudflare only puts that right.
+	if p := a.protection(); p.EdgeOnly && !security.EdgeOnlyApplied() {
+		if err := security.ApplyEdgeOnly(true); err != nil {
+			a.Log.Warn("could not keep the web ports to Cloudflare only", "error", err)
+		}
+	}
 
 	// A domain allowed to reach a database may have moved.
 	if a.Store.ServiceInstalled("mysql") && a.Databases.HasDomains(ctx) {
@@ -292,6 +306,8 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		label = "Real visitor addresses behind Cloudflare"
 	case "kernel":
 		label = "Network hardening"
+	case "edge_only":
+		label = "Only Cloudflare reaches the websites"
 	default:
 		a.securityBack(w, r, "That is not one of the protections.", true)
 		return
@@ -299,6 +315,34 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		inertia.Back(w, r, "/security?tab=protection")
+		return
+	}
+
+	// The firewall, not nginx or fail2ban. Refused while a site or the panel
+	// is reached without Cloudflare: it would stop answering.
+	if feature == "edge_only" {
+		if enabled {
+			if exposed := security.NotBehindCloudflare(a.webHostnames(r.Context())); len(exposed) > 0 {
+				err := fmt.Errorf("these are not proxied through Cloudflare, so they would stop working: %s — "+
+					"turn on the orange cloud for them in Cloudflare's DNS first", strings.Join(exposed, ", "))
+				a.recordProtection(feature, enabled, err)
+				a.securityBack(w, r, err.Error(), true)
+				return
+			}
+		}
+
+		if err := security.ApplyEdgeOnly(enabled); err != nil {
+			a.recordProtection(feature, enabled, err)
+			a.securityBack(w, r, err.Error(), true)
+			return
+		}
+
+		p.EdgeOnly = enabled
+		a.saveProtection(p)
+		a.recordProtection(feature, enabled, nil)
+		a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
+		a.securityBack(w, r, label+map[bool]string{true: " — ports 80 and 443 now refuse everyone else.",
+			false: " is off; ports 80 and 443 are open to everyone again."}[enabled], false)
 		return
 	}
 
@@ -389,6 +433,7 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 			"mail":     a.Store.ServiceInstalled("mail"),
 		},
 		"kernel_applied": p.Kernel && security.KernelApplied(),
+		"edge_applied":   p.EdgeOnly && security.EdgeOnlyApplied(),
 		"edge_sites":     edgeSites,
 	}
 }
@@ -463,10 +508,73 @@ func (a *App) protectionChecks(ctx context.Context) []check {
 						false: "Sites behind Cloudflare log Cloudflare's addresses, so attackers cannot be told apart or banned.",
 					}[p.RealIP],
 				})
+				list = append(list, check{
+					Key: "edge_only", Label: "Only Cloudflare reaches the websites", Level: "info", Tab: "protection",
+					OK: p.EdgeOnly,
+					Detail: map[bool]string{
+						true:  "Ports 80 and 443 refuse everyone but Cloudflare, so the sites cannot be reached around it.",
+						false: "Anyone who finds this server's address can reach the sites without going through Cloudflare.",
+					}[p.EdgeOnly],
+				})
 				break
 			}
 		}
 	}
 
 	return list
+}
+
+// webHostnames are every name the web ports answer to: each site's, and the
+// panel's own.
+func (a *App) webHostnames(ctx context.Context) []string {
+	names := []string{}
+
+	if domain := a.Store.Setting("panel_domain", ""); domain != "" {
+		names = append(names, domain)
+	}
+
+	if sites, err := a.Store.Sites(ctx); err == nil {
+		for _, site := range sites {
+			names = append(names, site.Hostnames()...)
+		}
+	}
+
+	return names
+}
+
+// syncNginxBans has nginx refuse every banned address itself — the only thing
+// that stops one whose requests arrive through Cloudflare. Every minute, so a
+// ban fail2ban makes and one it lets expire both reach nginx within one.
+func (a *App) syncNginxBans(ctx context.Context) {
+	if !a.Store.ServiceInstalled("nginx") {
+		return
+	}
+
+	if err := security.ApplyNginxBans(a.webBannedIPs(ctx)); err != nil {
+		a.Log.Warn("could not give nginx the banned addresses", "error", err)
+	}
+}
+
+// webBannedIPs are the banned addresses the sites should refuse: a firewall
+// block, or a website, mail or repeat-offender ban. Not an SSH-only ban — the
+// Ban form promises that one can still load the sites — nor a panel lockout,
+// which is about signing in to the panel and expires.
+func (a *App) webBannedIPs(ctx context.Context) []string {
+	ips := []string{}
+
+	list, ok := a.bans(ctx, a.snapshot(false))["list"].([]bannedAddress)
+	if !ok {
+		return ips
+	}
+
+	for _, row := range list {
+		for _, source := range row.Sources {
+			if source.Kind != banSSH && source.Kind != banPanel {
+				ips = append(ips, row.IP)
+				break
+			}
+		}
+	}
+
+	return ips
 }
