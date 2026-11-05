@@ -185,3 +185,22 @@ func TestPanelCausedLinesAreLeftOut(t *testing.T) {
 		}
 	}
 }
+
+// A scanner asking for a WordPress include file directly is not a crisis.
+func TestIncludeFilesRequestedDirectlyAreNotCritical(t *testing.T) {
+	scanner := `[error] 555377#555377: *17865 FastCGI sent in stderr: "PHP message: PHP Fatal error:  Uncaught Error: ` +
+		`Undefined constant "ABSPATH" in /var/www/example.com/wp-settings.php:34`
+	if got := level(scanner); got != LevelWarning {
+		t.Errorf("an out-of-context include is %s", got)
+	}
+
+	plugin := `FastCGI sent in stderr: "PHP message: PHP Fatal error:  Uncaught Error: Call to undefined function add_action() in /var/www/example.com/wp-content/plugins/x/x.php:12`
+	if got := level(plugin); got != LevelWarning {
+		t.Errorf("a plugin file requested directly is %s", got)
+	}
+
+	real := `FastCGI sent in stderr: "PHP message: PHP Fatal error:  Allowed memory size of 134217728 bytes exhausted`
+	if got := level(real); got != LevelCritical {
+		t.Errorf("a real fatal error is %s", got)
+	}
+}

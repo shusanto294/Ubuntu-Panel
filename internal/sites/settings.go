@@ -599,9 +599,9 @@ func (s *Service) SetCronJobs(ctx context.Context, siteID int64, jobs []CronJob)
 	return nil
 }
 
-// EnsureGuardIncludes adds GuardInclude to the vhosts written before it
-// existed, after each server block's error_log, and reloads nginx once for all
-// of them. Every file is put back if nginx will not have the result: this
+// EnsureGuardIncludes brings the vhosts written by older versions up to date
+// — GuardInclude after each server block's error_log, and WordPress's
+// internal files refused — and reloads nginx once for all of them. Every file is put back if nginx will not have the result: this
 // runs at start, unattended, on a machine serving every one of these sites.
 func (s *Service) EnsureGuardIncludes(ctx context.Context) error {
 	list, err := s.Store.Sites(ctx)
@@ -628,6 +628,28 @@ func (s *Service) EnsureGuardIncludes(ctx context.Context) error {
 			return err
 		}
 		previous[path] = contents
+	}
+
+	// WordPress vhosts written before wordpressInternals existed get it,
+	// under the same heading the new ones have it under.
+	const hardening = "    # WordPress hardening\n"
+	for _, site := range list {
+		if site.Type != "wordpress" {
+			continue
+		}
+		path := AvailablePath(site)
+
+		contents, err := proc.ReadFile(path, true)
+		if err != nil || strings.Contains(contents, "location = /wp-settings.php") || !strings.Contains(contents, hardening) {
+			continue
+		}
+
+		if err := proc.PutFile(path, strings.ReplaceAll(contents, hardening, hardening+wordpressInternals), true); err != nil {
+			return err
+		}
+		if _, kept := previous[path]; !kept {
+			previous[path] = contents
+		}
 	}
 
 	if len(previous) == 0 {

@@ -548,6 +548,7 @@ func body(out *strings.Builder, site *store.Site, tls bool) {
 		out.WriteString(
 			"\n" +
 				"    # WordPress hardening\n" +
+				wordpressInternals +
 				"    location = /xmlrpc.php { deny all; access_log off; log_not_found off; }\n" +
 				"    location ~* /(?:uploads|files)/.*\\.php$ { deny all; }\n" +
 				"    location ~* \\.(?:css|js|jpg|jpeg|png|gif|ico|svg|webp|woff2?)$ {\n" +
@@ -708,6 +709,18 @@ func upstream(out *strings.Builder, site *store.Site) {
 			"    keepalive 32;\n"+
 			"}\n\n", site.ServiceName(), site.AppPort)
 }
+
+// wordpressInternals refuses the files WordPress only ever includes, never
+// serves: wp-config.php, wp-settings.php, everything PHP under wp-includes and
+// wp-admin/includes. Requested directly — which only scanners do — PHP runs
+// them out of context and dies with "Undefined constant ABSPATH", a fatal
+// error in the site's log for nothing. Two files under wp-includes are
+// requested directly and stay reachable: TinyMCE's loader and multisite's
+// ms-files.php.
+const wordpressInternals = "    location = /wp-config.php { deny all; }\n" +
+	"    location = /wp-settings.php { deny all; }\n" +
+	"    location ~* ^/wp-admin/includes/ { deny all; }\n" +
+	"    location ~* ^/wp-includes/(?!js/tinymce/wp-tinymce\\.php$|ms-files\\.php$).+\\.php$ { deny all; }\n"
 
 // GuardInclude is the line in each of a site's server blocks that brings in
 // the Security page's per-site protections — refused attack tools and

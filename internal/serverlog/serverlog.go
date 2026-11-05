@@ -310,9 +310,20 @@ var (
 // still be seen.
 var reloadChatter = regexp.MustCompile(`\[alert\] \d+#\d+: (?:\*\d+ )?(?:open socket #\d+ left in connection \d+|aborting)\s*$`)
 
+// outOfContext is PHP dying because a file meant to be included was requested
+// on its own — a WordPress core, plugin or theme file whose first line expects
+// WordPress to be loaded already. Only a scanner asks for those, and the site
+// is fine: kept as a warning, never a critical alert.
+var outOfContext = regexp.MustCompile(`PHP Fatal error:\s+Uncaught Error: (?:Undefined constant "?ABSPATH"?|` +
+	`Call to undefined function (?:add_action|add_filter|apply_filters|do_action|__|_e|esc_html__?|esc_attr__?|` +
+	`get_option|is_admin|wp_die|plugin_dir_path|plugin_dir_url|plugins_url|register_activation_hook|` +
+	`get_template_part|get_header|get_footer|wp_enqueue_script|wp_enqueue_style)\(\))`)
+
 func level(message string) string {
 	switch {
 	case reloadChatter.MatchString(message):
+		return LevelWarning
+	case outOfContext.MatchString(message):
 		return LevelWarning
 	case critical.MatchString(message):
 		return LevelCritical

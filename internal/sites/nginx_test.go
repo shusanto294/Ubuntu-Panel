@@ -475,3 +475,18 @@ func TestTheSharedConfigDeclaresTheForwardedProtoMap(t *testing.T) {
 		t.Errorf("the map is not keyed on the forwarded header:\n%s", helperConfig)
 	}
 }
+
+func TestWordPressInternalsAreRefused(t *testing.T) {
+	site := &store.Site{Domain: "example.com", Type: "wordpress", RootPath: "/var/www/example.com", PHPVersion: "8.3"}
+	vhost := RenderVhost(site, true, true)
+
+	for _, want := range []string{"location = /wp-settings.php { deny all; }", "location = /wp-config.php { deny all; }",
+		`location ~* ^/wp-includes/(?!js/tinymce/wp-tinymce\.php$|ms-files\.php$).+\.php$ { deny all; }`} {
+		if !strings.Contains(vhost, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Index(vhost, "wp-settings.php") > strings.Index(vhost, `location ~ \.php$`) {
+		t.Error("the refusals come after the PHP location, which would win")
+	}
+}
