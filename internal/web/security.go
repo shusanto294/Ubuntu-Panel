@@ -107,7 +107,7 @@ func (a *App) applySSHProtection(runner *tasks.Runner) error {
 	a.Store.SetSetting(trustedSetting, strings.Join(a.trustedList(context.Background()), " "))
 
 	// The optional jails and rate limits share the never-ban list.
-	if p := a.protection(); p.AnyJail() || p.RateLogin.Enabled || p.RateFlood.Enabled {
+	if p := a.protection(); p.AnyJail() || p.AnyNginx() {
 		if err := a.applyProtection(context.Background(), p); err != nil {
 			a.Log.Warn("could not update the protections with the never-ban list", "error", err)
 		}
@@ -363,6 +363,18 @@ func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapsh
 				false: "ufw is off, so every port something listens on is open to the internet.",
 			}[snap.Firewall.Active],
 		},
+		func() check {
+			open := security.ExposedServices(snap.Firewall)
+			return check{
+				Key: "exposed_services", Label: "No database or cache is open to the internet", Level: "critical", Tab: "firewall",
+				OK: len(open) == 0,
+				Detail: map[bool]string{
+					true: "Redis, MongoDB, MariaDB and the like answer this machine only, or the firewall keeps them in.",
+					false: "Reachable from anywhere: " + strings.Join(open, ", ") + ". Bind it to 127.0.0.1 or keep the " +
+						"firewall from allowing its port — an open Redis or MongoDB is the most common way a server is taken over.",
+				}[len(open) == 0],
+			}
+		}(),
 		{
 			Key: "root_login", Label: "Root cannot log in with a password", Level: "warning", Tab: "hardening",
 			OK: snap.SSH.Readable && snap.SSH.PermitRootLogin != "yes",
@@ -572,6 +584,7 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		"protection": a.protectionProps(r.Context(), snap),
 		"users":      a.sshUsers(snap),
 		"firewall":   snap.Firewall,
+		"forwards":   a.forwards(),
 		"panelPort":  a.panelPort(),
 		"updates":    snap.Updates,
 		"logins": map[string]any{

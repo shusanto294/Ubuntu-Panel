@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -575,6 +576,19 @@ func (s *Service) resourcesHolding(ctx context.Context, key string) string {
 		if count := s.Store.EmailDomainCount(ctx); count > 0 {
 			return fmt.Sprintf("%d mail domain%s still configured, and their mailboxes hold mail. "+
 				"Delete them from the Email page first.", count, plural(count, " is", "s are"))
+		}
+
+	case "modsecurity":
+		// Every site's server block says `modsecurity on` while the WAF is:
+		// without the module nginx would refuse to load at all.
+		var saved struct {
+			WAF struct {
+				Enabled bool `json:"enabled"`
+			} `json:"waf"`
+		}
+		json.Unmarshal([]byte(s.Store.Setting("security_protection", "{}")), &saved)
+		if saved.WAF.Enabled {
+			return "The web application firewall is on. Turn it off on Security → Protection first."
 		}
 
 	case "dns":

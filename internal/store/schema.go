@@ -477,6 +477,10 @@ var migrations = []string{
 	// What a notification is about, for its own page: the addresses an attack
 	// came from, the task that failed, the log lines that were critical. JSON.
 	`ALTER TABLE notifications ADD COLUMN data TEXT NOT NULL DEFAULT '{}'`,
+
+	// What an account may do: "admin" everything, "viewer" look and touch
+	// nothing. Every account made before there was a choice is an admin.
+	`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

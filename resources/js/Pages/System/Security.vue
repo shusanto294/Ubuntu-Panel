@@ -26,6 +26,7 @@ const props = defineProps({
     bans: Object,
     protection: Object,
     firewall: Object,
+    forwards: { type: Array, default: () => [] },
     panelPort: Number,
     updates: Object,
     logins: Object,
@@ -279,6 +280,7 @@ const tiles = computed(() => [
         <Firewall
             v-else-if="tab === 'firewall'"
             :firewall="firewall"
+            :forwards="forwards"
             :ssh-ports="hardening.ports"
             :panel-port="panelPort"
             :my-ip="myIp"

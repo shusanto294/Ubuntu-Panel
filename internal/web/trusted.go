@@ -222,7 +222,7 @@ func (a *App) syncTrusted(ctx context.Context) {
 			a.Log.Warn("could not give fail2ban the trusted addresses", "error", err)
 			return
 		}
-	} else if p := a.protection(); p.AnyJail() || p.RateLogin.Enabled || p.RateFlood.Enabled {
+	} else if p := a.protection(); p.AnyJail() || p.AnyNginx() {
 		if err := a.applyProtection(ctx, p); err != nil {
 			a.Log.Warn("could not give the protections the trusted addresses", "error", err)
 			return

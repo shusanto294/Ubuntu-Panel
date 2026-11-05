@@ -306,6 +306,14 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An administrator's key made read-only later stops working: the AI tools
+	// change things.
+	if !user.IsAdmin() {
+		a.refuseMCP(w, "The account this key belongs to is read-only, and AI access changes things.")
+
+		return
+	}
+
 	a.Store.TouchAPIToken(token.ID)
 
 	a.MCP.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), mcpUserKey{}, user)))

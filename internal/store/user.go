@@ -19,7 +19,18 @@ type User struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	Role  string `json:"role"`
 }
+
+// The roles an account can have.
+const (
+	RoleAdmin  = "admin"
+	RoleViewer = "viewer"
+)
+
+// IsAdmin is whether the account may change things. An empty role is an
+// account read before the column existed, which was an admin.
+func (u *User) IsAdmin() bool { return u.Role != RoleViewer }
 
 // UserCount says how many accounts exist. Zero is what sends a fresh install
 // to the setup form instead of the sign-in page.
@@ -36,8 +47,8 @@ func (s *Store) FindUser(ctx context.Context, id int64) (*User, error) {
 	user := &User{}
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, email FROM users WHERE id = ?`, id,
-	).Scan(&user.ID, &user.Name, &user.Email)
+		`SELECT id, name, email, role FROM users WHERE id = ?`, id,
+	).Scan(&user.ID, &user.Name, &user.Email, &user.Role)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoUser
@@ -68,7 +79,7 @@ func (s *Store) CreateUser(ctx context.Context, name, email, password string) (*
 		return nil, err
 	}
 
-	return &User{ID: id, Name: name, Email: email}, nil
+	return &User{ID: id, Name: name, Email: email, Role: RoleAdmin}, nil
 }
 
 // Authenticate checks an address and password together.
@@ -84,9 +95,9 @@ func (s *Store) Authenticate(ctx context.Context, email, password string) (*User
 	hash := decoy
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, email, password FROM users WHERE lower(email) = lower(?)`,
+		`SELECT id, name, email, role, password FROM users WHERE lower(email) = lower(?)`,
 		strings.TrimSpace(email),
-	).Scan(&user.ID, &user.Name, &user.Email, &hash)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.Role, &hash)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -135,4 +146,46 @@ func (s *Store) CheckPassword(ctx context.Context, id int64, password string) bo
 	}
 
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
+// Users lists every account, oldest first.
+func (s *Store) Users(ctx context.Context) ([]*User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, email, role FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := []*User{}
+	for rows.Next() {
+		user := &User{}
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Role); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
+// SetUserRole changes what an account may do.
+func (s *Store) SetUserRole(ctx context.Context, id int64, role string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?`, role, id)
+	return err
+}
+
+// DeleteUser removes an account and signs it out everywhere.
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	return err
+}
+
+// AdminCount is how many accounts may change things: never fewer than one.
+func (s *Store) AdminCount(ctx context.Context) int {
+	var count int
+	s.db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE role != ?`, RoleViewer).Scan(&count)
+	return count
 }

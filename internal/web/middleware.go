@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
@@ -61,9 +62,15 @@ func (a *App) guard(level access, handler http.HandlerFunc) http.Handler {
 		user := userFrom(r.Context())
 
 		switch level {
-		case authenticated:
+		case authenticated, admin:
 			if user == nil {
 				a.requireSignIn(w, r, sess)
+				return
+			}
+
+			// A read-only account looks, and changes only itself.
+			if !user.IsAdmin() && (level == admin || changesState(r) && !viewerMay(r.URL.Path)) {
+				a.readOnly(w, r, sess)
 				return
 			}
 
@@ -233,4 +240,28 @@ func (s *statusRecorder) Flush() {
 	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// viewerMay are what a read-only account may still post: its own sign-out,
+// profile, password and two-factor, and its notifications.
+func viewerMay(path string) bool {
+	return path == "/logout" || path == "/password" || path == "/profile" ||
+		strings.HasPrefix(path, "/profile/") || strings.HasPrefix(path, "/notifications/")
+}
+
+func (a *App) readOnly(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	message := "Your account is read-only. Ask an administrator to make this change."
+
+	if r.Method == http.MethodGet && r.Header.Get("X-Inertia") == "" && !strings.HasPrefix(r.Header.Get("Accept"), "text/html") {
+		http.Error(w, message, http.StatusForbidden)
+		return
+	}
+	if sess != nil {
+		sess.Flash("error", message)
+	}
+	if r.Method == http.MethodGet {
+		inertia.Redirect(w, r, "/dashboard")
+		return
+	}
+	inertia.Back(w, r, "/dashboard")
 }

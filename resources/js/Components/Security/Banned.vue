@@ -61,11 +61,15 @@ const sources = {
     web_scan: { label: 'Website scanner', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
     mail: { label: 'Mail login attack', scope: 'Mail ports', style: 'bg-violet-50 text-violet-700', tab: 'protection' },
     recidive: { label: 'Repeat offender', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'protection' },
+    web_flood: { label: 'Request flood', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
+    tools: { label: 'Attack tool', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
+    waf: { label: 'WAF block', scope: 'Web ports', style: 'bg-orange-50 text-orange-700', tab: 'protection' },
+    port_scan: { label: 'Port scan', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'protection' },
     firewall: { label: 'Firewall block', scope: 'Whole server', style: 'bg-rose-50 text-rose-700', tab: 'firewall' },
     panel: { label: 'Panel lockout', scope: 'Panel sign-in', style: 'bg-slate-100 text-slate-700', tab: 'logins' },
 };
 
-const PROTECT_KINDS = ['web_login', 'web_scan', 'mail', 'recidive'];
+const PROTECT_KINDS = ['web_login', 'web_scan', 'mail', 'recidive', 'web_flood', 'tools', 'waf', 'port_scan'];
 
 const counts = computed(() => live.value.counts);
 
@@ -259,9 +263,9 @@ const release = async (row) => {
                                     </span>
                                 </template>
                                 <span>{{
-                                    row.sources.some((s) => s.kind === 'firewall' || s.kind === 'recidive')
+                                    row.sources.some((s) => s.kind === 'firewall' || s.kind === 'recidive' || s.kind === 'port_scan')
                                         ? 'Refused on every port'
-                                        : row.sources.some((s) => s.kind === 'web_login' || s.kind === 'web_scan')
+                                        : row.sources.some((s) => ['web_login', 'web_scan', 'web_flood', 'tools', 'waf'].includes(s.kind))
                                           ? 'Refused on the web ports'
                                           : row.sources.some((s) => s.kind === 'mail')
                                             ? 'Refused on the mail ports'

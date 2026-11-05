@@ -58,8 +58,16 @@ const phpMyAdminGatePath = "/internal/phpmyadmin-gate"
 // Deliberately not the usual redirect-to-login: nginx reads the status code,
 // and a 302 to /login would be read as "allowed".
 func (a *App) phpMyAdminGate(w http.ResponseWriter, r *http.Request) {
-	if userFrom(r.Context()) == nil {
+	user := userFrom(r.Context())
+	if user == nil {
 		w.WriteHeader(http.StatusUnauthorized)
+
+		return
+	}
+
+	// A read-only account does not get into the databases.
+	if !user.IsAdmin() {
+		w.WriteHeader(http.StatusForbidden)
 
 		return
 	}

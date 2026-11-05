@@ -26,6 +26,9 @@ const (
 	kernelPreviousSetting = "security_kernel_previous"
 	accessLogsSetting     = "security_access_logs"
 	protectFailSetting    = "security_protection_failures"
+	pingPreviousSetting   = "security_ping_previous"
+	challengeSecretKey    = "security_challenge_secret"
+	countriesFetchedKey   = "security_countries_refreshed"
 )
 
 // protectionFailure is why a protection could not be switched, kept on its
@@ -85,10 +88,29 @@ func (a *App) protection() security.Protection {
 		{&p.WebScan, security.ProtectionDefaults.WebScan},
 		{&p.Mail, security.ProtectionDefaults.Mail},
 		{&p.Recidive, security.ProtectionDefaults.Recidive},
+		{&p.WebFlood, security.ProtectionDefaults.WebFlood},
+		{&p.Tools, security.ProtectionDefaults.Tools},
+		{&p.PortScan, security.ProtectionDefaults.PortScan},
 	} {
 		if !jail.rule.Enabled {
 			*jail.rule = jail.fallback
 		}
+	}
+
+	if !p.ConnLimit.Enabled {
+		p.ConnLimit = security.ProtectionDefaults.ConnLimit
+	}
+	if !p.WAF.Enabled {
+		p.WAF = security.ProtectionDefaults.WAF
+	}
+	if p.Countries.Mode == "" {
+		p.Countries.Mode = security.CountriesBlock
+	}
+	if p.Countries.Codes == nil {
+		p.Countries.Codes = []string{}
+	}
+	if p.Challenge.Sites == nil {
+		p.Challenge.Sites = []string{}
 	}
 
 	syncPathRules(p)
@@ -129,16 +151,25 @@ func syncPathRules(p security.Protection) {
 func (a *App) saveProtection(p security.Protection) {
 	encoded, _ := json.Marshal(p)
 	a.Store.SetSetting(protectionSetting, string(encoded))
+	challengeState.forget()
 }
 
 // nginxEnv is what the nginx file is rendered with: the never-ban list, and
 // the hostnames whose clients are busy by design — the panel itself, and the
 // applications that sync or poll.
-func (a *App) nginxEnv(ctx context.Context) security.NginxEnv {
-	env := security.NginxEnv{IgnoreIPs: a.trustedList(ctx)}
+//
+// And for the per-site protections: the hostnames under attack mode, the
+// secret their passes are signed with, and the WAF's configuration.
+func (a *App) nginxEnv(ctx context.Context, p security.Protection) security.NginxEnv {
+	env := security.NginxEnv{IgnoreIPs: a.trustedList(ctx), BindPort: a.Config.BindPort}
 
 	if domain := a.Store.Setting("panel_domain", ""); domain != "" {
 		env.ExemptHosts = append(env.ExemptHosts, domain)
+	}
+
+	challenged := map[string]bool{}
+	for _, domain := range p.Challenge.Sites {
+		challenged[domain] = true
 	}
 
 	if sites, err := a.Store.Sites(ctx); err == nil {
@@ -146,6 +177,19 @@ func (a *App) nginxEnv(ctx context.Context) security.NginxEnv {
 			if site.Type == "nextcloud" || site.Type == "n8n" {
 				env.ExemptHosts = append(env.ExemptHosts, site.Hostnames()...)
 			}
+			if challenged[site.Domain] {
+				env.ChallengeHosts = append(env.ChallengeHosts, site.Hostnames()...)
+			}
+		}
+	}
+
+	if p.Challenge.Enabled {
+		env.ChallengeSecret = a.challengeSecret()
+	}
+
+	if p.WAF.Enabled {
+		if waf, err := security.WAFEnvFor(env.IgnoreIPs, env.ExemptHosts); err == nil {
+			env.WAFRules = security.WAFFile(p.WAF, waf)
 		}
 	}
 
@@ -156,11 +200,19 @@ func (a *App) nginxEnv(ctx context.Context) security.NginxEnv {
 // settings are applied by their own switch, because turning them off needs
 // the values they replaced.
 func (a *App) applyProtection(ctx context.Context, p security.Protection) error {
+	// The country lists first: the nginx file includes them.
+	if p.Countries.Enabled && !sameStrings(security.CountriesOnDisk(), p.Countries.Codes) {
+		if err := security.WriteCountries(p.Countries.Codes); err != nil {
+			return err
+		}
+		a.Store.SetSetting(countriesFetchedKey, strconv.FormatInt(time.Now().Unix(), 10))
+	}
+
 	if err := security.ApplyJails(p, a.trustedList(ctx)); err != nil {
 		return err
 	}
 
-	if err := security.ApplyNginx(security.NginxFile(p, a.nginxEnv(ctx))); err != nil {
+	if err := security.ApplyNginx(security.NginxFiles(p, a.nginxEnv(ctx, p))); err != nil {
 		return err
 	}
 
@@ -192,11 +244,24 @@ func (a *App) EnsureProtection(ctx context.Context) {
 		a.Log.Info("removed the panel's own lines from the server logs", "events", removed)
 	}
 
-	if p.AnyJail() || p.RealIP || p.RateLogin.Enabled || p.RateFlood.Enabled ||
-		security.NginxCurrent() != "" {
-		want := security.NginxFile(p, a.nginxEnv(ctx))
+	// Every site's server blocks include the per-site protections, whether
+	// or not any is on, so turning one on never has to touch a vhost.
+	if a.Store.ServiceInstalled("nginx") {
+		if err := a.Sites.EnsureGuardIncludes(ctx); err != nil {
+			a.Log.Error("could not add the protections' include to the vhosts", "error", err)
+		}
+	}
 
-		if security.NginxCurrent() != want {
+	if p.AnyJail() || p.AnyNginx() || security.NginxPresent() {
+		if p.Countries.Enabled && !sameStrings(security.CountriesOnDisk(), p.Countries.Codes) {
+			if err := security.WriteCountries(p.Countries.Codes); err != nil {
+				a.Log.Error("could not download the country lists", "error", err)
+			}
+		}
+
+		want := security.NginxFiles(p, a.nginxEnv(ctx, p))
+
+		if !security.NginxCurrent(want) {
 			if err := security.ApplyNginx(want); err != nil {
 				a.Log.Error("could not apply the nginx protections", "error", err)
 			}
@@ -221,6 +286,43 @@ func (a *App) EnsureProtection(ctx context.Context) {
 			a.Log.Error("could not apply the kernel network settings", "error", err)
 		}
 	}
+
+	// A PHP version installed since is hardened like the rest.
+	if p.PHPHarden && !security.PHPHardeningApplied() {
+		if err := security.ApplyPHPHardening(true); err != nil {
+			a.Log.Error("could not harden PHP", "error", err)
+		}
+	}
+
+	// Port forwards survive a firewall reset.
+	if forwards := a.forwards(); len(forwards) > 0 {
+		if err := security.ApplyForwards(forwards); err != nil {
+			a.Log.Error("could not put the port forwards back", "error", err)
+		}
+	}
+
+	if p.NoPing && !security.PingApplied() {
+		if err := security.ApplyNoPing(true, nil); err != nil {
+			a.Log.Error("could not stop the server answering ping", "error", err)
+		}
+	}
+}
+
+// sameStrings is whether two lists hold the same strings, in any order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := map[string]int{}
+	for _, value := range a {
+		counts[value]++
+	}
+	for _, value := range b {
+		if counts[value]--; counts[value] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 var lastProtectionCheck struct {
@@ -260,10 +362,23 @@ func (a *App) checkProtection(ctx context.Context) {
 
 	p := a.protection()
 
-	if p.WebLogin.Enabled || p.WebScan.Enabled {
+	if p.WebLogin.Enabled || p.WebScan.Enabled || p.WebFlood.Enabled || p.Tools.Enabled || p.WAF.Bans() {
 		if logs := security.AccessLogs(); logs != a.Store.Setting(accessLogsSetting, "") {
 			security.ReloadJails()
 			a.Store.SetSetting(accessLogsSetting, logs)
+		}
+	}
+
+	// Address ranges move between countries; the lists are fetched again
+	// once a week.
+	if p.Countries.Enabled {
+		fetched, _ := strconv.ParseInt(a.Store.Setting(countriesFetchedKey, "0"), 10, 64)
+		if time.Since(time.Unix(fetched, 0)) > 7*24*time.Hour {
+			if err := security.RefreshCountries(p.Countries.Codes); err != nil {
+				a.Log.Warn("could not refresh the country lists", "error", err)
+			} else {
+				a.Store.SetSetting(countriesFetchedKey, strconv.FormatInt(time.Now().Unix(), 10))
+			}
 		}
 	}
 }
@@ -353,6 +468,96 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 	case "recidive":
 		p.Recidive, ok = jail(p.Recidive)
 		label = "Repeat-offender bans"
+	case "web_flood":
+		p.WebFlood, ok = jail(p.WebFlood)
+		label = "Flood bans"
+	case "tools":
+		p.Tools, ok = jail(p.Tools)
+		label = "Attack tool bans"
+	case "port_scan":
+		p.PortScan, ok = jail(p.PortScan)
+		label = "Port scan bans"
+	case "conn_limit":
+		next := security.ConnLimit{Enabled: enabled, Max: number("max", p.ConnLimit.Max)}
+		if problems := next.Validate(); len(problems) > 0 {
+			for field, message := range problems {
+				sess.Error(field, message)
+			}
+			ok = false
+		} else {
+			p.ConnLimit = next
+		}
+		label = "The connection limit"
+	case "countries":
+		next := security.CountryRule{Enabled: enabled, Mode: input["mode"], Codes: p.Countries.Codes}
+		if _, sent := input["codes"]; sent {
+			codes, problem := security.CleanCountries(input["codes"])
+			if problem != "" {
+				sess.Error("codes", problem)
+				inertia.Back(w, r, "/security?tab=protection")
+				return
+			}
+			next.Codes = codes
+		}
+		if next.Mode == "" {
+			next.Mode = p.Countries.Mode
+		}
+		if problems := next.Validate(); enabled && len(problems) > 0 {
+			for field, message := range problems {
+				sess.Error(field, message)
+			}
+			ok = false
+		} else {
+			p.Countries = next
+		}
+		label = "Country rules"
+	case "challenge":
+		next := security.ChallengeRule{Enabled: enabled, Sites: p.Challenge.Sites}
+		if _, sent := input["sites"]; sent {
+			next.Sites = a.knownSites(r.Context(), input["sites"])
+		}
+		if problems := next.Validate(); enabled && len(problems) > 0 {
+			for field, message := range problems {
+				sess.Error(field, message)
+			}
+			ok = false
+		} else {
+			p.Challenge = next
+		}
+		label = "Under attack mode"
+	case "waf":
+		next := security.WAFRule{
+			Enabled:  enabled,
+			Block:    boolInput(input, "block", p.WAF.Block),
+			MaxRetry: number("max_retry", p.WAF.MaxRetry),
+			FindTime: number("find_time", p.WAF.FindTime),
+			BanTime:  number("ban_time", p.WAF.BanTime),
+		}
+		if problems := next.Validate(); len(problems) > 0 {
+			for field, message := range problems {
+				sess.Error(field, message)
+			}
+			ok = false
+		} else {
+			p.WAF = next
+		}
+		label = "The web application firewall"
+	case "no_ping":
+		label = "Ignoring ping"
+	case "waf_install":
+		a.installWAF(w, r)
+		return
+	case "watch":
+		label = "The backdoor watch"
+	case "integrity":
+		label = "The code change monitor"
+	case "php_harden":
+		label = "PHP hardening"
+	case "compilers":
+		label = "Compilers for administrators only"
+	case "recommended":
+		a.securityRecommended(w, r)
+		return
 	case "rate_login":
 		p.RateLogin, ok = rate(p.RateLogin, false)
 		label = "The login rate limit"
@@ -401,6 +606,66 @@ func (a *App) securityProtection(w http.ResponseWriter, r *http.Request) {
 		a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
 		a.securityBack(w, r, label+map[bool]string{true: " — ports 80 and 443 now refuse everyone else.",
 			false: " is off; ports 80 and 443 are open to everyone again."}[enabled], false)
+		return
+	}
+
+	if enabled {
+		if refusal := a.refuseProtection(r.Context(), feature, p); refusal != nil {
+			a.recordProtection(feature, enabled, refusal)
+			a.securityBack(w, r, refusal.Error(), true)
+			return
+		}
+	}
+
+	// The machine-level switches: each applies itself.
+	switch feature {
+	case "watch", "integrity", "php_harden", "compilers":
+		if err := a.applySwitch(r.Context(), feature, enabled); err != nil {
+			a.recordProtection(feature, enabled, err)
+			a.securityBack(w, r, err.Error(), true)
+			return
+		}
+
+		switch feature {
+		case "watch":
+			p.Watch = enabled
+		case "integrity":
+			p.Integrity = enabled
+		case "php_harden":
+			p.PHPHarden = enabled
+		case "compilers":
+			p.Compilers = enabled
+		}
+
+		a.saveProtection(p)
+		a.recordProtection(feature, enabled, nil)
+		a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
+		a.securityBack(w, r, label+map[bool]string{true: " is on.", false: " is off."}[enabled], false)
+		return
+	}
+
+	// Ping is the kernel's too, and keeps what it replaces in the same way.
+	if feature == "no_ping" {
+		if enabled && !before.NoPing {
+			encoded, _ := json.Marshal(security.PingValues())
+			a.Store.SetSetting(pingPreviousSetting, string(encoded))
+		}
+
+		var previous map[string]string
+		json.Unmarshal([]byte(a.Store.Setting(pingPreviousSetting, "{}")), &previous)
+
+		if err := security.ApplyNoPing(enabled, previous); err != nil {
+			a.recordProtection(feature, enabled, err)
+			a.securityBack(w, r, err.Error(), true)
+			return
+		}
+
+		p.NoPing = enabled
+		a.saveProtection(p)
+		a.recordProtection(feature, enabled, nil)
+		a.Log.Info("protection changed", "feature", feature, "enabled", enabled, "ip", session.ClientIP(r))
+		a.securityBack(w, r, map[bool]string{true: "The server no longer answers ping.",
+			false: "The server answers ping again."}[enabled], false)
 		return
 	}
 
@@ -509,6 +774,10 @@ var protectJailKinds = map[string]string{
 	security.JailMail:      "mail",
 	security.JailMailIMAP:  "mail",
 	security.JailRecidive:  "recidive",
+	security.JailWebFlood:  "web_flood",
+	security.JailWebTools:  "tools",
+	security.JailWebWAF:    "waf",
+	security.JailPortScan:  "port_scan",
 }
 
 func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[string]any {
@@ -528,6 +797,17 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 		jails[jail] = status
 	}
 
+	type siteChoice struct {
+		Domain string `json:"domain"`
+		Edge   bool   `json:"edge"`
+	}
+	siteChoices := []siteChoice{}
+	if sites, err := a.Store.Sites(ctx); err == nil {
+		for _, site := range sites {
+			siteChoices = append(siteChoices, siteChoice{Domain: site.Domain, Edge: site.EdgeTLS()})
+		}
+	}
+
 	return map[string]any{
 		"settings": p,
 		"defaults": security.ProtectionDefaults,
@@ -537,10 +817,21 @@ func (a *App) protectionProps(ctx context.Context, snap *securitySnapshot) map[s
 			"fail2ban": proc.Which("fail2ban-client"),
 			"nginx":    a.Store.ServiceInstalled("nginx"),
 			"mail":     a.Store.ServiceInstalled("mail"),
+			"firewall": snap.Firewall.Active,
+			"waf":      security.WAFInstalled(),
 		},
-		"kernel_applied": p.Kernel && security.KernelApplied(),
-		"edge_applied":   p.EdgeOnly && security.EdgeOnlyApplied(),
-		"edge_sites":     edgeSites,
+		"waf_installing":    a.wafInstalling(ctx),
+		"sites":             siteChoices,
+		"countries_at":      a.Store.Setting(countriesFetchedKey, ""),
+		"kernel_applied":    p.Kernel && security.KernelApplied(),
+		"php_applied":       p.PHPHarden && security.PHPHardeningApplied(),
+		"locks":             a.lockProps(ctx),
+		"watch_changes":     a.watchChanges(),
+		"code_changes":      a.codeChanges(),
+		"cloudflare_attack": a.cloudflareAttackOn(),
+		"ping_applied":      p.NoPing && security.PingApplied(),
+		"edge_applied":      p.EdgeOnly && security.EdgeOnlyApplied(),
+		"edge_sites":        edgeSites,
 		"paths": map[string]any{
 			"secret":         p.Secrets(),
 			"scan":           p.Scans(),
@@ -586,6 +877,38 @@ func (a *App) protectionChecks(ctx context.Context) []check {
 				true:  "An address banned again and again is banned from every port for " + humanSeconds(p.Recidive.BanTime) + ".",
 				false: "An address that is banned, waits and comes back is treated as new each time.",
 			}[p.Recidive.Enabled],
+		},
+		{
+			Key: "conn_limit", Label: "Slow and held-open connections are cut off", Level: "info", Tab: "protection",
+			OK: p.ConnLimit.Enabled,
+			Detail: map[bool]string{
+				true:  fmt.Sprintf("Each address may have %d requests open at once; clients that send slowly are closed in seconds.", p.ConnLimit.Max),
+				false: "A Slowloris attack can hold nginx's connections open with a trickle of bytes from one machine.",
+			}[p.ConnLimit.Enabled],
+		},
+		{
+			Key: "tools", Label: "Attack tools are refused", Level: "info", Tab: "protection",
+			OK: p.Tools.Enabled,
+			Detail: map[bool]string{
+				true:  "sqlmap, nikto, WPScan and similar tools are cut off and banned on their first request.",
+				false: "Vulnerability scanners that announce themselves can still probe every site.",
+			}[p.Tools.Enabled],
+		},
+		{
+			Key: "waf", Label: "Web application firewall", Level: "info", Tab: "protection",
+			OK: p.WAF.Enabled && p.WAF.Block,
+			Detail: map[bool]string{
+				true:  "ModSecurity with the OWASP Core Rule Set refuses SQL injection, XSS and other attacks before PHP runs.",
+				false: "SQL injection and cross-site scripting attempts reach the sites' code; only the code stands in the way.",
+			}[p.WAF.Enabled && p.WAF.Block],
+		},
+		{
+			Key: "port_scan", Label: "Port scanners are banned", Level: "info", Tab: "protection",
+			OK: p.PortScan.Enabled,
+			Detail: map[bool]string{
+				true:  "An address trying closed port after closed port is banned from the whole server.",
+				false: "Anyone can map which ports this server answers on, as often as they like.",
+			}[p.PortScan.Enabled],
 		},
 		{
 			Key: "kernel", Label: "Kernel network hardening", Level: "info", Tab: "protection",

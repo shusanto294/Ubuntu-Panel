@@ -598,3 +598,52 @@ func (s *Service) SetCronJobs(ctx context.Context, siteID int64, jobs []CronJob)
 
 	return nil
 }
+
+// EnsureGuardIncludes adds GuardInclude to the vhosts written before it
+// existed, after each server block's error_log, and reloads nginx once for all
+// of them. Every file is put back if nginx will not have the result: this
+// runs at start, unattended, on a machine serving every one of these sites.
+func (s *Service) EnsureGuardIncludes(ctx context.Context) error {
+	list, err := s.Store.Sites(ctx)
+	if err != nil {
+		return err
+	}
+
+	previous := map[string]string{}
+
+	for _, site := range list {
+		path := AvailablePath(site)
+
+		contents, err := proc.ReadFile(path, true)
+		if err != nil || strings.Contains(contents, GuardInclude) || !strings.Contains(contents, "# Managed by") {
+			continue
+		}
+
+		marker := fmt.Sprintf("    error_log  /var/log/nginx/%s-error.log;\n", site.Domain)
+		if !strings.Contains(contents, marker) {
+			continue
+		}
+
+		if err := proc.PutFile(path, strings.ReplaceAll(contents, marker, marker+"    "+GuardInclude+"\n"), true); err != nil {
+			return err
+		}
+		previous[path] = contents
+	}
+
+	if len(previous) == 0 {
+		return nil
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		for path, contents := range previous {
+			proc.PutFile(path, contents, true)
+		}
+		return fmt.Errorf("nginx refused the vhosts with the protections' include, so they were put back: %s", check.Output)
+	}
+
+	if !proc.Ok("sudo systemctl reload nginx") {
+		return errors.New("nginx accepted the vhosts but would not reload")
+	}
+
+	return nil
+}

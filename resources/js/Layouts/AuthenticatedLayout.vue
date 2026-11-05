@@ -286,6 +286,12 @@ const sections = [
 
             <main class="break-words px-4 py-6 sm:px-6 lg:px-8">
                 <FlashMessages />
+                <p
+                    v-if="$page.props.auth?.user?.role === 'viewer'"
+                    class="mb-4 rounded-xl bg-slate-100 px-4 py-2.5 text-sm text-slate-700 ring-1 ring-slate-200"
+                >
+                    You are signed in with a <b>read-only</b> account: you can look at everything, but changes are refused.
+                </p>
                 <slot />
             </main>
         </div>

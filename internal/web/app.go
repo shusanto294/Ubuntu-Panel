@@ -183,6 +183,10 @@ func (a *App) Handler() http.Handler {
 
 	handler = a.withSecurityHeaders(handler)
 	handler = a.withLogging(handler)
+
+	// Outside the log as well: under attack mode's check is asked once by
+	// every visitor of a site under attack, which is a flood by definition.
+	handler = a.withChallenge(handler)
 	handler = a.withRecovery(handler)
 
 	return handler

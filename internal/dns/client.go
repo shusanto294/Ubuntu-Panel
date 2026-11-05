@@ -1088,3 +1088,33 @@ func (c *Client) ClaimHost(zoneID, zoneName, name, keep string) (int, error) {
 
 	return removed, nil
 }
+
+// ------------------------------------------------------------------ security level
+
+// SecurityLevel is Cloudflare's security level for a zone — "under_attack"
+// is its own Under Attack mode, the browser check at Cloudflare's edge.
+func (c *Client) SecurityLevel(zoneID string) (string, error) {
+	if c.Account.Provider != "cloudflare" {
+		return "", errors.New("only Cloudflare has an Under Attack mode")
+	}
+
+	body, err := c.request("GET", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/settings/security_level", nil)
+	if err != nil {
+		return "", err
+	}
+
+	return str(object(body["result"]), "value", ""), nil
+}
+
+// SetSecurityLevel changes it. The API token needs Zone Settings: Edit, which
+// a token made only for DNS does not have.
+func (c *Client) SetSecurityLevel(zoneID, level string) error {
+	if c.Account.Provider != "cloudflare" {
+		return errors.New("only Cloudflare has an Under Attack mode")
+	}
+
+	_, err := c.request("PATCH", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/settings/security_level",
+		map[string]any{"value": level})
+
+	return err
+}

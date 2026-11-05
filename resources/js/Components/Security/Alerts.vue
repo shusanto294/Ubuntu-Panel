@@ -23,6 +23,7 @@ const form = useForm({
     web_ban: props.alerts.web_ban,
     attacks: props.alerts.attacks,
     critical: props.alerts.critical,
+    suspicious: props.alerts.suspicious,
     task_failed: props.alerts.task_failed,
 });
 
@@ -43,6 +44,7 @@ const health = [
     { key: 'mail_queue', label: 'Mail piling up', hint: '100 or more messages waiting to send — usually a stolen mailbox sending spam.' },
     { key: 'cert_expiry', label: 'Certificate not renewing', hint: 'A site’s Let’s Encrypt certificate expires within 14 days.' },
     { key: 'task_failed', label: 'Failed panel tasks', hint: 'A deployment, backup, certificate or install that stopped with an error.' },
+    { key: 'suspicious', label: 'Suspicious programs running', hint: 'A cryptocurrency miner, a program running from /tmp or /dev/shm, or a connection to a mining pool — what a hacked server looks like. Checked every five minutes; at most one email in six hours. Nothing is stopped.' },
     { key: 'critical', label: 'Critical errors in the server’s logs', hint: 'An out-of-memory kill, a crash, a fatal error. At most one email every 30 minutes, carrying everything since the last.' },
 ];
 </script>

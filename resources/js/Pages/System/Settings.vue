@@ -10,7 +10,7 @@ import TextInput from '@/Components/TextInput.vue';
 import VersionCard from '@/Components/VersionCard.vue';
 import { useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { confirmDanger } from '@/dialog';
-import { Head, router, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({
     system: Object,
@@ -23,7 +23,24 @@ const props = defineProps({
     latestTask: Object,
     smtp: Object,
     backupStorage: Object,
+    panelUsers: { type: Array, default: () => [] },
 });
+
+// Panel users: who can sign in, and what each may do.
+const page = usePage();
+const me = computed(() => page.props.auth?.user ?? {});
+const userForm = useForm({ name: '', email: '', password: '', role: 'admin' });
+const addUser = () => userForm.post(route('settings.users.store'), { preserveScroll: true, onSuccess: () => userForm.reset() });
+const setRole = (user, role) => router.post(route('settings.users.update', user.id), { role }, { preserveScroll: true });
+const removeUser = async (user) => {
+    if (!(await confirmDanger(`Remove ${user.name}?`, `${user.email} will be signed out and can no longer sign in.`, 'Remove')))
+        return;
+    router.delete(route('settings.users.destroy', user.id), { preserveScroll: true });
+};
+const ROLES = {
+    admin: { label: 'Administrator', hint: 'Everything.' },
+    viewer: { label: 'Read-only', hint: 'Sees every page; changes nothing. No terminal, files, phpMyAdmin or database passwords.' },
+};
 
 const domainForm = useForm({
     domain: props.panel.domain ?? '',
@@ -434,6 +451,77 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
             </div>
 
             <BackupStorage :storage="backupStorage" />
+
+            <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                <h3 class="font-semibold text-slate-900">Panel users</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    Everyone who can sign in to this panel. Each has their own password and two-factor (Profile). A
+                    <b>read-only</b> account is for someone who needs to look — a client, a junior, an auditor — without being able to change anything.
+                </p>
+
+                <ul class="mt-4 divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
+                    <li v-for="user in panelUsers" :key="user.id" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                        <span class="min-w-0">
+                            <span class="block truncate text-sm font-medium text-slate-900">
+                                {{ user.name }} <span v-if="user.id === me.id" class="text-xs font-normal text-slate-400">(you)</span>
+                            </span>
+                            <span class="block truncate text-xs text-slate-500">{{ user.email }}</span>
+                        </span>
+                        <span class="flex shrink-0 items-center gap-2">
+                            <select
+                                :value="user.role"
+                                class="rounded-lg border-slate-300 py-1.5 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                                :disabled="user.id === me.id"
+                                :aria-label="`What ${user.name} may do`"
+                                @change="setRole(user, $event.target.value)"
+                            >
+                                <option v-for="(r, key) in ROLES" :key="key" :value="key">{{ r.label }}</option>
+                            </select>
+                            <button
+                                v-if="user.id !== me.id"
+                                type="button"
+                                class="rounded-lg px-2.5 py-2 text-xs font-medium text-rose-600 ring-1 ring-slate-900/10 hover:bg-rose-50 sm:py-1.5"
+                                @click="removeUser(user)"
+                            >
+                                Remove
+                            </button>
+                        </span>
+                    </li>
+                </ul>
+
+                <form class="mt-5 grid gap-4 sm:grid-cols-2" @submit.prevent="addUser">
+                    <div>
+                        <InputLabel for="new_user_name" value="Name" />
+                        <TextInput id="new_user_name" v-model="userForm.name" class="mt-1 block w-full" autocomplete="off" />
+                        <InputError class="mt-1" :message="userForm.errors.name" />
+                    </div>
+                    <div>
+                        <InputLabel for="new_user_email" value="Email" />
+                        <TextInput id="new_user_email" v-model="userForm.email" type="email" class="mt-1 block w-full" autocomplete="off" />
+                        <InputError class="mt-1" :message="userForm.errors.email" />
+                    </div>
+                    <div>
+                        <InputLabel for="new_user_password" value="Password" />
+                        <TextInput id="new_user_password" v-model="userForm.password" type="password" class="mt-1 block w-full" autocomplete="new-password" />
+                        <p class="mt-1 text-xs text-slate-400">At least 12 characters. They can change it on their Profile.</p>
+                        <InputError class="mt-1" :message="userForm.errors.password" />
+                    </div>
+                    <div>
+                        <InputLabel for="new_user_role" value="What they may do" />
+                        <select
+                            id="new_user_role"
+                            v-model="userForm.role"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        >
+                            <option v-for="(r, key) in ROLES" :key="key" :value="key">{{ r.label }} — {{ r.hint }}</option>
+                        </select>
+                        <InputError class="mt-1" :message="userForm.errors.role" />
+                    </div>
+                    <div class="sm:col-span-2">
+                        <PrimaryButton :disabled="userForm.processing">Add user</PrimaryButton>
+                    </div>
+                </form>
+            </div>
         </div>
     </AuthenticatedLayout>
 </template>

@@ -10,6 +10,7 @@ import { router, useForm } from '@inertiajs/vue3';
 
 const props = defineProps({
     firewall: Object,
+    forwards: { type: Array, default: () => [] },
     sshPorts: Array,
     panelPort: Number,
     myIp: String,
@@ -35,6 +36,20 @@ const disable = async () => {
         return;
     router.post(route('security.firewall.disable'), {}, { preserveScroll: true });
 };
+
+// Port forwards: a port here that leads to another port, here or elsewhere.
+const forwardForm = useForm({ protocol: 'tcp', port: '', to_ip: '', to_port: '', comment: '' });
+const addForward = () =>
+    forwardForm.post(route('security.firewall.forwards'), {
+        preserveScroll: true,
+        onSuccess: () => forwardForm.reset(),
+    });
+const removeForward = async (f) => {
+    if (!(await confirmDanger(`Stop forwarding port ${f.port}?`, 'Anything connecting to it will be refused from now on.', 'Remove')))
+        return;
+    router.post(route('security.firewall.forwards'), { remove: `${f.protocol}/${f.port}` }, { preserveScroll: true });
+};
+const targetOf = (f) => (!f.to_ip || f.to_ip === '127.0.0.1' ? `port ${f.to_port} on this server` : `${f.to_ip}:${f.to_port}`);
 
 const ruleForm = useForm({ action: 'allow', port: '', protocol: 'tcp', from: '', comment: '' });
 
@@ -186,6 +201,55 @@ const actionStyle = {
                             <InputError class="mt-1" :message="ruleForm.errors.comment" />
                         </div>
                         <PrimaryButton :disabled="ruleForm.processing">Add rule</PrimaryButton>
+                    </form>
+                </div>
+
+                <div :class="card">
+                    <h3 class="font-semibold text-slate-900">Port forwarding</h3>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Send connections on a port of this server somewhere else — another port here, or a machine on your
+                        private network. The forwarded port is opened for you; the target is not. IPv4 only.
+                    </p>
+                    <ul v-if="forwards.length" class="mt-3 divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
+                        <li v-for="f in forwards" :key="`${f.protocol}/${f.port}`" class="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                            <span class="min-w-0">
+                                <span class="font-mono font-medium text-slate-900">{{ f.port }}/{{ f.protocol }}</span>
+                                <span class="text-slate-500"> → {{ targetOf(f) }}</span>
+                                <span v-if="f.comment" class="block truncate text-xs text-slate-400">{{ f.comment }}</span>
+                            </span>
+                            <button type="button" :class="smallButton" class="shrink-0 text-rose-600" @click="removeForward(f)">Remove</button>
+                        </li>
+                    </ul>
+                    <form class="mt-3 space-y-3" @submit.prevent="addForward">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700">Port on this server</label>
+                                <input v-model="forwardForm.port" type="number" min="1" max="65535" placeholder="8080" :class="field" class="font-mono" />
+                                <InputError class="mt-1" :message="forwardForm.errors.port" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700">Protocol</label>
+                                <select v-model="forwardForm.protocol" :class="field">
+                                    <option value="tcp">TCP</option>
+                                    <option value="udp">UDP</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700">To address <span class="font-normal text-slate-400">(empty: this server)</span></label>
+                                <input v-model="forwardForm.to_ip" type="text" placeholder="10.0.0.5" :class="field" class="font-mono" />
+                                <InputError class="mt-1" :message="forwardForm.errors.to_ip" />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700">To port</label>
+                                <input v-model="forwardForm.to_port" type="number" min="1" max="65535" placeholder="3000" :class="field" class="font-mono" />
+                                <InputError class="mt-1" :message="forwardForm.errors.to_port" />
+                            </div>
+                        </div>
+                        <input v-model="forwardForm.comment" type="text" placeholder="Note (optional)" :class="field" />
+                        <InputError class="mt-1" :message="forwardForm.errors.comment" />
+                        <PrimaryButton :disabled="forwardForm.processing || !forwardForm.port || !forwardForm.to_port">Add forward</PrimaryButton>
                     </form>
                 </div>
 

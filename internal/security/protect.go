@@ -47,6 +47,33 @@ type Protection struct {
 	// owner edited them; nil is the defaults. See paths.go.
 	SecretPaths []string `json:"secret_paths"`
 	ScanPaths   []string `json:"scan_paths"`
+
+	// WebFlood bans an address that keeps running into the rate and
+	// connection limits; Tools bans an attack tool on its first request;
+	// PortScan bans an address knocking on the firewall's closed ports.
+	WebFlood JailRule `json:"web_flood"`
+	Tools    JailRule `json:"tools"`
+	PortScan JailRule `json:"port_scan"`
+
+	// ConnLimit caps the requests one address has open at once, and puts
+	// short timeouts on clients that send slowly. See guard.go.
+	ConnLimit ConnLimit `json:"conn_limit"`
+
+	// NoPing has the kernel stop answering ping.
+	NoPing bool `json:"no_ping"`
+
+	// Countries, Challenge and WAF act inside each site's server block,
+	// through the guard include. See guard.go.
+	Countries CountryRule   `json:"countries"`
+	Challenge ChallengeRule `json:"challenge"`
+	WAF       WAFRule       `json:"waf"`
+
+	// Watch is the backdoor watch (watch.go); Integrity the code change
+	// monitor (integrity.go); PHPHarden and Compilers are hardening.go's.
+	Watch     bool `json:"watch"`
+	Integrity bool `json:"integrity"`
+	PHPHarden bool `json:"php_harden"`
+	Compilers bool `json:"compilers"`
 }
 
 // JailRule is one optional fail2ban jail: so many matches within FindTime seconds
@@ -79,6 +106,21 @@ var ProtectionDefaults = Protection{
 	Recidive:  JailRule{MaxRetry: 3, FindTime: 86400, BanTime: Permanent},
 	RateLogin: Rate{Rate: 10, Burst: 10},
 	RateFlood: Rate{Rate: 20, Burst: 100},
+
+	// A flood is counted per refused request, and a busy real visitor can be
+	// refused a few: thirty in a minute is a script. Banned for an hour,
+	// because a flood is often a crowd of addresses that are someone's
+	// customers again tomorrow.
+	WebFlood: JailRule{MaxRetry: 30, FindTime: 60, BanTime: 3600},
+	Tools:    JailRule{MaxRetry: 1, FindTime: 600, BanTime: Permanent},
+
+	// Ten closed ports in a minute is nothing but a scan. A day, because
+	// scanners come from addresses that are handed on, and every ban is a
+	// firewall entry.
+	PortScan:  JailRule{MaxRetry: 10, FindTime: 60, BanTime: 86400},
+	ConnLimit: ConnLimit{Max: 50},
+	Countries: CountryRule{Mode: CountriesBlock},
+	WAF:       WAFRule{MaxRetry: 5, FindTime: 600, BanTime: 86400},
 }
 
 // Validate is what a save is checked against.
@@ -118,7 +160,14 @@ func (r Rate) Validate(perSecond bool) map[string]string {
 
 // AnyJail is whether any of the optional jails is on.
 func (p Protection) AnyJail() bool {
-	return p.WebLogin.Enabled || p.WebScan.Enabled || p.Mail.Enabled || p.Recidive.Enabled
+	return p.WebLogin.Enabled || p.WebScan.Enabled || p.Mail.Enabled || p.Recidive.Enabled ||
+		p.WebFlood.Enabled || p.Tools.Enabled || p.PortScan.Enabled || p.WAF.Bans()
+}
+
+// AnyNginx is whether anything is on that nginx carries out.
+func (p Protection) AnyNginx() bool {
+	return p.RealIP || p.RateLogin.Enabled || p.RateFlood.Enabled || p.ConnLimit.Enabled || p.Tools.Enabled ||
+		p.Countries.Enabled || p.Challenge.Enabled || p.WAF.Enabled
 }
 
 // CloudflareRanges are the addresses Cloudflare's proxies connect from,
@@ -151,10 +200,19 @@ const (
 	JailMailIMAP  = "panel-mail-imap"
 	JailRecidive  = "recidive"
 
+	JailWebFlood = "panel-web-flood"
+	JailWebTools = "panel-web-tools"
+	JailWebWAF   = "panel-web-waf"
+	JailPortScan = "panel-port-scan"
+
 	protectJailPath   = "/etc/fail2ban/jail.d/ubuntu-panel-protect.local"
 	webLoginFilter    = "/etc/fail2ban/filter.d/ubuntu-panel-web-login.conf"
 	webScanFilterPath = "/etc/fail2ban/filter.d/ubuntu-panel-web-scan.conf"
 	webSecretFilter   = "/etc/fail2ban/filter.d/ubuntu-panel-web-secret.conf"
+	webFloodFilter    = "/etc/fail2ban/filter.d/ubuntu-panel-web-flood.conf"
+	webToolsFilter    = "/etc/fail2ban/filter.d/ubuntu-panel-web-tools.conf"
+	webWAFFilter      = "/etc/fail2ban/filter.d/ubuntu-panel-web-waf.conf"
+	portScanFilter    = "/etc/fail2ban/filter.d/ubuntu-panel-port-scan.conf"
 )
 
 // ProtectJails are the jails a protection setting runs, for status and unban.
@@ -172,6 +230,18 @@ func (p Protection) ProtectJails() []string {
 	}
 	if p.Recidive.Enabled {
 		jails = append(jails, JailRecidive)
+	}
+	if p.WebFlood.Enabled {
+		jails = append(jails, JailWebFlood)
+	}
+	if p.Tools.Enabled {
+		jails = append(jails, JailWebTools)
+	}
+	if p.WAF.Bans() {
+		jails = append(jails, JailWebWAF)
+	}
+	if p.PortScan.Enabled {
+		jails = append(jails, JailPortScan)
 	}
 
 	return jails
@@ -284,6 +354,13 @@ type JailEnv struct {
 	MailLog    bool // /var/log/mail.log is written; otherwise the journal
 	Fail2ban   bool // /var/log/fail2ban.log is written
 	DefaultLog bool // nginx's own access.log exists
+	UFWLog     bool // /var/log/ufw.log is written; otherwise the kernel's journal
+
+	// IPSetAction is fail2ban's ipset ban action for every port, when this
+	// fail2ban has one and ipset is installed: one firewall rule for every
+	// address, where the plain action adds a rule per address — and a port
+	// scan jail bans many.
+	IPSetAction string
 }
 
 // ProtectJailFile renders every optional jail that is on, or "" when none is.
@@ -292,7 +369,8 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 		return ""
 	}
 
-	ignore := append([]string{"127.0.0.1/8", "::1"}, env.IgnoreIPs...)
+	// Link-local is a cloud's metadata service and a LAN's own chatter.
+	ignore := append([]string{"127.0.0.1/8", "::1", "169.254.0.0/16", "fe80::/10"}, env.IgnoreIPs...)
 	ignore = append(ignore, CloudflareRanges...)
 
 	var file strings.Builder
@@ -360,6 +438,49 @@ func ProtectJailFile(p Protection, env JailEnv) string {
 			"port     = pop3,pop3s,imap,imaps,submission,465,sieve"}, source...)...)
 	}
 
+	// The sites' logs and nginx's own, where requests to the bare IP land.
+	allLogs := nginxLogs
+	if env.DefaultLog {
+		allLogs += "\n           " + DefaultAccessLog
+	}
+
+	// An address that keeps being refused by the rate and connection limits.
+	// The limits answer 429 before PHP, so the flood costs little, but it is
+	// still nginx's time and the attacker's next minute; the firewall's is
+	// cheaper.
+	if p.WebFlood.Enabled {
+		section(JailWebFlood, p.WebFlood, append([]string{"filter   = ubuntu-panel-web-flood", allLogs}, web...)...)
+	}
+
+	// sqlmap, nikto, WPScan and the rest say who they are; one request is
+	// enough. No bot check: none of them is a search engine.
+	if p.Tools.Enabled {
+		section(JailWebTools, p.Tools, "filter   = ubuntu-panel-web-tools", allLogs, "port     = http,https", "backend  = auto")
+	}
+
+	// The WAF's refusals, from the sites' error logs.
+	if p.WAF.Bans() {
+		section(JailWebWAF, JailRule{MaxRetry: p.WAF.MaxRetry, FindTime: p.WAF.FindTime, BanTime: p.WAF.BanTime},
+			append([]string{"filter   = ubuntu-panel-web-waf", "logpath  = " + SiteErrorLogs}, web...)...)
+	}
+
+	// Connections the firewall refused, which ufw logs: an address trying
+	// port after closed port is mapping the server. Banned from every port.
+	if p.PortScan.Enabled {
+		source := []string{"logpath  = " + UFWLog, "backend  = auto"}
+		if !env.UFWLog {
+			source = []string{"backend  = systemd", "journalmatch = _TRANSPORT=kernel"}
+		}
+
+		action := "iptables-allports"
+		if env.IPSetAction != "" {
+			action = env.IPSetAction
+		}
+
+		section(JailPortScan, p.PortScan, append([]string{"filter   = ubuntu-panel-port-scan",
+			"banaction = " + action, "protocol = all"}, source...)...)
+	}
+
 	// An address banned again and again by any jail is banned from every port
 	// for much longer.
 	if p.Recidive.Enabled {
@@ -397,7 +518,7 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 		return errors.New("this needs fail2ban, which is not installed — the SSH protection tab installs it")
 	}
 
-	if (p.WebLogin.Enabled || p.WebScan.Enabled) && !proc.Ok("sudo sh -c 'ls "+SiteAccessLogs+"' >/dev/null 2>&1") {
+	if (p.WebLogin.Enabled || p.WebScan.Enabled || p.WebFlood.Enabled || p.Tools.Enabled) && !proc.Ok("sudo sh -c 'ls "+SiteAccessLogs+"' >/dev/null 2>&1") {
 		return errors.New("website protection reads the sites' access logs, and there are none yet — " +
 			"add a site first, then turn it on")
 	}
@@ -413,12 +534,10 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 	// 2.16.0's fail2ban action, which the panel's ban worker replaced.
 	proc.Run("sudo rm -f "+nginxActionPath, time.Minute)
 
-	for path, contents := range map[string]string{
-		webLoginFilter:    webLoginFilterFile,
-		webScanFilterPath: webScanFilterFile(p.Scans()),
-		webSecretFilter:   webSecretFilterFile(p.Secrets()),
-		protectJailPath:   ProtectJailFile(p, env),
-	} {
+	files := filterFiles(p)
+	files[protectJailPath] = ProtectJailFile(p, env)
+
+	for path, contents := range files {
 		if err := proc.PutFile(path, contents, true); err != nil {
 			return err
 		}
@@ -451,22 +570,42 @@ func ApplyJails(p Protection, ignoreIPs []string) error {
 func JailsCurrent(p Protection, ignoreIPs []string) bool {
 	env := jailEnv(ignoreIPs)
 
-	jail, _ := proc.ReadFile(protectJailPath, true)
-	login, _ := proc.ReadFile(webLoginFilter, true)
-	scan, _ := proc.ReadFile(webScanFilterPath, true)
-	secret, _ := proc.ReadFile(webSecretFilter, true)
+	files := filterFiles(p)
+	files[protectJailPath] = ProtectJailFile(p, env)
 
-	return jail == ProtectJailFile(p, env) && login == webLoginFilterFile && scan == webScanFilterFile(p.Scans()) &&
-		secret == webSecretFilterFile(p.Secrets()) && !proc.Exists(nginxActionPath, true)
+	for path, contents := range files {
+		if onDisk, _ := proc.ReadFile(path, true); onDisk != contents {
+			return false
+		}
+	}
+
+	return !proc.Exists(nginxActionPath, true)
+}
+
+// filterFiles are the jails' filters, by path. Every one is written whether
+// its jail is on or not: a filter nobody uses costs nothing, and one that is
+// missing is a jail that will not start.
+func filterFiles(p Protection) map[string]string {
+	return map[string]string{
+		webLoginFilter:    webLoginFilterFile,
+		webScanFilterPath: webScanFilterFile(p.Scans()),
+		webSecretFilter:   webSecretFilterFile(p.Secrets()),
+		webFloodFilter:    webFloodFilterFile(),
+		webToolsFilter:    webToolsFilterFile(),
+		webWAFFilter:      webWAFFilterFile,
+		portScanFilter:    portScanFilterFile,
+	}
 }
 
 func jailEnv(ignoreIPs []string) JailEnv {
 	return JailEnv{
-		IgnoreIPs:  ignoreIPs,
-		BotCheck:   proc.Ok("test -x " + BotCheckBinary),
-		MailLog:    proc.Ok("sudo test -s /var/log/mail.log"),
-		Fail2ban:   proc.Ok("sudo test -s /var/log/fail2ban.log"),
-		DefaultLog: proc.Ok("sudo test -f " + DefaultAccessLog),
+		IgnoreIPs:   ignoreIPs,
+		UFWLog:      proc.Ok("sudo test -s " + UFWLog),
+		IPSetAction: ipsetAction(),
+		BotCheck:    proc.Ok("test -x " + BotCheckBinary),
+		MailLog:     proc.Ok("sudo test -s /var/log/mail.log"),
+		Fail2ban:    proc.Ok("sudo test -s /var/log/fail2ban.log"),
+		DefaultLog:  proc.Ok("sudo test -f " + DefaultAccessLog),
 	}
 }
 
@@ -513,7 +652,7 @@ func ReloadJails() {
 // the http block every vhost is, and limits set there apply to all of them.
 const ProtectNginxPath = "/etc/nginx/conf.d/panel-protect.conf"
 
-// NginxEnv is what the nginx file needs to know.
+// NginxEnv is what the nginx files need to know.
 type NginxEnv struct {
 	// IgnoreIPs are never rate limited: the never-ban list.
 	IgnoreIPs []string
@@ -521,15 +660,49 @@ type NginxEnv struct {
 	// ExemptHosts are never flood limited: the panel itself, and applications
 	// like Nextcloud whose clients make hundreds of requests to sync.
 	ExemptHosts []string
+
+	// ChallengeHosts are the hostnames under attack mode; ChallengeSecret
+	// signs their passes; BindPort is where the panel answers the check.
+	ChallengeHosts  []string
+	ChallengeSecret string
+	BindPort        int
+
+	// WAFRules is ModSecurity's configuration (WAFFile), when the WAF is on.
+	WAFRules string
 }
 
 // staticPattern is the files nginx serves itself; they are not flood limited.
 const staticPattern = `\.(?:css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|pdf|zip|txt)$`
 
-// NginxFile renders the rate limits and real-IP directives that are on, or
-// "" when none is.
+// NginxFiles are every file the protections keep in /etc/nginx, by path: ""
+// for one that should not be there.
+func NginxFiles(p Protection, env NginxEnv) map[string]string {
+	files := map[string]string{
+		ProtectNginxPath:   NginxFile(p, env),
+		GuardPath:          GuardFile(p, env),
+		ChallengeHostsPath: "",
+	}
+
+	if p.Challenge.Enabled {
+		files[ChallengeHostsPath] = ChallengeHostsFile(env.ChallengeHosts)
+	}
+
+	// ModSecurity's configuration goes with the files nginx tests, because
+	// nginx reads it while testing: a rule it refuses is refused like any
+	// other line.
+	files[WAFRulesPath] = ""
+	if p.WAF.Enabled {
+		files[WAFRulesPath] = env.WAFRules
+	}
+
+	return files
+}
+
+// NginxFile renders the http block's part — rate and connection limits,
+// real addresses, and the variables the guard file tests — or "" when none
+// is on.
 func NginxFile(p Protection, env NginxEnv) string {
-	if !p.RealIP && !p.RateLogin.Enabled && !p.RateFlood.Enabled {
+	if !p.AnyNginx() {
 		return ""
 	}
 
@@ -550,7 +723,9 @@ func NginxFile(p Protection, env NginxEnv) string {
 		file.WriteString(realIPHeaderLine + "\n")
 	}
 
-	if !p.RateLogin.Enabled && !p.RateFlood.Enabled {
+	if p.AnyNginx() && !p.RateLogin.Enabled && !p.RateFlood.Enabled && !p.ConnLimit.Enabled &&
+		!p.Tools.Enabled && !p.Countries.Enabled && !p.Challenge.Enabled {
+		// Only the WAF, or only real addresses: nothing below is used.
 		return file.String()
 	}
 
@@ -574,7 +749,35 @@ func NginxFile(p Protection, env NginxEnv) string {
 	}
 	file.WriteString("}\n")
 
-	file.WriteString(limitStatusLine + "\n" + limitLogLine + "\n")
+	if p.RateLogin.Enabled || p.RateFlood.Enabled {
+		file.WriteString(limitStatusLine + "\n" + limitLogLine + "\n")
+	}
+
+	if p.RateFlood.Enabled || p.ConnLimit.Enabled {
+		file.WriteString("\n# Hostnames whose clients are busy by design.\n")
+		file.WriteString("map $host $panel_limit_host_exempt {\n    default 0;\n")
+		hosts := append([]string{}, env.ExemptHosts...)
+		sort.Strings(hosts)
+		for _, host := range hosts {
+			if validHost(host) {
+				fmt.Fprintf(&file, "    %s 1;\n", strings.ToLower(host))
+			}
+		}
+		file.WriteString("}\n")
+	}
+
+	// Search engines, AI crawlers, link previews and uptime monitors crawl
+	// fast and in bursts; a 429 tells them the site is failing, and a browser
+	// check or a country rule would take a site out of search. They are
+	// recognised by user agent, so one pretending to be Google goes
+	// unthrottled — until the panel's check of Google's DNS has it banned
+	// (see autoBan).
+	if p.RateFlood.Enabled || p.ConnLimit.Enabled || p.Countries.Enabled || p.Challenge.Enabled {
+		file.WriteString("\n# Useful bots, by user agent.\n")
+		file.WriteString("map $http_user_agent $panel_limit_bot {\n    default 0;\n")
+		file.WriteString(`    "~*(?:` + goodBotAgents() + `)" 1;` + "\n")
+		file.WriteString("}\n")
+	}
 
 	if p.RateLogin.Enabled {
 		file.WriteString("\n# Login forms and XML-RPC: a few posts a minute per address.\n")
@@ -588,27 +791,6 @@ func NginxFile(p Protection, env NginxEnv) string {
 	}
 
 	if p.RateFlood.Enabled {
-		file.WriteString("\n# Hostnames whose clients are busy by design.\n")
-		file.WriteString("map $host $panel_limit_host_exempt {\n    default 0;\n")
-		hosts := append([]string{}, env.ExemptHosts...)
-		sort.Strings(hosts)
-		for _, host := range hosts {
-			if validHost(host) {
-				fmt.Fprintf(&file, "    %s 1;\n", strings.ToLower(host))
-			}
-		}
-		file.WriteString("}\n")
-
-		// Search engines, AI crawlers, link previews and uptime monitors crawl
-		// fast and in bursts; a 429 tells them the site is failing. They are
-		// recognised by user agent, so one pretending to be Google floods
-		// unthrottled — until the panel's check of Google's DNS has it banned
-		// (see autoBan).
-		file.WriteString("\n# Useful bots, by user agent.\n")
-		file.WriteString("map $http_user_agent $panel_limit_bot {\n    default 0;\n")
-		file.WriteString(`    "~*(?:` + goodBotAgents() + `)" 1;` + "\n")
-		file.WriteString("}\n")
-
 		file.WriteString("\n# Everything that reaches PHP or an app, per address.\n")
 		file.WriteString("map \"$panel_limit_exempt$panel_limit_host_exempt$panel_limit_bot $uri\" $panel_limit_flood {\n")
 		file.WriteString("    default $binary_remote_addr;\n")
@@ -617,6 +799,41 @@ func NginxFile(p Protection, env NginxEnv) string {
 		file.WriteString("}\n")
 		fmt.Fprintf(&file, "limit_req_zone $panel_limit_flood zone=panel_flood:20m rate=%dr/s;\n", p.RateFlood.Rate)
 		fmt.Fprintf(&file, "limit_req zone=panel_flood burst=%d nodelay;\n", p.RateFlood.Burst)
+	}
+
+	// Requests one address has open at once, and how long nginx waits on a
+	// client that is slow to send. A Slowloris attack opens hundreds of
+	// connections and trickles a header into each; these timeouts close them
+	// in seconds instead of a minute. Static files are not counted: a browser
+	// fetches dozens of them at once over HTTP/2. Nor are useful bots: a search
+	// engine or AI crawler fetching in parallel is not an attack.
+	if p.ConnLimit.Enabled {
+		file.WriteString("\n# Requests open at once, per address, and slow clients.\n")
+		file.WriteString("map \"$panel_limit_exempt$panel_limit_host_exempt$panel_limit_bot $uri\" $panel_limit_conn {\n")
+		file.WriteString("    default $binary_remote_addr;\n")
+		file.WriteString(`    "~^(?:1..|.1.|..1) " "";` + "\n")
+		file.WriteString(`    "~*` + staticPattern + `" "";` + "\n")
+		file.WriteString("}\n")
+		file.WriteString("limit_conn_zone $panel_limit_conn zone=panel_conn:10m;\n")
+		fmt.Fprintf(&file, "limit_conn panel_conn %d;\n", p.ConnLimit.Max)
+		for _, line := range slowClientLines {
+			file.WriteString(line + "\n")
+		}
+	}
+
+	if p.Tools.Enabled {
+		file.WriteString("\n# Attack tools, by user agent; the guard file closes the connection.\n")
+		file.WriteString("map \"$panel_limit_exempt $http_user_agent\" $panel_attack_tool {\n    default 0;\n")
+		file.WriteString(`    "~*^0 .*(?:` + attackToolAgents() + `)" 1;` + "\n")
+		file.WriteString("}\n")
+	}
+
+	if p.Countries.Enabled {
+		file.WriteString(countryMap(p.Countries.Mode))
+	}
+
+	if p.Challenge.Enabled {
+		file.WriteString(challengeMap())
 	}
 
 	return file.String()
@@ -643,7 +860,19 @@ func validHost(host string) bool {
 // duplicate the file is written without it, and the setting already there is
 // the one that applies. Everything else in the file is named panel_* and
 // cannot clash.
-var sharedLines = []string{realIPHeaderLine, limitStatusLine, limitLogLine}
+var sharedLines = append([]string{realIPHeaderLine, limitStatusLine, limitLogLine}, slowClientLines...)
+
+// slowClientLines go with the connection limit. Not keepalive_timeout: every
+// Ubuntu nginx.conf sets that one already, and an idle keep-alive connection
+// costs nginx next to nothing.
+var slowClientLines = []string{
+	"limit_conn_status 429;",
+	"limit_conn_log_level warn;",
+	"client_header_timeout 10s;",
+	"client_body_timeout 20s;",
+	"send_timeout 30s;",
+	"reset_timedout_connection on;",
+}
 
 const (
 	realIPHeaderLine = "real_ip_header CF-Connecting-IP;"
@@ -686,7 +915,7 @@ func sameFile(onDisk, wanted string) bool {
 // files setting the shared directives, and every include of conf.d — two of
 // those would load this file twice.
 func whereElse() string {
-	found := proc.Run(`sudo grep -RnE '^[[:space:]]*(real_ip_header|limit_req_status|limit_req_log_level|include[[:space:]]+[^;]*conf\.d)' /etc/nginx 2>/dev/null | grep -v `+proc.Quote(ProtectNginxPath)+` | head -n 8`, time.Minute)
+	found := proc.Run(`sudo grep -RnE '^[[:space:]]*(real_ip_header|limit_req_status|limit_req_log_level|limit_conn_status|limit_conn_log_level|client_header_timeout|client_body_timeout|send_timeout|keepalive_timeout|reset_timedout_connection|include[[:space:]]+[^;]*conf\.d)' /etc/nginx 2>/dev/null | grep -v `+proc.Quote(ProtectNginxPath)+` | head -n 8`, time.Minute)
 	lines := strings.TrimSpace(found.Output)
 	if lines == "" {
 		return ""
@@ -694,58 +923,95 @@ func whereElse() string {
 	return " — check these lines in nginx's configuration: " + strings.Join(strings.Split(lines, "\n"), "; ")
 }
 
-// ApplyNginx writes the nginx file, or removes it, and reloads nginx when
-// nginx accepts the result. Refused, the previous file is put back.
-func ApplyNginx(contents string) error {
+// ApplyNginx writes the nginx files, removes the ones that should not be
+// there, and reloads nginx when nginx accepts the result. Refused, every file
+// is put back as it was.
+func ApplyNginx(files map[string]string) error {
+	wanted := false
+	for _, contents := range files {
+		wanted = wanted || contents != ""
+	}
+
 	if !proc.Which("nginx") && !proc.Ok("test -x /usr/sbin/nginx") {
-		if contents == "" {
+		if !wanted {
 			return nil
 		}
 		return errors.New("this needs nginx, which is not installed")
 	}
 
-	previous, readErr := proc.ReadFile(ProtectNginxPath, true)
-	existed := readErr == nil
+	if NginxCurrent(files) {
+		return nil
+	}
 
-	if contents == "" {
-		if !existed {
-			return nil
+	type before struct {
+		contents string
+		existed  bool
+	}
+	previous := map[string]before{}
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+		contents, err := proc.ReadFile(path, true)
+		previous[path] = before{contents, err == nil}
+	}
+	sort.Strings(paths)
+
+	restore := func() {
+		for _, path := range paths {
+			if previous[path].existed {
+				proc.PutFile(path, previous[path].contents, true)
+			} else {
+				proc.Run("sudo rm -f "+proc.Quote(path), time.Minute)
+			}
 		}
-		proc.Run("sudo rm -f "+ProtectNginxPath, time.Minute)
-	} else {
+	}
+
+	for _, path := range paths {
+		contents := files[path]
+		if contents == "" {
+			if previous[path].existed {
+				proc.Run("sudo rm -f "+proc.Quote(path), time.Minute)
+			}
+			continue
+		}
 		// A file written without the shared lines, because another file sets
 		// them, is still the file wanted.
-		if existed && sameFile(previous, contents) {
-			return nil
+		if previous[path].existed && sameFile(previous[path].contents, contents) {
+			continue
 		}
-		if err := proc.PutFile(ProtectNginxPath, contents, true); err != nil {
+		if err := proc.PutFile(path, contents, true); err != nil {
+			restore()
 			return err
 		}
 	}
 
+	protect := files[ProtectNginxPath]
 	check := proc.Run("sudo nginx -t 2>&1", time.Minute)
-	for tries := 0; !check.OK() && contents != "" && tries < len(sharedLines); tries++ {
+	for tries := 0; !check.OK() && protect != "" && tries < len(sharedLines); tries++ {
 		line := duplicateShared(check.Output)
-		if line == "" || !strings.Contains(contents, line+"\n") {
+		if line == "" || !strings.Contains(protect, line+"\n") {
 			break
 		}
-		contents = withoutLine(contents, line)
-		if err := proc.PutFile(ProtectNginxPath, contents, true); err != nil {
+		protect = withoutLine(protect, line)
+		if err := proc.PutFile(ProtectNginxPath, protect, true); err != nil {
+			restore()
 			return err
 		}
 		check = proc.Run("sudo nginx -t 2>&1", time.Minute)
 	}
 
 	if !check.OK() {
-		if existed {
-			proc.PutFile(ProtectNginxPath, previous, true)
-		} else {
-			proc.Run("sudo rm -f "+ProtectNginxPath, time.Minute)
-		}
+		restore()
 
 		hint := ""
 		if strings.Contains(check.Output, "duplicate") || strings.Contains(check.Output, "already bound") {
 			hint = whereElse()
+		}
+		if strings.Contains(check.Output, `unknown directive "modsecurity`) {
+			hint = " — nginx's ModSecurity module is not loaded; install the WAF first"
+		}
+		if strings.Contains(check.Output, "secure_link") {
+			hint = " — this nginx was built without the secure_link module, which the browser check needs"
 		}
 		return fmt.Errorf("nginx refused the new settings, so the previous ones were kept: %s%s",
 			lastLines(check.Output, 3), hint)
@@ -758,14 +1024,32 @@ func ApplyNginx(contents string) error {
 	return nil
 }
 
-// NginxCurrent is the file on disk, "" when there is none.
-func NginxCurrent() string {
-	contents, err := proc.ReadFile(ProtectNginxPath, true)
-	if err != nil {
-		return ""
+// NginxCurrent is whether every file on disk is the one wanted — allowing for
+// shared lines left out — and every one that should not be there is not.
+func NginxCurrent(files map[string]string) bool {
+	for path, contents := range files {
+		onDisk, err := proc.ReadFile(path, true)
+		if contents == "" {
+			if err == nil {
+				return false
+			}
+			continue
+		}
+		if err != nil || !sameFile(onDisk, contents) {
+			return false
+		}
 	}
+	return true
+}
 
-	return contents
+// NginxPresent is whether any of the protections' nginx files is on disk.
+func NginxPresent() bool {
+	for _, path := range []string{ProtectNginxPath, GuardPath, ChallengeHostsPath, WAFRulesPath} {
+		if proc.Exists(path, true) {
+			return true
+		}
+	}
+	return false
 }
 
 // ------------------------------------------------------------------ kernel

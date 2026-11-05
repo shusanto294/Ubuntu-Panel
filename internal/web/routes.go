@@ -59,6 +59,9 @@ func (a *App) routes() *router {
 	rt.patch("/system/settings", "system.settings", authenticated, a.updateSettings)
 	rt.get("/system/updates", "system.updates", authenticated, a.checkUpdates)
 	rt.get("/settings", "settings", authenticated, a.settings)
+	rt.post("/settings/users", "settings.users.store", admin, a.panelUserStore)
+	rt.post("/settings/users/{user}", "settings.users.update", admin, a.panelUserUpdate)
+	rt.delete("/settings/users/{user}", "settings.users.destroy", admin, a.panelUserDestroy)
 	rt.post("/system/domain", "system.domain", authenticated, a.updateDomain)
 	rt.post("/system/update", "system.update", authenticated, a.updatePanel)
 	rt.post("/logs/clear", "logs.clear", authenticated, a.logsClear)
@@ -143,15 +146,15 @@ func (a *App) routes() *router {
 		a.sitesBackupDestroy)
 
 	rt.get("/sites/{site}/files", "sites.files", authenticated, a.sitesFiles)
-	rt.get("/sites/{site}/file", "sites.file", authenticated, a.sitesFileRead)
-	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)
-	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.sitesFileAction)
-	rt.get("/sites/{site}/download", "sites.download", authenticated, a.sitesFileDownload)
-	rt.get("/sites/{site}/wp-admin", "sites.wp-admin", authenticated, a.sitesWPAdmin)
-	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.sitesFileUpload)
-	rt.get("/databases/{database}/credentials", "databases.credentials", authenticated,
+	rt.get("/sites/{site}/file", "sites.file", admin, a.sitesFileRead)
+	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.markingWork(a.sitesFileWrite))
+	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.markingWork(a.sitesFileAction))
+	rt.get("/sites/{site}/download", "sites.download", admin, a.sitesFileDownload)
+	rt.get("/sites/{site}/wp-admin", "sites.wp-admin", admin, a.sitesWPAdmin)
+	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.markingWork(a.sitesFileUpload))
+	rt.get("/databases/{database}/credentials", "databases.credentials", admin,
 		a.databasesCredentials)
-	rt.get("/databases-mongo-connection", "databases.mongo-connection", authenticated,
+	rt.get("/databases-mongo-connection", "databases.mongo-connection", admin,
 		a.databasesMongoConnection)
 	rt.post("/databases-mongo-connection", "databases.mongo-account", authenticated,
 		a.databasesMongoAccount)
@@ -267,18 +270,22 @@ func (a *App) routes() *router {
 		a.securityInstallUpdates)
 	rt.post("/security/alerts", "security.alerts", authenticated, a.securityAlerts)
 	rt.post("/security/protection", "security.protection", authenticated, a.securityProtection)
+	rt.post("/security/locks", "security.locks", authenticated, a.securityLock)
+	rt.post("/security/changes/clear", "security.changes.clear", authenticated, a.securityClearChanges)
+	rt.post("/security/firewall/forwards", "security.firewall.forwards", authenticated, a.securityForward)
+	rt.post("/security/cloudflare-attack", "security.cloudflare-attack", authenticated, a.securityCloudflareAttack)
 	rt.delete("/security/sessions/{session}", "security.sessions.destroy", authenticated,
 		a.securityRevokeSession)
 	rt.post("/security/sessions/others", "security.sessions.others", authenticated,
 		a.securityRevokeOthers)
 
 	// The accounts that can log in over SSH.
-	rt.post("/security/users", "security.users.store", authenticated, a.sshUserStore)
-	rt.post("/security/users/{user}", "security.users.update", authenticated, a.sshUserUpdate)
-	rt.delete("/security/users/{user}", "security.users.destroy", authenticated, a.sshUserDestroy)
-	rt.post("/security/users/{user}/keys", "security.users.keys.store", authenticated, a.sshUserKeyStore)
+	rt.post("/security/users", "security.users.store", authenticated, a.rebaselining(a.sshUserStore))
+	rt.post("/security/users/{user}", "security.users.update", authenticated, a.rebaselining(a.sshUserUpdate))
+	rt.delete("/security/users/{user}", "security.users.destroy", authenticated, a.rebaselining(a.sshUserDestroy))
+	rt.post("/security/users/{user}/keys", "security.users.keys.store", authenticated, a.rebaselining(a.sshUserKeyStore))
 	rt.post("/security/users/{user}/keys/remove", "security.users.keys.destroy", authenticated,
-		a.sshUserKeyDestroy)
+		a.rebaselining(a.sshUserKeyDestroy))
 
 	// The relay the panel sends its own mail through.
 	rt.patch("/settings/smtp", "settings.smtp", authenticated, a.smtpUpdate)
@@ -303,8 +310,8 @@ func (a *App) routes() *router {
 	// Terminal. The websocket carries its own one-shot ticket, so it is a
 	// public route: the session cookie cannot be relied on for a cross-scheme
 	// upgrade, and the ticket grants nothing on its own.
-	rt.get("/terminal", "terminal", authenticated, a.terminalPage)
-	rt.post("/terminal/ticket", "terminal.ticket", authenticated, a.terminalTicket)
+	rt.get("/terminal", "terminal", admin, a.terminalPage)
+	rt.post("/terminal/ticket", "terminal.ticket", admin, a.terminalTicket)
 	rt.get(terminal.Path, "", public, a.Terminal.Handle)
 
 	return rt

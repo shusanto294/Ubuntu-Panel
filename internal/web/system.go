@@ -192,6 +192,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		"phpVersions":   config.PHPVersions,
 		"nodeVersions":  config.NodeVersions,
 		"smtp":          a.smtpProps(),
+		"panelUsers":    a.panelUsers(r.Context()),
 		"backupStorage": a.backupStorageProps(),
 		// Narrowed to this action so an app install running on the Apps page
 		// does not appear here.

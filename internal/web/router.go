@@ -21,6 +21,11 @@ const (
 
 	// authenticated is everything else.
 	authenticated
+
+	// admin is signed in with an account that may change things — and, for a
+	// page, one that shows what a read-only account must not see: a shell,
+	// credentials, a site's files.
+	admin
 )
 
 // route is one entry in the table, kept so the frontend can be handed the same

@@ -34,6 +34,8 @@ const (
 	alertAttacksSeenSetting = "alert_attacks_seen"
 	alertCriticalSetting    = "alert_critical_logs"
 	alertCriticalCursor     = "alert_critical_cursor"
+
+	alertSuspiciousSetting = "alert_suspicious_process"
 )
 
 // healthAlertDefaults are on for the problems and off for the digest: a busy
@@ -46,6 +48,8 @@ var healthAlertDefaults = map[string]bool{
 	alertWebBanSetting:    false,
 	alertAttacksSetting:   true,
 	alertCriticalSetting:  true,
+
+	alertSuspiciousSetting: true,
 }
 
 // healthAlertKeys are the form's names for them.
@@ -57,6 +61,7 @@ var healthAlertKeys = map[string]string{
 	"web_ban":     alertWebBanSetting,
 	"attacks":     alertAttacksSetting,
 	"critical":    alertCriticalSetting,
+	"suspicious":  alertSuspiciousSetting,
 }
 
 func (a *App) healthAlert(setting string) bool {
@@ -77,6 +82,7 @@ var health struct {
 	hotMinutes int
 	certsAt    time.Time
 	attacksAt  time.Time
+	scannedAt  time.Time
 }
 
 // cooled is whether an alert may be sent again, and marks it sent if so.
@@ -113,6 +119,36 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 
 	if hot >= cpuAlertMinutes && a.healthAlert(alertCPUSetting) && a.cooled("cpu", time.Hour) {
 		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/logs", a.cpuAlert(ctx, hot)))
+	}
+
+	// A miner, or a program run from /tmp: every five minutes, at most one
+	// email in six hours.
+	if a.healthAlert(alertSuspiciousSetting) {
+		health.Lock()
+		due := time.Since(health.scannedAt) >= 5*time.Minute
+		if due {
+			health.scannedAt = time.Now()
+		}
+		health.Unlock()
+
+		if due {
+			if found := security.ScanProcesses(); len(found) > 0 && a.cooled("suspicious", 6*time.Hour) {
+				alerts = append(alerts, newAlert("suspicious", levelCritical, "/logs", suspiciousAlert(found)))
+			}
+		}
+	}
+
+	// The backdoor watch and the code change monitor alert whenever they
+	// are on: turning one on is asking to be told.
+	if changes := a.checkWatch(ctx); len(changes) > 0 {
+		alerts = append(alerts, newAlert("backdoor", levelCritical, "/security?tab=protection", watchAlert(changes)))
+	}
+	if a.protection().Integrity {
+		go func() {
+			if changes := a.checkIntegrity(context.WithoutCancel(ctx)); len(changes) > 0 {
+				a.deliver(context.WithoutCancel(ctx), []alert{newAlert("code_changed", levelWarning, "/security?tab=protection", codeAlert(changes))})
+			}
+		}()
 	}
 
 	metrics := system.Read()
@@ -193,7 +229,14 @@ func autoBanJail(p security.Protection, attack string) string {
 		if p.WebLogin.Enabled {
 			return security.JailWebLogin
 		}
-	case "scan", "flood":
+	case "flood":
+		if p.WebFlood.Enabled {
+			return security.JailWebFlood
+		}
+		if p.WebScan.Enabled {
+			return security.JailWebScan
+		}
+	case "scan":
 		if p.WebScan.Enabled {
 			return security.JailWebScan
 		}
@@ -554,4 +597,34 @@ func (a *App) webBanAlert(want bool) (string, []string) {
 	return fmt.Sprintf("%d %s banned by website or mail protection\n\n%s\n\n"+
 		"Unban one from the Banned IPs tab on the Security page.", len(fresh),
 		map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1], strings.Join(shown, "\n")), freshIPs
+}
+
+// suspiciousAlert is the email about programs that look like malware.
+func suspiciousAlert(found []security.SuspiciousProcess) string {
+	var text strings.Builder
+
+	fmt.Fprintf(&text, "%d suspicious program%s running on the server\n\n", len(found), map[bool]string{true: " is", false: "s are"}[len(found) == 1])
+
+	for _, process := range found {
+		name := process.Name
+		if name == "" {
+			name = "unknown program"
+		}
+		fmt.Fprintf(&text, "  %s (pid %d", name, process.PID)
+		if process.User != "" {
+			fmt.Fprintf(&text, ", user %s", process.User)
+		}
+		text.WriteString(")")
+		if process.Path != "" {
+			fmt.Fprintf(&text, " — %s", process.Path)
+		}
+		fmt.Fprintf(&text, "\n    %s\n", process.Reason)
+	}
+
+	text.WriteString("\nThis is what a cryptocurrency miner or other malware dropped through a vulnerable site, " +
+		"an exposed service or a stolen password looks like. Nothing was stopped. Check it in the Terminal " +
+		"(ps -fp <pid>, ls -l /proc/<pid>/exe); if it is not yours, kill it, find how it got in — the site's access log, " +
+		"its user's crontab (crontab -l -u <user>), ~/.ssh/authorized_keys — and change that account's passwords.")
+
+	return text.String()
 }

@@ -175,7 +175,8 @@ func (a *App) anyAlertEnabled() bool {
 		a.Store.SettingBool(alertSSHLoginSetting, true) ||
 		a.Store.SettingBool(alertSSHBanSetting, false) ||
 		a.healthAlert(alertCPUSetting) || a.healthAlert(alertDiskSetting) ||
-		a.healthAlert(alertAttacksSetting) || a.healthAlert(alertCriticalSetting)
+		a.healthAlert(alertAttacksSetting) || a.healthAlert(alertCriticalSetting) ||
+		a.healthAlert(alertSuspiciousSetting)
 }
 
 func (a *App) alertSettings(ctx context.Context) map[string]any {
@@ -193,6 +194,7 @@ func (a *App) alertSettings(ctx context.Context) map[string]any {
 		"attacks":       a.healthAlert(alertAttacksSetting),
 		"task_failed":   a.Store.SettingBool(alertTaskFailedSetting, true),
 		"critical":      a.healthAlert(alertCriticalSetting),
+		"suspicious":    a.healthAlert(alertSuspiciousSetting),
 	}
 }
 
@@ -252,6 +254,7 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		case <-ticker.C:
 			a.recordSSHEvents(ctx)
 			a.checkProtection(ctx)
+			a.checkLocks(ctx)
 			a.syncNginxBans(ctx, false)
 			go a.collectServerLogs(ctx)
 			a.checkAlerts(ctx)

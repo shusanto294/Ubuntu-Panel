@@ -124,6 +124,20 @@ var Entries = []Entry{
 		Keywords: "security ssh brute force ban intrusion firewall jail", SizeHint: "~10 MB",
 	},
 	{
+		Key: "modsecurity", Label: "ModSecurity WAF", Group: "core",
+		Description: "A web application firewall for nginx with the OWASP Core Rule Set: SQL injection, " +
+			"XSS and other attacks refused before PHP runs. Switch it on from Security → Protection.",
+		Requires:      []string{"nginx"},
+		OnlyWhenAsked: true,
+		Detect: "ls /etc/nginx/modules-enabled/ 2>/dev/null | grep -qi modsecurity && " +
+			"test -f /usr/share/modsecurity-crs/rules/REQUEST-901-INITIALIZATION.conf",
+		Version:   "dpkg-query -W -f='ModSecurity ${Version}' libmodsecurity3 2>/dev/null",
+		Packages:  "libnginx-mod-http-modsecurity modsecurity-crs",
+		Removable: true,
+		Keywords:  "security waf firewall modsecurity owasp crs sql injection xss attack",
+		SizeHint:  "~15 MB",
+	},
+	{
 		Key: "mysql", Label: "MariaDB", Group: "database",
 		Description: "Required for WordPress and most Laravel sites.",
 		Core:        true, Default: true, Requires: []string{"base"},

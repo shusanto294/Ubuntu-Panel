@@ -66,7 +66,7 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.Sites.Deploy(ctx, payload.Site)
+		return a.withSiteUnlocked(ctx, payload.Site, true, func() error { return a.Sites.Deploy(ctx, payload.Site) })
 	})
 
 	a.Queue.Handle(queue.SiteDelete, func(ctx context.Context, job *store.Job) error {
@@ -76,7 +76,13 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.Sites.Destroy(ctx, payload.Site, payload.Files)
+		// Unlocked for good: the files are about to be removed, or left behind
+		// for somebody to use without the panel.
+		err := a.withSiteUnlocked(ctx, payload.Site, false, func() error {
+			return a.Sites.Destroy(ctx, payload.Site, payload.Files)
+		})
+		a.rebaselineWatch(ctx)
+		return err
 	})
 
 	a.Queue.Handle(queue.SiteRestart, func(ctx context.Context, job *store.Job) error {
@@ -106,7 +112,9 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.movePHPVersion(ctx, payload.Site, payload.Version)
+		return a.withSiteUnlocked(ctx, payload.Site, true, func() error {
+			return a.movePHPVersion(ctx, payload.Site, payload.Version)
+		})
 	})
 
 	// Both keyed by the backup's own id rather than the site's: the row was
@@ -139,11 +147,19 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.Sites.Push(ctx, payload.Site, sites.StagingOptions{
-			Files:       payload.Files,
-			Database:    payload.Database,
-			KeepUploads: payload.KeepUploads,
-		})
+		push := func() error {
+			return a.Sites.Push(ctx, payload.Site, sites.StagingOptions{
+				Files:       payload.Files,
+				Database:    payload.Database,
+				KeepUploads: payload.KeepUploads,
+			})
+		}
+
+		// What is written to is the production site the staging copy is of.
+		if staging, err := a.Store.FindSite(ctx, payload.Site); err == nil && staging.StagingOf > 0 {
+			return a.withSiteUnlocked(ctx, staging.StagingOf, true, push)
+		}
+		return push()
 	})
 
 	a.Queue.Handle(queue.SiteRestore, func(ctx context.Context, job *store.Job) error {
@@ -153,6 +169,9 @@ func (a *App) registerJobs() {
 			return err
 		}
 
+		if backup, err := a.Store.FindBackup(ctx, payload.Backup); err == nil {
+			return a.withSiteUnlocked(ctx, backup.SiteID, true, func() error { return a.Sites.Restore(ctx, payload.Backup) })
+		}
 		return a.Sites.Restore(ctx, payload.Backup)
 	})
 
@@ -163,7 +182,7 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.Sites.Pull(ctx, payload.Site)
+		return a.withSiteUnlocked(ctx, payload.Site, true, func() error { return a.Sites.Pull(ctx, payload.Site) })
 	})
 
 	a.Queue.Handle(queue.DatabaseCreate, func(ctx context.Context, job *store.Job) error {
@@ -193,6 +212,9 @@ func (a *App) registerJobs() {
 			return err
 		}
 
+		// Packages add accounts and services of their own.
+		defer a.rebaselineWatch(ctx)
+
 		return a.Catalog.InstallQueued(ctx, payload.User)
 	})
 
@@ -202,6 +224,9 @@ func (a *App) registerJobs() {
 		if err := decode(job, &payload); err != nil {
 			return err
 		}
+
+		// Packages add accounts and services of their own.
+		defer a.rebaselineWatch(ctx)
 
 		return a.Catalog.UpgradeInstalled(ctx, payload.User)
 	})

@@ -709,6 +709,13 @@ func upstream(out *strings.Builder, site *store.Site) {
 			"}\n\n", site.ServiceName(), site.AppPort)
 }
 
+// GuardInclude is the line in each of a site's server blocks that brings in
+// the Security page's per-site protections — refused attack tools and
+// countries, the under-attack browser check, the WAF. A glob, so it is no
+// error while the directory is empty or missing. The security package writes
+// the files and holds the same line.
+const GuardInclude = "include /etc/nginx/panel-guard/*.conf;"
+
 // RenderVhost writes the site's nginx configuration.
 //
 // tls is only true once the certificate exists — nginx refuses to start if
@@ -734,7 +741,8 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 		out.WriteString("    listen 80;\n    listen [::]:80;\n")
 		fmt.Fprintf(&out, "    server_name %s;\n\n", names)
 		fmt.Fprintf(&out, "    access_log /var/log/nginx/%s-access.log;\n", site.Domain)
-		fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n\n", site.Domain)
+		fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n", site.Domain)
+		out.WriteString("    " + GuardInclude + "\n\n")
 
 		acme(&out)
 		out.WriteString("\n")
@@ -765,7 +773,8 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 				"    ssl_certificate_key %s.key;\n"+
 				"    ssl_protocols TLSv1.2 TLSv1.3;\n\n", DefaultCert, DefaultCert)
 		fmt.Fprintf(&out, "    access_log /var/log/nginx/%s-access.log;\n", site.Domain)
-		fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n\n", site.Domain)
+		fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n", site.Domain)
+		out.WriteString("    " + GuardInclude + "\n\n")
 
 		body(&out, site, tls)
 		out.WriteString("}\n")
@@ -807,7 +816,8 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 		certs, certs)
 
 	fmt.Fprintf(&out, "    access_log /var/log/nginx/%s-access.log;\n", site.Domain)
-	fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n\n", site.Domain)
+	fmt.Fprintf(&out, "    error_log  /var/log/nginx/%s-error.log;\n", site.Domain)
+	out.WriteString("    " + GuardInclude + "\n\n")
 
 	body(&out, site, tls)
 	out.WriteString("}\n")
