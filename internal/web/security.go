@@ -199,6 +199,21 @@ type securitySnapshot struct {
 	// BanTimes are when each jail banned each address, and until when.
 	BanTimes map[string]map[string]security.BanTime
 	Taken    time.Time
+
+	// When the slow parts that rarely change were last actually read. A
+	// background refresh keeps them from the copy before until they are this
+	// old (see slowPartAge), rather than running apt and the journal again
+	// every minute for a page nobody has open.
+	UpdatesAt, UsersAt, SSHAt, EventsAt time.Time
+}
+
+// slowPartAge is how long a background refresh keeps each slow part. apt's
+// list only moves when the daily timer refreshes the cache; the SSH config
+// and the users only when somebody changes them, which forgets the whole
+// snapshot anyway; the SSH events are copied into the database every minute
+// on their own, and this copy is only the Security page's list of them.
+var slowPartAge = struct{ Updates, Users, SSH, Events time.Duration }{
+	Updates: time.Hour, Users: 15 * time.Minute, SSH: 15 * time.Minute, Events: 5 * time.Minute,
 }
 
 type snapshotCache struct {
@@ -242,7 +257,9 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 			securityCache.refreshing = true
 
 			go func() {
-				snapshot := a.readSnapshot()
+				// Nobody is waiting on this one, so it is read gently: one
+				// part after another, keeping what rarely changes.
+				snapshot := a.readSnapshot(current, true)
 
 				securityCache.Lock()
 				if securityCache.generation == generation {
@@ -275,7 +292,7 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 	}
 	securityCache.Unlock()
 
-	snapshot := a.readSnapshot()
+	snapshot := a.readSnapshot(nil, false)
 
 	securityCache.Lock()
 	if securityCache.value == nil || securityCache.value.Taken.Before(started) {
@@ -286,45 +303,94 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 	return snapshot
 }
 
-// readSnapshot asks the machine. The parts are independent and each a few
-// hundred milliseconds of sudo, so they are asked at once.
-func (a *App) readSnapshot() *securitySnapshot {
-	var (
-		wait     sync.WaitGroup
-		snapshot = &securitySnapshot{Taken: time.Now()}
-	)
+// readSnapshot asks the machine.
+//
+// Read for a page that is waiting (gentle false), every part is asked at once:
+// each is a few hundred milliseconds of sudo, and somebody is watching a
+// spinner. Read in the background (gentle true), the parts are asked one after
+// another, so the panel never takes both cores of a small VPS for a page
+// nobody has open, and the slow parts that rarely change are kept from
+// previous until they are slowPartAge old.
+func (a *App) readSnapshot(previous *securitySnapshot, gentle bool) *securitySnapshot {
+	now := time.Now()
+	snapshot := &securitySnapshot{Taken: now}
 
-	wait.Add(6)
-	go func() { defer wait.Done(); snapshot.Jail = security.Status() }()
-	go func() { defer wait.Done(); snapshot.SSH = security.ReadSSH() }()
-	go func() { defer wait.Done(); snapshot.Firewall = security.ReadFirewall() }()
-	go func() { defer wait.Done(); snapshot.Updates = security.ReadUpdates() }()
-	go func() { defer wait.Done(); snapshot.Events = security.ReadEvents(7*24*time.Hour, 1000) }()
-	go func() { defer wait.Done(); snapshot.Users = security.ReadUsers(a.Config.SystemUser) }()
+	// A copy, so the parts kept below can be read off a snapshot that may be nil.
+	var prev securitySnapshot
+	if previous != nil {
+		prev = *previous
+	}
+
+	keep := func(at time.Time, age time.Duration) bool {
+		return gentle && previous != nil && !at.IsZero() && now.Sub(at) < age
+	}
+
+	parts := []func(){
+		func() { snapshot.Jail = security.Status() },
+		func() { snapshot.Firewall = security.ReadFirewall() },
+	}
+
+	if keep(prev.UpdatesAt, slowPartAge.Updates) {
+		snapshot.Updates, snapshot.UpdatesAt = prev.Updates, prev.UpdatesAt
+	} else {
+		parts = append(parts, func() { snapshot.Updates, snapshot.UpdatesAt = security.ReadUpdates(), time.Now() })
+	}
+
+	if keep(prev.SSHAt, slowPartAge.SSH) {
+		snapshot.SSH, snapshot.SSHAt = prev.SSH, prev.SSHAt
+	} else {
+		parts = append(parts, func() { snapshot.SSH, snapshot.SSHAt = security.ReadSSH(), time.Now() })
+	}
+
+	if keep(prev.EventsAt, slowPartAge.Events) {
+		snapshot.Events, snapshot.EventsAt = prev.Events, prev.EventsAt
+	} else {
+		parts = append(parts, func() {
+			snapshot.Events, snapshot.EventsAt = security.ReadEvents(7*24*time.Hour, 1000), time.Now()
+		})
+	}
+
+	if keep(prev.UsersAt, slowPartAge.Users) {
+		snapshot.Users, snapshot.UsersAt = prev.Users, prev.UsersAt
+	} else {
+		parts = append(parts, func() {
+			snapshot.Users, snapshot.UsersAt = security.ReadUsers(a.Config.SystemUser), time.Now()
+		})
+	}
 
 	// The optional jails, only those that are on: asking fail2ban is a Python
 	// start-up each.
 	snapshot.Protect = map[string]security.JailStatus{}
 	p := a.protection()
 	if p.AnyJail() {
-		wait.Add(1)
-		go func() { defer wait.Done(); snapshot.Protect = security.ProtectStatus(p) }()
+		parts = append(parts, func() { snapshot.Protect = security.ProtectStatus(p) })
 	}
 
 	// When each jail banned each address.
 	snapshot.BanTimes = map[string]map[string]security.BanTime{}
 	var times sync.Mutex
 	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
-		wait.Add(1)
-		go func(jail string) {
-			defer wait.Done()
+		parts = append(parts, func() {
 			found := security.BanTimes(jail)
 			times.Lock()
 			snapshot.BanTimes[jail] = found
 			times.Unlock()
-		}(jail)
+		})
 	}
 
+	if gentle {
+		for _, part := range parts {
+			part()
+		}
+
+		return snapshot
+	}
+
+	var wait sync.WaitGroup
+	for _, part := range parts {
+		wait.Add(1)
+		go func() { defer wait.Done(); part() }()
+	}
 	wait.Wait()
 
 	return snapshot

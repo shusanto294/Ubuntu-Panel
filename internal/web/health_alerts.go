@@ -83,6 +83,7 @@ var health struct {
 	certsAt    time.Time
 	attacksAt  time.Time
 	scannedAt  time.Time
+	webBansAt  time.Time
 }
 
 // cooled is whether an alert may be sent again, and marks it sent if so.
@@ -115,7 +116,20 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 
 	// The web bans list moves forward whether or not anything is sent, like
 	// the SSH one, so switching the alert on is about bans from then on.
-	webBans, webBanned := a.webBanAlert(a.healthAlert(alertWebBanSetting))
+	// Every five minutes: asking fail2ban for each jail's list is a Python
+	// start-up per jail, and the list is compared with the one before, so a
+	// ban made in between is still told about — five minutes later at most.
+	health.Lock()
+	bansDue := time.Since(health.webBansAt) >= 5*time.Minute
+	if bansDue {
+		health.webBansAt = time.Now()
+	}
+	health.Unlock()
+
+	webBans, webBanned := "", []string(nil)
+	if bansDue {
+		webBans, webBanned = a.webBanAlert(a.healthAlert(alertWebBanSetting))
+	}
 
 	if hot >= cpuAlertMinutes && a.healthAlert(alertCPUSetting) && a.cooled("cpu", time.Hour) {
 		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/logs", a.cpuAlert(ctx, hot)))
@@ -197,7 +211,9 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 		health.Unlock()
 
 		if due {
-			report, _ := a.markTrusted(ctx, a.traffic(ctx, findTrafficWindow("1h")), "")
+			// Read gently: nobody is waiting on this report, so one log file
+			// at a time rather than four at once.
+			report, _ := a.markTrusted(ctx, a.traffic(gently(ctx), findTrafficWindow("1h")), "")
 			banned := a.autoBan(report.TopIPs)
 
 			if a.healthAlert(alertAttacksSetting) {

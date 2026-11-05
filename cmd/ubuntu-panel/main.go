@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -184,6 +185,10 @@ func run(configPath string) error {
 
 	log.Info("starting", "panel", config.Name, "version", config.Version)
 
+	// Behind the sites for CPU and disk, so the panel's own work never takes
+	// the machine from the visitors it is there to serve.
+	system.LowerPriority()
+
 	db, err := store.Open(cfg.DatabasePath)
 	if err != nil {
 		return err
@@ -319,6 +324,7 @@ func sample(ctx context.Context, db *store.Store) {
 			Disk: metrics.DiskPercent, Swap: metrics.SwapPercent, Load: metrics.Load[0],
 			MemoryUsed: int64(metrics.MemoryUsed), MemoryTotal: int64(metrics.MemoryTotal),
 			DiskUsed: int64(metrics.DiskUsed), DiskTotal: int64(metrics.DiskTotal),
+			Spike: spikeJSON(window.Spike),
 		})
 
 		if time.Since(pruned) > 6*time.Hour {
@@ -326,6 +332,21 @@ func sample(ctx context.Context, db *store.Store) {
 			pruned = time.Now()
 		}
 	}
+}
+
+// spikeJSON is a minute's busiest second as the samples table keeps it, or
+// empty when the CPU never got that busy.
+func spikeJSON(spike *system.Spike) string {
+	if spike == nil {
+		return ""
+	}
+
+	encoded, err := json.Marshal(spike)
+	if err != nil {
+		return ""
+	}
+
+	return string(encoded)
 }
 
 // prune clears out what nobody came back for, hourly: sessions, and the

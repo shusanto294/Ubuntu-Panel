@@ -169,6 +169,8 @@ const points = (key) =>
         t: point.t,
         v: point[key],
         p: point[`${key}_peak`] ?? null,
+        // The busiest second inside the point and what was using it.
+        s: point[`${key}_spike`] ?? null,
     }));
 
 const bucketSeconds = computed(() => series.value?.bucket_seconds ?? 60);

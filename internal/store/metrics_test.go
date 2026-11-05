@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,5 +148,31 @@ func TestEveryRangeIsOfferedWithARefreshInterval(t *testing.T) {
 
 	if findMetricRange("nonsense").Key != DefaultMetricRange {
 		t.Fatal("an unknown range did not fall back to the default")
+	}
+}
+
+// A point carries its bucket's busiest second, as the JSON it was stored as;
+// a minute that never got busy carries none.
+func TestHistoryCarriesTheBusiestSpike(t *testing.T) {
+	st := metricStore(t)
+
+	st.RecordMetrics(MetricSample{CPU: 5, CPUPeak: 60, Spike: `{"cpu":60,"top":[{"name":"nginx"}]}`})
+	st.RecordMetrics(MetricSample{CPU: 5, CPUPeak: 95, Spike: `{"cpu":95,"top":[{"name":"php-fpm: pool a.com"}]}`})
+	st.RecordMetrics(MetricSample{CPU: 5, CPUPeak: 70, Spike: `not json`})
+
+	points := st.MetricHistory(context.Background(), "24h")["points"].([]map[string]any)
+	if len(points) != 1 {
+		t.Fatalf("points are %#v", points)
+	}
+
+	spike, ok := points[0]["cpu_spike"].(json.RawMessage)
+	if !ok || !strings.Contains(string(spike), "a.com") {
+		t.Fatalf("spike is %#v", points[0]["cpu_spike"])
+	}
+
+	quiet := metricStore(t)
+	quiet.RecordMetrics(MetricSample{CPU: 5})
+	if _, there := quiet.MetricHistory(context.Background(), "1h")["points"].([]map[string]any)[0]["cpu_spike"]; there {
+		t.Fatal("a quiet minute has a spike")
 	}
 }

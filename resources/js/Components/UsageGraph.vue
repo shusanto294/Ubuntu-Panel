@@ -12,7 +12,9 @@ const props = defineProps({
     label: { type: String, required: true },
     // Hue for this metric, held across every range so the card keeps its identity.
     color: { type: String, default: '#4f46e5' },
-    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null }], oldest first.
+    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null,
+    //    s?: { at, cpu, top: [{ name, command, processes, cpu, finished }] } | null }],
+    // oldest first. `s` is the point's busiest second and what was using it.
     points: { type: Array, default: () => [] },
     // The live reading, which is fresher than the newest recorded point.
     current: { type: [Number, null], default: null },
@@ -58,6 +60,7 @@ const plot = computed(() => ({
 const series = computed(() => {
     const out = props.points.map((p) => ({
         t: p.t,
+        s: p.s ?? null,
         v:
             p.v === null || p.v === undefined
                 ? null
@@ -213,13 +216,32 @@ const hoverTime = computed(() =>
         : '',
 );
 
+const spikeTime = computed(() =>
+    hover.value?.point.s
+        ? new Date(hover.value.point.s.at * 1000).toLocaleTimeString(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+          })
+        : '',
+);
+
 // Keep the tooltip inside the card rather than letting it run off the edge.
+// One with processes in it is wider and taller: it sits below a high point
+// and above a low one, so it never covers the line it is about.
 const tooltipStyle = computed(() => {
     if (!hover.value) return {};
 
-    const clamped = Math.max(56, Math.min(width.value - 56, hover.value.x));
+    const half = hover.value.point.s ? 125 : 56;
+    const clamped = Math.max(half, Math.min(width.value - half, hover.value.x));
 
-    return { left: `${clamped}px`, top: `${Math.max(4, hover.value.y - 46)}px` };
+    if (!hover.value.point.s) {
+        return { left: `${clamped}px`, top: `${Math.max(4, hover.value.y - 46)}px` };
+    }
+
+    return hover.value.y < HEIGHT / 2
+        ? { left: `${clamped}px`, top: `${hover.value.y + 12}px` }
+        : { left: `${clamped}px`, top: `${hover.value.y - 12}px`, transform: 'translate(-50%, -100%)' };
 });
 
 const displayed = computed(() =>
@@ -344,6 +366,35 @@ const tone = computed(() => {
             >
                 <span class="font-semibold tabular-nums">{{ hover.point.v.toFixed(1) }}%</span>
                 <span class="block text-[10px] text-slate-300">{{ hover.point.live ? 'now' : hoverTime }}</span>
+
+                <div
+                    v-if="hover.point.s && hover.point.s.top?.length"
+                    class="mt-1.5 w-[230px] border-t border-white/15 pt-1.5 text-left whitespace-normal"
+                >
+                    <p class="text-[10px] text-slate-300">
+                        Busiest second, {{ spikeTime }}:
+                        <span class="font-semibold text-white tabular-nums">{{ hover.point.s.cpu.toFixed(0) }}%</span>
+                    </p>
+                    <ul class="mt-1 space-y-0.5">
+                        <li
+                            v-for="process in hover.point.s.top"
+                            :key="process.name"
+                            class="flex items-baseline justify-between gap-2"
+                        >
+                            <span class="min-w-0 truncate" :title="process.command">
+                                {{ process.name }}
+                                <span v-if="process.processes > 1" class="text-slate-400">×{{ process.processes }}</span>
+                                <span
+                                    v-if="process.finished >= 1 && process.finished >= process.cpu / 2"
+                                    class="block text-[10px] text-slate-400"
+                                >
+                                    incl. programs it ran
+                                </span>
+                            </span>
+                            <span class="shrink-0 font-semibold tabular-nums">{{ process.cpu.toFixed(0) }}%</span>
+                        </li>
+                    </ul>
+                </div>
             </div>
 
             <div

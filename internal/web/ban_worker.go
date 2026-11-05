@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
@@ -183,37 +182,27 @@ func (a *App) refreshBans() {
 		return
 	}
 
+	// One after another rather than all at once: each is a Python start-up
+	// (ufw, fail2ban-client), and a burst of bans asking for several at once
+	// on a two-core VPS is the panel taking both cores from the sites.
 	var (
-		wait  sync.WaitGroup
-		times sync.Mutex
-		next  = *current
-		p     = a.protection()
+		next = *current
+		p    = a.protection()
 	)
 
 	next.Protect = map[string]security.JailStatus{}
 	next.BanTimes = map[string]map[string]security.BanTime{}
 
-	wait.Add(2)
-	go func() { defer wait.Done(); next.Jail = security.Status() }()
-	go func() { defer wait.Done(); next.Firewall = security.ReadFirewall() }()
+	next.Jail = security.Status()
+	next.Firewall = security.ReadFirewall()
 
 	if p.AnyJail() {
-		wait.Add(1)
-		go func() { defer wait.Done(); next.Protect = security.ProtectStatus(p) }()
+		next.Protect = security.ProtectStatus(p)
 	}
 
 	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
-		wait.Add(1)
-		go func(jail string) {
-			defer wait.Done()
-			found := security.BanTimes(jail)
-			times.Lock()
-			next.BanTimes[jail] = found
-			times.Unlock()
-		}(jail)
+		next.BanTimes[jail] = security.BanTimes(jail)
 	}
-
-	wait.Wait()
 
 	securityCache.Lock()
 	if securityCache.generation == generation && securityCache.value == current {

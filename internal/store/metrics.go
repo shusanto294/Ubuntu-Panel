@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strconv"
 	"time"
@@ -69,6 +70,10 @@ type MetricSample struct {
 	Disk, Swap, Load   float64
 
 	MemoryUsed, MemoryTotal, DiskUsed, DiskTotal int64
+
+	// Spike is the minute's busiest second and what used it, as JSON, or
+	// empty when the CPU never reached system.SpikeAt.
+	Spike string
 }
 
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
@@ -81,15 +86,20 @@ func (s *Store) RecordMetrics(sample MetricSample) {
 		cpuPeak = math.Max(sample.CPU, sample.CPUPeak)
 	}
 
+	spike := any(nil)
+	if sample.Spike != "" {
+		spike = sample.Spike
+	}
+
 	s.db.Exec(
 		`INSERT INTO metric_samples
 		    (cpu_percent, cpu_max, memory_percent, memory_max, disk_percent, swap_percent,
-		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at, cpu_spike)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cpu, cpuPeak, sample.Memory, math.Max(sample.Memory, sample.MemoryPeak),
 		sample.Disk, sample.Swap, sample.MemoryUsed, sample.MemoryTotal,
 		sample.DiskUsed, sample.DiskTotal, sample.Load,
-		time.Now().UTC().Format("2006-01-02 15:04:05"))
+		time.Now().UTC().Format("2006-01-02 15:04:05"), spike)
 }
 
 // PruneMetrics deletes samples past the retention window.
@@ -156,6 +166,16 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 		}
 	}
 
+	// What each point's busiest second was: the spike with the highest CPU
+	// in the bucket, read on its own rather than as a bare column beside the
+	// averages, which SQLite only fills from the right row for a lone max().
+	spikes := s.bucketSpikes(ctx, window, from)
+	for _, point := range points {
+		if spike, ok := spikes[point["t"].(int64)]; ok {
+			point["cpu_spike"] = spike
+		}
+	}
+
 	return map[string]any{
 		"range":          window.Key,
 		"label":          window.Label,
@@ -202,4 +222,37 @@ func whole(value nullFloat) any {
 	}
 
 	return int64(value.Value)
+}
+
+// bucketSpikes is the busiest recorded spike of each bucket since from, keyed
+// by the bucket's start in unix seconds, as the JSON it was stored as.
+func (s *Store) bucketSpikes(ctx context.Context, window MetricRange, from time.Time) map[int64]json.RawMessage {
+	out := map[int64]json.RawMessage{}
+	best := map[int64]float64{}
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT (strftime('%s', sampled_at) / ?) * ?, coalesce(cpu_max, 0), cpu_spike
+		   FROM metric_samples
+		  WHERE sampled_at >= ? AND cpu_spike IS NOT NULL`,
+		window.Bucket, window.Bucket, from.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var bucket int64
+		var peak float64
+		var spike string
+
+		if rows.Scan(&bucket, &peak, &spike) != nil || !json.Valid([]byte(spike)) {
+			continue
+		}
+
+		if current, seen := best[bucket]; !seen || peak > current {
+			best[bucket], out[bucket] = peak, json.RawMessage(spike)
+		}
+	}
+
+	return out
 }

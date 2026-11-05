@@ -481,6 +481,11 @@ var migrations = []string{
 	// What an account may do: "admin" everything, "viewer" look and touch
 	// nothing. Every account made before there was a choice is an admin.
 	`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
+
+	// The minute's busiest second at 50% CPU or more, and the processes that
+	// were using it, as JSON: what a spike on the graph was. NULL for a
+	// minute that never got that busy.
+	`ALTER TABLE metric_samples ADD COLUMN cpu_spike TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -247,19 +247,63 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 
 	a.recordSSHEvents(ctx)
 
+	minutes := 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.recordSSHEvents(ctx)
-			a.checkProtection(ctx)
-			a.checkLocks(ctx)
-			a.syncNginxBans(ctx, false)
-			go a.collectServerLogs(ctx)
-			a.checkAlerts(ctx)
+		}
+
+		minutes++
+
+		// The minute's jobs, spread across it rather than started together.
+		// Each is a handful of sudo, journalctl and fail2ban-client starts;
+		// run back to back they are a second of both cores of a small VPS,
+		// every minute, which is a spike on the CPU graph and a moment the
+		// sites have to share the machine with the panel.
+		jobs := []func(){
+			func() { a.recordSSHEvents(ctx) },
+			func() { a.checkProtection(ctx) },
+			func() { a.checkLocks(ctx) },
+			func() {
+				// Every five minutes: the ban worker and the jails' own nginx
+				// action give nginx each ban the moment it is made, so this is
+				// the safety net behind them, not the way bans arrive.
+				if minutes%5 == 0 {
+					a.syncNginxBans(ctx, false)
+				}
+			},
+			func() { a.collectServerLogs(ctx) },
+			func() { a.checkAlerts(ctx) },
+		}
+
+		if !spread(ctx, 45*time.Second, jobs) {
+			return
 		}
 	}
+}
+
+// spread runs jobs one after another, starting each a share of within apart,
+// and reports false if ctx ended first. A job that runs long only delays the
+// ones after it.
+func spread(ctx context.Context, within time.Duration, jobs []func()) bool {
+	gap := within / time.Duration(max(1, len(jobs)))
+
+	for i, job := range jobs {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(gap):
+			}
+		}
+
+		job()
+	}
+
+	return true
 }
 
 func (a *App) checkAlerts(ctx context.Context) {

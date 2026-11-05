@@ -126,6 +126,10 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 		slots   = make(chan struct{}, 4)
 	)
 
+	if isGentle(ctx) {
+		slots = make(chan struct{}, 1)
+	}
+
 	for domain, path := range sources {
 		wait.Add(1)
 
@@ -599,4 +603,17 @@ func proxiedSites(domains []string) map[string]bool {
 	}
 
 	return proxied
+}
+
+type gentleKey struct{}
+
+// gently marks a context as background work nobody is waiting on, which
+// reads one thing at a time rather than spreading over every core.
+func gently(ctx context.Context) context.Context {
+	return context.WithValue(ctx, gentleKey{}, true)
+}
+
+func isGentle(ctx context.Context) bool {
+	gentle, _ := ctx.Value(gentleKey{}).(bool)
+	return gentle
 }
