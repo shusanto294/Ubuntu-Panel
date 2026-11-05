@@ -52,14 +52,37 @@ const plot = computed(() => ({
     height: Math.max(1, HEIGHT - PAD.top - PAD.bottom),
 }));
 
-const known = computed(() => props.points.filter((p) => p.v !== null && p.v !== undefined));
+// One line, one value per point: the highest reading inside it. An average
+// would flatten a second at 100% into the idle seconds around it, and the line
+// would never show what the number above it said.
+const series = computed(() => {
+    const out = props.points.map((p) => ({
+        t: p.t,
+        v:
+            p.v === null || p.v === undefined
+                ? null
+                : p.p !== null && p.p !== undefined
+                  ? Math.max(p.v, p.p)
+                  : p.v,
+    }));
+
+    // The live reading is the line's last point, so the line ends where the
+    // number above it is now.
+    if (props.current !== null && props.current !== undefined) {
+        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, live: true });
+    }
+
+    return out;
+});
+
+const known = computed(() => series.value.filter((p) => p.v !== null && p.v !== undefined));
 
 const span = computed(() => {
-    if (props.points.length < 2) return null;
+    if (series.value.length < 2) return null;
 
     return {
-        from: props.points[0].t,
-        to: props.points[props.points.length - 1].t,
+        from: series.value[0].t,
+        to: series.value[series.value.length - 1].t,
     };
 });
 
@@ -83,10 +106,12 @@ const runs = computed(() => {
     let run = [];
     let previous = null;
 
-    for (const point of props.points) {
+    for (const point of series.value) {
         const missing = point.v === null || point.v === undefined;
-        const jumped =
-            previous !== null && point.t - previous > props.bucketSeconds * 1.8;
+        // The live tip sits up to two buckets past the last recorded one — the
+        // current bucket is not written until it ends — which is not a gap.
+        const allowed = props.bucketSeconds * (point.live ? 3 : 1.8);
+        const jumped = previous !== null && point.t - previous > allowed;
 
         if (missing || jumped) {
             if (run.length) out.push(run);
@@ -127,54 +152,6 @@ const areaPath = computed(() =>
         .join(' '),
 );
 
-// The highest second inside a point, never below its own average.
-const peakOf = (p) => (p.p !== null && p.p !== undefined ? Math.max(p.v, p.p) : p.v);
-
-// Whether any point's highest second stands clear of its average. When one
-// does, the peaks are drawn too: a minute that averaged 8% but spent a second
-// at 100% is otherwise a footnote the line contradicts.
-const hasPeaks = computed(() => known.value.some((p) => peakOf(p) - p.v >= 1));
-
-const segment = (run, value) =>
-    run
-        .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(value(p)).toFixed(1)}`)
-        .join(' ');
-
-/** The line through each point's highest second. */
-const peakPath = computed(() =>
-    hasPeaks.value ? runs.value.map((run) => segment(run, peakOf)).join(' ') : '',
-);
-
-/** The band between average and peak: how far each point swung above its mean. */
-const bandPath = computed(() => {
-    if (!hasPeaks.value) return '';
-
-    return runs.value
-        .filter((run) => run.length > 1)
-        .map((run) => {
-            const top = segment(run, peakOf);
-            const bottom = [...run]
-                .reverse()
-                .map((p) => `L${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
-                .join(' ');
-
-            return `${top} ${bottom} Z`;
-        })
-        .join(' ');
-});
-
-/** The single highest second in the range, marked so it can be found. */
-const peakMark = computed(() => {
-    if (!hasPeaks.value) return null;
-
-    let best = null;
-    for (const p of known.value) {
-        if (!best || peakOf(p) > peakOf(best)) best = p;
-    }
-
-    return best ? { x: x(best.t), y: y(peakOf(best)), value: peakOf(best) } : null;
-});
-
 const gridlines = [0, 25, 50, 75, 100];
 
 const timeLabels = computed(() => {
@@ -197,33 +174,15 @@ const timeLabels = computed(() => {
     ];
 });
 
-const summary = computed(() => {
-    if (!known.value.length) return null;
-
-    const values = known.value.map((p) => p.v);
-    const sum = values.reduce((a, b) => a + b, 0);
-
-    // High is the highest second recorded, not the highest average.
-    const peaks = known.value.map((p) => Math.max(p.v, p.p ?? p.v));
-
-    return {
-        min: Math.min(...values),
-        max: Math.max(...peaks),
-        average: sum / values.length,
-    };
-});
-
 /** Read aloud instead of the drawing, for anyone not looking at the pixels. */
 const description = computed(() =>
-    summary.value
-        ? `${props.label}: average ${summary.value.average.toFixed(0)} percent, ` +
-          `low ${summary.value.min.toFixed(0)}, high ${summary.value.max.toFixed(0)}, ` +
-          `across ${known.value.length} recorded points.`
+    known.value.length
+        ? `${props.label} over time, now ${known.value[known.value.length - 1].v.toFixed(0)} percent.`
         : `${props.label}: nothing recorded for this range yet.`,
 );
 
 const onMove = (event) => {
-    if (!props.points.length || !span.value) return;
+    if (!series.value.length || !span.value) return;
 
     const bounds = event.currentTarget.getBoundingClientRect();
     const offset = event.clientX - bounds.left;
@@ -240,9 +199,7 @@ const onMove = (event) => {
         }
     }
 
-    hover.value = nearest
-        ? { point: nearest, x: x(nearest.t), y: y(nearest.v), peakY: y(peakOf(nearest)) }
-        : null;
+    hover.value = nearest ? { point: nearest, x: x(nearest.t), y: y(nearest.v) } : null;
 };
 
 const hoverTime = computed(() =>
@@ -262,7 +219,7 @@ const tooltipStyle = computed(() => {
 
     const clamped = Math.max(56, Math.min(width.value - 56, hover.value.x));
 
-    return { left: `${clamped}px`, top: `${Math.max(4, hover.value.peakY - 46)}px` };
+    return { left: `${clamped}px`, top: `${Math.max(4, hover.value.y - 46)}px` };
 });
 
 const displayed = computed(() =>
@@ -338,16 +295,6 @@ const tone = computed(() => {
                 </g>
 
                 <path v-if="areaPath" :d="areaPath" :fill="`url(#fill-${label})`" />
-                <path v-if="bandPath" :d="bandPath" :fill="color" fill-opacity="0.14" />
-                <path
-                    v-if="peakPath"
-                    :d="peakPath"
-                    fill="none"
-                    :stroke="color"
-                    stroke-opacity="0.55"
-                    stroke-width="1"
-                    stroke-linejoin="round"
-                />
                 <path
                     v-if="linePath"
                     :d="linePath"
@@ -358,17 +305,6 @@ const tone = computed(() => {
                     stroke-linecap="round"
                 />
 
-                <g v-if="peakMark && !hover">
-                    <circle
-                        :cx="peakMark.x"
-                        :cy="peakMark.y"
-                        r="3"
-                        fill="#ffffff"
-                        :stroke="color"
-                        stroke-width="1.5"
-                    />
-                </g>
-
                 <g v-if="hover">
                     <line
                         :x1="hover.x"
@@ -378,15 +314,6 @@ const tone = computed(() => {
                         stroke="#94a3b8"
                         stroke-width="1"
                         stroke-dasharray="3 3"
-                    />
-                    <circle
-                        v-if="hover.peakY < hover.y - 1"
-                        :cx="hover.x"
-                        :cy="hover.peakY"
-                        r="3"
-                        fill="#ffffff"
-                        :stroke="color"
-                        stroke-width="1.5"
                     />
                     <circle
                         :cx="hover.x"
@@ -415,16 +342,8 @@ const tone = computed(() => {
                 class="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-center text-[11px] text-white shadow"
                 :style="tooltipStyle"
             >
-                <span class="font-semibold tabular-nums">
-                    avg {{ hover.point.v.toFixed(1) }}%
-                </span>
-                <span
-                    v-if="hover.point.p !== null && hover.point.p !== undefined && hover.point.p - hover.point.v >= 0.1"
-                    class="tabular-nums text-slate-300"
-                >
-                    · peak {{ hover.point.p.toFixed(1) }}%
-                </span>
-                <span class="block text-[10px] text-slate-300">{{ hoverTime }}</span>
+                <span class="font-semibold tabular-nums">{{ hover.point.v.toFixed(1) }}%</span>
+                <span class="block text-[10px] text-slate-300">{{ hover.point.live ? 'now' : hoverTime }}</span>
             </div>
 
             <div
@@ -441,28 +360,5 @@ const tone = computed(() => {
             </div>
         </div>
 
-        <div
-            v-if="summary"
-            class="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-slate-400 tabular-nums"
-        >
-            <p>
-                low {{ summary.min.toFixed(0) }}% · average
-                {{ summary.average.toFixed(0) }}% · {{ hasPeaks ? 'peak second' : 'high' }}
-                {{ summary.max.toFixed(0) }}%
-            </p>
-            <p v-if="hasPeaks" class="flex items-center gap-2" aria-hidden="true">
-                <span class="flex items-center gap-1">
-                    <span class="inline-block h-0.5 w-3 rounded" :style="{ backgroundColor: color }" />
-                    average
-                </span>
-                <span class="flex items-center gap-1">
-                    <span
-                        class="inline-block h-2 w-3 rounded-sm border-t"
-                        :style="{ borderColor: color, backgroundColor: color + '24' }"
-                    />
-                    peak second
-                </span>
-            </p>
-        </div>
     </div>
 </template>
