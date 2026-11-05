@@ -127,11 +127,53 @@ const areaPath = computed(() =>
         .join(' '),
 );
 
-// Whether any point's highest second stands clear of its average. Not drawn —
-// one line per graph reads better — but said in the summary and the tooltip.
-const hasPeaks = computed(() =>
-    known.value.some((p) => p.p !== null && p.p !== undefined && p.p - p.v >= 1),
+// The highest second inside a point, never below its own average.
+const peakOf = (p) => (p.p !== null && p.p !== undefined ? Math.max(p.v, p.p) : p.v);
+
+// Whether any point's highest second stands clear of its average. When one
+// does, the peaks are drawn too: a minute that averaged 8% but spent a second
+// at 100% is otherwise a footnote the line contradicts.
+const hasPeaks = computed(() => known.value.some((p) => peakOf(p) - p.v >= 1));
+
+const segment = (run, value) =>
+    run
+        .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(value(p)).toFixed(1)}`)
+        .join(' ');
+
+/** The line through each point's highest second. */
+const peakPath = computed(() =>
+    hasPeaks.value ? runs.value.map((run) => segment(run, peakOf)).join(' ') : '',
 );
+
+/** The band between average and peak: how far each point swung above its mean. */
+const bandPath = computed(() => {
+    if (!hasPeaks.value) return '';
+
+    return runs.value
+        .filter((run) => run.length > 1)
+        .map((run) => {
+            const top = segment(run, peakOf);
+            const bottom = [...run]
+                .reverse()
+                .map((p) => `L${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
+                .join(' ');
+
+            return `${top} ${bottom} Z`;
+        })
+        .join(' ');
+});
+
+/** The single highest second in the range, marked so it can be found. */
+const peakMark = computed(() => {
+    if (!hasPeaks.value) return null;
+
+    let best = null;
+    for (const p of known.value) {
+        if (!best || peakOf(p) > peakOf(best)) best = p;
+    }
+
+    return best ? { x: x(best.t), y: y(peakOf(best)), value: peakOf(best) } : null;
+});
 
 const gridlines = [0, 25, 50, 75, 100];
 
@@ -198,7 +240,9 @@ const onMove = (event) => {
         }
     }
 
-    hover.value = nearest ? { point: nearest, x: x(nearest.t), y: y(nearest.v) } : null;
+    hover.value = nearest
+        ? { point: nearest, x: x(nearest.t), y: y(nearest.v), peakY: y(peakOf(nearest)) }
+        : null;
 };
 
 const hoverTime = computed(() =>
@@ -218,7 +262,7 @@ const tooltipStyle = computed(() => {
 
     const clamped = Math.max(56, Math.min(width.value - 56, hover.value.x));
 
-    return { left: `${clamped}px`, top: `${Math.max(4, hover.value.y - 46)}px` };
+    return { left: `${clamped}px`, top: `${Math.max(4, hover.value.peakY - 46)}px` };
 });
 
 const displayed = computed(() =>
@@ -294,6 +338,16 @@ const tone = computed(() => {
                 </g>
 
                 <path v-if="areaPath" :d="areaPath" :fill="`url(#fill-${label})`" />
+                <path v-if="bandPath" :d="bandPath" :fill="color" fill-opacity="0.14" />
+                <path
+                    v-if="peakPath"
+                    :d="peakPath"
+                    fill="none"
+                    :stroke="color"
+                    stroke-opacity="0.55"
+                    stroke-width="1"
+                    stroke-linejoin="round"
+                />
                 <path
                     v-if="linePath"
                     :d="linePath"
@@ -304,6 +358,17 @@ const tone = computed(() => {
                     stroke-linecap="round"
                 />
 
+                <g v-if="peakMark && !hover">
+                    <circle
+                        :cx="peakMark.x"
+                        :cy="peakMark.y"
+                        r="3"
+                        fill="#ffffff"
+                        :stroke="color"
+                        stroke-width="1.5"
+                    />
+                </g>
+
                 <g v-if="hover">
                     <line
                         :x1="hover.x"
@@ -313,6 +378,15 @@ const tone = computed(() => {
                         stroke="#94a3b8"
                         stroke-width="1"
                         stroke-dasharray="3 3"
+                    />
+                    <circle
+                        v-if="hover.peakY < hover.y - 1"
+                        :cx="hover.x"
+                        :cy="hover.peakY"
+                        r="3"
+                        fill="#ffffff"
+                        :stroke="color"
+                        stroke-width="1.5"
                     />
                     <circle
                         :cx="hover.x"
@@ -342,7 +416,7 @@ const tone = computed(() => {
                 :style="tooltipStyle"
             >
                 <span class="font-semibold tabular-nums">
-                    {{ hover.point.v.toFixed(1) }}%
+                    avg {{ hover.point.v.toFixed(1) }}%
                 </span>
                 <span
                     v-if="hover.point.p !== null && hover.point.p !== undefined && hover.point.p - hover.point.v >= 0.1"
@@ -367,10 +441,28 @@ const tone = computed(() => {
             </div>
         </div>
 
-        <p v-if="summary" class="mt-1 text-[11px] text-slate-400 tabular-nums">
-            low {{ summary.min.toFixed(0) }}% · average
-            {{ summary.average.toFixed(0) }}% · {{ hasPeaks ? 'peak second' : 'high' }}
-            {{ summary.max.toFixed(0) }}%
-        </p>
+        <div
+            v-if="summary"
+            class="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-slate-400 tabular-nums"
+        >
+            <p>
+                low {{ summary.min.toFixed(0) }}% · average
+                {{ summary.average.toFixed(0) }}% · {{ hasPeaks ? 'peak second' : 'high' }}
+                {{ summary.max.toFixed(0) }}%
+            </p>
+            <p v-if="hasPeaks" class="flex items-center gap-2" aria-hidden="true">
+                <span class="flex items-center gap-1">
+                    <span class="inline-block h-0.5 w-3 rounded" :style="{ backgroundColor: color }" />
+                    average
+                </span>
+                <span class="flex items-center gap-1">
+                    <span
+                        class="inline-block h-2 w-3 rounded-sm border-t"
+                        :style="{ borderColor: color, backgroundColor: color + '24' }"
+                    />
+                    peak second
+                </span>
+            </p>
+        </div>
     </div>
 </template>

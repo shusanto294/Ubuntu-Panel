@@ -267,7 +267,16 @@ func (m *CPUMeter) Read() float64 {
 
 	var total, idle uint64
 
+	// The same sum htop makes: user nice system idle iowait irq softirq steal.
+	// guest and guest_nice (fields 8 and 9) are already counted inside user
+	// and nice, so adding them again would inflate the total and read low.
+	// Idle is idle plus iowait; steal counts as busy, since the guest asked
+	// for that time and did not get it.
 	for i, field := range fields[1:] {
+		if i > 7 {
+			break
+		}
+
 		value, err := strconv.ParseUint(field, 10, 64)
 		if err != nil {
 			continue
@@ -275,7 +284,6 @@ func (m *CPUMeter) Read() float64 {
 
 		total += value
 
-		// user nice system idle iowait irq softirq …
 		if i == 3 || i == 4 {
 			idle += value
 		}
