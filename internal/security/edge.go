@@ -62,7 +62,12 @@ func NginxBansFile(ips []string) string {
 
 // ApplyNginxBans writes the file when it changed and reloads nginx, putting the
 // previous one back if nginx refuses it.
-func ApplyNginxBans(ips []string) error {
+//
+// instant is the instant file's contents (InstantBansPath). An address it
+// already denies does not need nginx tested and reloaded to be added here
+// too: when the only difference is such addresses, nothing is written. A
+// file naming an address no longer banned is always rewritten.
+func ApplyNginxBans(ips []string, instant string) error {
 	if !proc.Which("nginx") && !proc.Ok("test -x /usr/sbin/nginx") {
 		return nil
 	}
@@ -77,7 +82,7 @@ func ApplyNginxBans(ips []string) error {
 		}
 		proc.Run("sudo rm -f "+NginxBansPath, time.Minute)
 	} else {
-		if existed && previous == want {
+		if existed && (previous == want || nginxBansCovered(previous, want, instant)) {
 			return nil
 		}
 		if err := proc.PutFile(NginxBansPath, want, true); err != nil {
@@ -100,6 +105,32 @@ func ApplyNginxBans(ips []string) error {
 	}
 
 	return nil
+}
+
+// nginxBansCovered is whether nginx, with the full list as it is and the
+// instant file beside it, already refuses exactly what want says: nothing in
+// previous that want does not name, and everything want adds already denied
+// by instant. A ban the worker gave nginx a moment ago is then not worth a
+// second nginx -t and reload just to be written down twice.
+func nginxBansCovered(previous, want, instant string) bool {
+	have, wanted, already := parseInstantBans(previous), parseInstantBans(want), parseInstantBans(instant)
+
+	for address := range have {
+		if _, ok := wanted[address]; !ok {
+			return false
+		}
+	}
+
+	for address := range wanted {
+		if _, ok := have[address]; ok {
+			continue
+		}
+		if _, ok := already[address]; !ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ------------------------------------------------------- Cloudflare only

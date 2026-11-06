@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
@@ -204,7 +205,7 @@ type securitySnapshot struct {
 	// background refresh keeps them from the copy before until they are this
 	// old (see slowPartAge), rather than running apt and the journal again
 	// every minute for a page nobody has open.
-	UpdatesAt, UsersAt, SSHAt, EventsAt time.Time
+	UpdatesAt, UsersAt, SSHAt, EventsAt, FirewallAt time.Time
 }
 
 // slowPartAge is how long a background refresh keeps each slow part. apt's
@@ -214,6 +215,40 @@ type securitySnapshot struct {
 // on their own, and this copy is only the Security page's list of them.
 var slowPartAge = struct{ Updates, Users, SSH, Events time.Duration }{
 	Updates: time.Hour, Users: 15 * time.Minute, SSH: 15 * time.Minute, Events: 5 * time.Minute,
+}
+
+// unwatchedPartAge is how long a background refresh keeps the parts that
+// nothing reads while the Security page is closed. The firewall's blocks are
+// read by the nginx sync, but they only change through the panel — which
+// forgets the copy — or by hand. The ban times are only shown on the page,
+// which reads them again when it is opened.
+const unwatchedPartAge = 30 * time.Minute
+
+// The background refresh of the copy: every minute while somebody has the
+// Security page open, and every ten minutes otherwise, when only the nginx
+// sync, the ban alert and the auto-ban read it — and the ban worker writes
+// every ban and unban into it as it happens.
+const (
+	watchedRefreshAfter   = time.Minute
+	unwatchedRefreshAfter = 10 * time.Minute
+)
+
+// gentlePause is the gap between the parts of a background read: each is a
+// sudo and a Python start-up, and one after another without a pause is a run
+// of seconds at 100% on a one-core VPS.
+var gentlePause = time.Second
+
+// securityViewedAt is when the Security page, or its live list of bans, was
+// last asked for (unix seconds).
+var securityViewedAt atomic.Int64
+
+func markSecurityWatched() { securityViewedAt.Store(time.Now().Unix()) }
+
+// securityWatched is whether somebody has had the Security page open in the
+// last two minutes: its Banned IPs tab asks for the list every couple of
+// seconds while it is up.
+func securityWatched() bool {
+	return time.Since(time.Unix(securityViewedAt.Load(), 0)) < 2*time.Minute
 }
 
 type snapshotCache struct {
@@ -253,7 +288,12 @@ func (a *App) snapshot(fresh bool) *securitySnapshot {
 	current, generation := securityCache.value, securityCache.generation
 
 	if !fresh && current != nil && time.Since(current.Taken) < securityStaleAfter {
-		if time.Since(current.Taken) >= time.Minute && !securityCache.refreshing {
+		refreshAfter := unwatchedRefreshAfter
+		if securityWatched() {
+			refreshAfter = watchedRefreshAfter
+		}
+
+		if time.Since(current.Taken) >= refreshAfter && !securityCache.refreshing {
 			securityCache.refreshing = true
 
 			go func() {
@@ -325,24 +365,40 @@ func (a *App) readSnapshot(previous *securitySnapshot, gentle bool) *securitySna
 		return gentle && previous != nil && !at.IsZero() && now.Sub(at) < age
 	}
 
-	parts := []func(){
-		func() { snapshot.Jail = security.Status() },
-		func() { snapshot.Firewall = security.ReadFirewall() },
+	// Nobody has the page open: the parts only it shows are kept longer, and
+	// the ban times are not asked for at all.
+	unwatched := gentle && previous != nil && !securityWatched()
+
+	ages := slowPartAge
+	if unwatched {
+		ages.Users = max(ages.Users, unwatchedPartAge)
+		ages.SSH = max(ages.SSH, unwatchedPartAge)
+		ages.Events = max(ages.Events, unwatchedPartAge)
 	}
 
-	if keep(prev.UpdatesAt, slowPartAge.Updates) {
+	parts := []func(){
+		func() { snapshot.Jail = security.Status() },
+	}
+
+	if unwatched && keep(prev.FirewallAt, unwatchedPartAge) {
+		snapshot.Firewall, snapshot.FirewallAt = prev.Firewall, prev.FirewallAt
+	} else {
+		parts = append(parts, func() { snapshot.Firewall, snapshot.FirewallAt = security.ReadFirewall(), time.Now() })
+	}
+
+	if keep(prev.UpdatesAt, ages.Updates) {
 		snapshot.Updates, snapshot.UpdatesAt = prev.Updates, prev.UpdatesAt
 	} else {
 		parts = append(parts, func() { snapshot.Updates, snapshot.UpdatesAt = security.ReadUpdates(), time.Now() })
 	}
 
-	if keep(prev.SSHAt, slowPartAge.SSH) {
+	if keep(prev.SSHAt, ages.SSH) {
 		snapshot.SSH, snapshot.SSHAt = prev.SSH, prev.SSHAt
 	} else {
 		parts = append(parts, func() { snapshot.SSH, snapshot.SSHAt = security.ReadSSH(), time.Now() })
 	}
 
-	if keep(prev.EventsAt, slowPartAge.Events) {
+	if keep(prev.EventsAt, ages.Events) {
 		snapshot.Events, snapshot.EventsAt = prev.Events, prev.EventsAt
 	} else {
 		parts = append(parts, func() {
@@ -350,7 +406,7 @@ func (a *App) readSnapshot(previous *securitySnapshot, gentle bool) *securitySna
 		})
 	}
 
-	if keep(prev.UsersAt, slowPartAge.Users) {
+	if keep(prev.UsersAt, ages.Users) {
 		snapshot.Users, snapshot.UsersAt = prev.Users, prev.UsersAt
 	} else {
 		parts = append(parts, func() {
@@ -366,20 +422,27 @@ func (a *App) readSnapshot(previous *securitySnapshot, gentle bool) *securitySna
 		parts = append(parts, func() { snapshot.Protect = security.ProtectStatus(p) })
 	}
 
-	// When each jail banned each address.
+	// When each jail banned each address: only the page shows it.
 	snapshot.BanTimes = map[string]map[string]security.BanTime{}
-	var times sync.Mutex
-	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
-		parts = append(parts, func() {
-			found := security.BanTimes(jail)
-			times.Lock()
-			snapshot.BanTimes[jail] = found
-			times.Unlock()
-		})
+	if unwatched && prev.BanTimes != nil {
+		snapshot.BanTimes = prev.BanTimes
+	} else {
+		var times sync.Mutex
+		for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
+			parts = append(parts, func() {
+				found := security.BanTimes(jail)
+				times.Lock()
+				snapshot.BanTimes[jail] = found
+				times.Unlock()
+			})
+		}
 	}
 
 	if gentle {
-		for _, part := range parts {
+		for i, part := range parts {
+			if i > 0 {
+				time.Sleep(gentlePause)
+			}
 			part()
 		}
 
@@ -601,6 +664,7 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	sess := session.FromContext(r.Context())
 
+	markSecurityWatched()
 	snap := a.snapshot(r.URL.Query().Get("fresh") == "1")
 	list := a.checks(r.Context(), user, snap)
 

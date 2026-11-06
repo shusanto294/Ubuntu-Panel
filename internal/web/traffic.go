@@ -164,7 +164,14 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 				quoted[i] = proc.Quote(file)
 			}
 
-			script := "for f in " + strings.Join(quoted, " ") + `; do [ -e "$f" ] && zcat -f -- "$f"; done`
+			// A file last written before the window began has nothing in it,
+			// and is not read: the hour's scan every five minutes used to
+			// stream all of yesterday's rotated log only to throw it away. A
+			// plain file is read from its end, as far as the cap, rather than
+			// through from the start.
+			script := fmt.Sprintf(`for f in %s; do [ -e "$f" ] && [ "$(stat -c %%Y -- "$f")" -ge %d ] || continue; `+
+				`case "$f" in *.gz) zcat -f -- "$f";; *) tail -n %d -- "$f";; esac; done`,
+				strings.Join(quoted, " "), now.Add(-window.span).Unix(), window.lines)
 			command := fmt.Sprintf("sudo sh -c %s 2>/dev/null | tail -n %d", proc.Quote(script), window.lines)
 
 			if err := proc.Pipe(ctx, command, 5*time.Minute, nil, sink); err != nil {

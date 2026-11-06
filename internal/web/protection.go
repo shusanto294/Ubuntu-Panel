@@ -996,13 +996,18 @@ func (a *App) syncNginxBans(ctx context.Context, fresh bool) {
 		return
 	}
 
-	if err := security.ApplyNginxBans(ips); err != nil {
+	contents, instantErr := proc.ReadFile(security.InstantBansPath, true)
+	if instantErr != nil {
+		contents = ""
+	}
+
+	if err := security.ApplyNginxBans(ips, contents); err != nil {
 		a.Log.Warn("could not give nginx the banned addresses", "error", err)
 	}
 
 	// Older than the oldest copy of the state the minute's sync can be
 	// reading, so a ban that is newer than the copy is never taken away.
-	if contents, err := proc.ReadFile(security.InstantBansPath, true); err == nil {
+	if instantErr == nil {
 		for _, address := range security.StaleInstantBans(contents, ips, time.Now(), securityStaleAfter+5*time.Minute) {
 			if err := security.ReleaseInstant(address); err != nil {
 				a.Log.Warn("could not take an address off nginx's instant bans", "ip", address, "error", err)

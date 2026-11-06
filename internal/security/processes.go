@@ -3,6 +3,7 @@ package security
 import (
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,21 +47,51 @@ var poolPorts = map[int]bool{3333: true, 3334: true, 5730: true, 14433: true, 14
 // scratchDirs are where nothing that is installed runs from.
 var scratchDirs = []string{"/tmp/", "/var/tmp/", "/dev/shm/", "/run/shm/"}
 
-// processListing prints one line per process: pid, user, name and the
-// program it runs. As root, because another user's /proc/<pid>/exe cannot be
-// read otherwise.
-const processListing = `sudo sh -c 'for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null) || continue; ` +
-	`u=$(stat -c %U "$p" 2>/dev/null); c=$(cat "$p/comm" 2>/dev/null); ` +
-	`printf "%s\t%s\t%s\t%s\n" "${p#/proc/}" "$u" "$c" "$e"; done'`
+// processListing prints one line per process: its /proc directory, user and
+// the program it runs. As root, because another user's /proc/<pid>/exe cannot
+// be read otherwise. One find for every process: the shell loop it replaced
+// started readlink, stat and cat for each one — a few hundred programs every
+// five minutes, a second of a one-core VPS for a list of names.
+const processListing = `sudo find /proc -mindepth 2 -maxdepth 2 -path '/proc/[0-9]*/exe' -printf '%h\t%u\t%l\n' 2>/dev/null`
 
 // ScanProcesses lists what looks like it should not be running.
 func ScanProcesses() []SuspiciousProcess {
-	found := ParseProcesses(proc.Run(processListing, time.Minute).Output)
+	found := ParseProcesses(withNames(proc.Run(processListing, time.Minute).Output))
 	found = append(found, ParsePoolConnections(proc.Run("sudo ss -tnpH state established 2>/dev/null", 30*time.Second).Output)...)
 
 	sort.Slice(found, func(i, j int) bool { return found[i].PID < found[j].PID })
 
 	return found
+}
+
+// withNames turns processListing's lines into ParseProcesses's — pid, user,
+// name and program — reading each name from /proc/<pid>/comm, which anyone
+// may. A kernel thread has no program and is left out, as is a process that
+// exited in between.
+func withNames(listing string) string {
+	var lines strings.Builder
+
+	for _, line := range strings.Split(listing, "\n") {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 || fields[2] == "" {
+			continue
+		}
+
+		pid := strings.TrimPrefix(fields[0], "/proc/")
+		if _, err := strconv.Atoi(pid); err != nil {
+			continue
+		}
+
+		comm, err := os.ReadFile("/proc/" + pid + "/comm")
+		if err != nil {
+			continue
+		}
+		name := strings.ReplaceAll(strings.TrimSpace(string(comm)), "\t", " ")
+
+		fmt.Fprintf(&lines, "%s\t%s\t%s\t%s\n", pid, fields[1], name, fields[2])
+	}
+
+	return lines.String()
 }
 
 // ParseProcesses reads processListing's lines.

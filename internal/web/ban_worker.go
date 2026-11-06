@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,11 +118,13 @@ func (a *App) handleBanEvents(ctx context.Context, events <-chan banEvent) {
 	var (
 		reread  <-chan time.Time
 		rebuild bool
+		pending []banEvent
 	)
 
 	settle := func() {
 		reread = nil
-		a.refreshBans()
+		a.refreshBans(pending)
+		pending = nil
 		if rebuild {
 			rebuild = false
 			a.syncNginxBans(ctx, false)
@@ -147,6 +150,7 @@ func (a *App) handleBanEvents(ctx context.Context, events <-chan banEvent) {
 			if reread == nil {
 				reread = time.After(500 * time.Millisecond)
 			}
+			pending = append(pending, event)
 
 			if event.ban {
 				started := time.Now()
@@ -167,13 +171,22 @@ func (a *App) handleBanEvents(ctx context.Context, events <-chan banEvent) {
 	}
 }
 
-// refreshBans re-reads what the Banned IPs tab shows — the jails, when each
-// banned what, and the firewall's blocks — into the Security page's cached
-// copy, leaving the slow parts of it (SSH history, updates) as they are. The
-// tab asks for the list every couple of seconds, so a ban is on it about as
-// soon as nginx refuses it. With no cached copy there is nothing to do: the
-// next page reads everything afresh anyway.
-func (a *App) refreshBans() {
+// refreshBans brings the Security page's cached copy of the bans up to date
+// after the events the worker has just applied.
+//
+// While somebody has the Security page open, it asks fail2ban and ufw again,
+// one after another, so the Banned IPs tab — which polls every couple of
+// seconds — shows each ban with its times about as soon as nginx refuses it.
+//
+// Otherwise it only writes the events into the copy. Asking again is two
+// dozen Python start-ups (ufw, and fail2ban-client per jail, twice), and on a
+// busy server bans arrive every few minutes: re-reading for each was the panel
+// pinning a one-core VPS for seconds at a time, for a page nobody had open.
+// The events are what changed, so the copy stays right for what reads it in
+// the background — the nginx sync, the ban alert, the auto-ban — and the next
+// full read, when the page is opened, fills in the times. With no cached copy
+// there is nothing to do: the next page reads everything afresh anyway.
+func (a *App) refreshBans(events []banEvent) {
 	securityCache.Lock()
 	current, generation := securityCache.value, securityCache.generation
 	securityCache.Unlock()
@@ -182,26 +195,29 @@ func (a *App) refreshBans() {
 		return
 	}
 
-	// One after another rather than all at once: each is a Python start-up
-	// (ufw, fail2ban-client), and a burst of bans asking for several at once
-	// on a two-core VPS is the panel taking both cores from the sites.
-	var (
-		next = *current
-		p    = a.protection()
-	)
+	next := *current
 
-	next.Protect = map[string]security.JailStatus{}
-	next.BanTimes = map[string]map[string]security.BanTime{}
+	if securityWatched() {
+		// One after another rather than all at once: each is a Python
+		// start-up, and several at once on a small VPS is the panel taking
+		// every core from the sites.
+		p := a.protection()
 
-	next.Jail = security.Status()
-	next.Firewall = security.ReadFirewall()
+		next.Protect = map[string]security.JailStatus{}
+		next.BanTimes = map[string]map[string]security.BanTime{}
 
-	if p.AnyJail() {
-		next.Protect = security.ProtectStatus(p)
-	}
+		next.Jail = security.Status()
+		next.Firewall, next.FirewallAt = security.ReadFirewall(), time.Now()
 
-	for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
-		next.BanTimes[jail] = security.BanTimes(jail)
+		if p.AnyJail() {
+			next.Protect = security.ProtectStatus(p)
+		}
+
+		for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
+			next.BanTimes[jail] = security.BanTimes(jail)
+		}
+	} else {
+		next.Protect = applyBanEvents(current.Protect, events)
 	}
 
 	securityCache.Lock()
@@ -212,8 +228,45 @@ func (a *App) refreshBans() {
 	securityCache.Unlock()
 }
 
+// applyBanEvents is the jails' statuses with the events written in: a ban
+// adds the address to its jail's list, an unban takes it off. A jail the copy
+// does not have yet is left for the next full read. The map and lists are new;
+// the copy they came from is shared with whoever is reading it.
+func applyBanEvents(statuses map[string]security.JailStatus, events []banEvent) map[string]security.JailStatus {
+	next := make(map[string]security.JailStatus, len(statuses))
+	for jail, status := range statuses {
+		status.Banned = append([]string{}, status.Banned...)
+		next[jail] = status
+	}
+
+	for _, event := range events {
+		status, ok := next[event.jail]
+		if !ok {
+			continue
+		}
+
+		there := slices.Contains(status.Banned, event.address)
+
+		switch {
+		case event.ban && !there:
+			status.Banned = append(status.Banned, event.address)
+			slices.Sort(status.Banned)
+			status.CurrentlyBanned++
+			status.TotalBanned++
+		case !event.ban && there:
+			status.Banned = slices.DeleteFunc(status.Banned, func(ip string) bool { return ip == event.address })
+			status.CurrentlyBanned = max(0, status.CurrentlyBanned-1)
+		}
+
+		next[event.jail] = status
+	}
+
+	return next
+}
+
 // securityBansLive is the Banned IPs tab's list on its own, which the tab
 // asks for every couple of seconds while it is open.
 func (a *App) securityBansLive(w http.ResponseWriter, r *http.Request) {
+	markSecurityWatched()
 	a.writeJSON(w, http.StatusOK, map[string]any{"bans": a.bans(r.Context(), a.snapshot(false))})
 }

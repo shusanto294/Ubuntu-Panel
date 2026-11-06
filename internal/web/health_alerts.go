@@ -81,10 +81,22 @@ var health struct {
 	cpu        system.CPUMeter
 	hotMinutes int
 	certsAt    time.Time
-	attacksAt  time.Time
-	scannedAt  time.Time
-	webBansAt  time.Time
+
+	// minute counts the checks, for the jobs that run every few minutes.
+	minute int
 }
+
+// The every-five-minutes jobs, each on a minute of its own (minute%5) rather
+// than all in the same one: together they were one solid run at 100% on a
+// one-core VPS, every five minutes. The nginx sync in runSecurityAlerts has
+// minute 0.
+const (
+	webBansMinute    = 1
+	scanMinute       = 2
+	attacksMinute    = 3
+	watchMinute      = 4
+	watchEveryMinute = 15
+)
 
 // cooled is whether an alert may be sent again, and marks it sent if so.
 func (a *App) cooled(kind string, cooldown time.Duration) bool {
@@ -112,22 +124,16 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 		health.hotMinutes = 0
 	}
 	hot := health.hotMinutes
+	health.minute++
+	minute := health.minute
 	health.Unlock()
 
 	// The web bans list moves forward whether or not anything is sent, like
 	// the SSH one, so switching the alert on is about bans from then on.
-	// Every five minutes: asking fail2ban for each jail's list is a Python
-	// start-up per jail, and the list is compared with the one before, so a
-	// ban made in between is still told about — five minutes later at most.
-	health.Lock()
-	bansDue := time.Since(health.webBansAt) >= 5*time.Minute
-	if bansDue {
-		health.webBansAt = time.Now()
-	}
-	health.Unlock()
-
+	// Every five minutes, and the list is compared with the one before, so
+	// a ban made in between is still told about — five minutes later at most.
 	webBans, webBanned := "", []string(nil)
-	if bansDue {
+	if minute%5 == webBansMinute {
 		webBans, webBanned = a.webBanAlert(a.healthAlert(alertWebBanSetting))
 	}
 
@@ -137,25 +143,21 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 
 	// A miner, or a program run from /tmp: every five minutes, at most one
 	// email in six hours.
-	if a.healthAlert(alertSuspiciousSetting) {
-		health.Lock()
-		due := time.Since(health.scannedAt) >= 5*time.Minute
-		if due {
-			health.scannedAt = time.Now()
-		}
-		health.Unlock()
-
-		if due {
-			if found := security.ScanProcesses(); len(found) > 0 && a.cooled("suspicious", 6*time.Hour) {
-				alerts = append(alerts, newAlert("suspicious", levelCritical, "/logs", suspiciousAlert(found)))
-			}
+	if a.healthAlert(alertSuspiciousSetting) && minute%5 == scanMinute {
+		if found := security.ScanProcesses(); len(found) > 0 && a.cooled("suspicious", 6*time.Hour) {
+			alerts = append(alerts, newAlert("suspicious", levelCritical, "/logs", suspiciousAlert(found)))
 		}
 	}
 
 	// The backdoor watch and the code change monitor alert whenever they
-	// are on: turning one on is asking to be told.
-	if changes := a.checkWatch(ctx); len(changes) > 0 {
-		alerts = append(alerts, newAlert("backdoor", levelCritical, "/security?tab=protection", watchAlert(changes)))
+	// are on: turning one on is asking to be told. The watch every fifteen
+	// minutes: its picture is a few hundred small programs (a hash per key,
+	// cron file and unit), and what it looks for is how an intruder keeps a
+	// way back in, not a moment-to-moment attack.
+	if minute%watchEveryMinute == watchMinute {
+		if changes := a.checkWatch(ctx); len(changes) > 0 {
+			alerts = append(alerts, newAlert("backdoor", levelCritical, "/security?tab=protection", watchAlert(changes)))
+		}
 	}
 	if a.protection().Integrity {
 		go func() {
@@ -203,14 +205,7 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 	// Every five minutes: ban what the last hour says is attacking, when the
 	// protection for it is on, and tell about it when the alert is on.
 	if p := a.protection(); a.healthAlert(alertAttacksSetting) || p.WebLogin.Enabled || p.WebScan.Enabled {
-		health.Lock()
-		due := time.Since(health.attacksAt) >= 5*time.Minute
-		if due {
-			health.attacksAt = time.Now()
-		}
-		health.Unlock()
-
-		if due {
+		if minute%5 == attacksMinute {
 			// Read gently: nobody is waiting on this report, so one log file
 			// at a time rather than four at once.
 			report, _ := a.markTrusted(ctx, a.traffic(gently(ctx), findTrafficWindow("1h")), "")
@@ -307,7 +302,7 @@ func (a *App) autoBan(ips []weblog.IPStat) map[string]string {
 
 		// Asked once, and only when there is someone to ban.
 		if already == nil {
-			already = security.ProtectStatus(p)
+			already = a.snapshot(false).Protect
 		}
 		if containsString(already[jail].Banned, ip.IP) {
 			banned[ip.IP] = jail
@@ -562,7 +557,10 @@ func (a *App) webBanAlert(want bool) (string, []string) {
 	current := []string{}
 	byAddress := map[string]string{}
 
-	for jail, status := range security.ProtectStatus(p) {
+	// From the Security page's copy rather than fail2ban: asking is a Python
+	// start-up per jail, and the ban worker writes every ban into the copy as
+	// it happens. The nginx sync a few minutes before keeps it fresh.
+	for jail, status := range a.snapshot(false).Protect {
 		for _, ip := range status.Banned {
 			if _, ok := byAddress[ip]; !ok {
 				current = append(current, ip)
