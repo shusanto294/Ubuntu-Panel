@@ -31,3 +31,15 @@ func TestWithNamesSkipsWhatIsNotAProgram(t *testing.T) {
 		t.Fatalf("withNames kept a line it should not have: %q", got)
 	}
 }
+
+func TestCloudflareWorkerIsNotCloudflare(t *testing.T) {
+	if FromCloudflare(CloudflareWorker) || FromCloudflare("2a06:98c0:3600:0::103") {
+		t.Fatal("the Workers address was treated as Cloudflare's proxy, so a ban on it is never enforced")
+	}
+	if !FromCloudflare("2a06:98c0:3600::104") || !FromCloudflare("162.158.1.2") {
+		t.Fatal("Cloudflare's own addresses must still be trusted")
+	}
+	if NginxBansFile([]string{CloudflareWorker}) == "" {
+		t.Fatal("nginx was not given the Workers address to refuse")
+	}
+}

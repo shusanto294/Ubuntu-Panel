@@ -142,10 +142,23 @@ const edgeOnlyComment = "Cloudflare only"
 var webRuleNames = []string{"80/tcp", "443/tcp", "80", "443", "80,443/tcp", "http", "https",
 	"'Nginx Full'", "'Nginx HTTP'", "'Nginx HTTPS'"}
 
-// FromCloudflare is whether an address is one of Cloudflare's.
+// CloudflareWorker is the address Cloudflare gives as the visitor's own — in
+// CF-Connecting-IP — for a request made by a Cloudflare Worker: somebody's
+// script running on Cloudflare, which anyone can deploy to scan other people's
+// sites from behind Cloudflare's name. It is inside Cloudflare's ranges, but no
+// visitor's connection ever arrives from it: Cloudflare's servers connect from
+// their own addresses and name this one only in the header. With real visitor
+// addresses on, it is what nginx sees for those scripts and nothing else, so
+// it is banned like any visitor rather than trusted like Cloudflare.
+const CloudflareWorker = "2a06:98c0:3600::103"
+
+var cloudflareWorker = net.ParseIP(CloudflareWorker)
+
+// FromCloudflare is whether an address is one of Cloudflare's own — never a
+// Worker's (see CloudflareWorker).
 func FromCloudflare(address string) bool {
 	ip := net.ParseIP(strings.TrimSpace(address))
-	if ip == nil {
+	if ip == nil || ip.Equal(cloudflareWorker) {
 		return false
 	}
 
