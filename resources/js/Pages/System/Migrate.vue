@@ -187,12 +187,27 @@ const catchUp = (m) => router.post(route('migrate.catch-up', m.id), {}, { preser
                             On the server you are moving to, open Migrate and press “Issue a key”. Paste its address and
                             the key here.
                         </p>
-                        <form class="mt-4 space-y-3" @submit.prevent="connect">
+                        <!--
+                            Not a login form, and nothing a browser should fill: a text box
+                            followed by a password box is what Chrome takes for one, and it
+                            offered the panel's own email and password here. So the key is a
+                            text box whose characters are hidden, and neither field is named
+                            or typed like a credential.
+                        -->
+                        <form class="mt-4 space-y-3" autocomplete="off" @submit.prevent="connect">
                             <div>
                                 <label class="block text-xs font-medium text-slate-700">The other panel’s address</label>
                                 <input
                                     v-model="connectForm.address"
                                     type="text"
+                                    name="migration-peer-address"
+                                    inputmode="url"
+                                    autocomplete="off"
+                                    autocapitalize="off"
+                                    spellcheck="false"
+                                    data-1p-ignore
+                                    data-lpignore="true"
+                                    data-form-type="other"
                                     placeholder="https://panel.example.com or http://203.0.113.5:8443"
                                     :class="field"
                                     class="font-mono"
@@ -201,7 +216,20 @@ const catchUp = (m) => router.post(route('migrate.catch-up', m.id), {}, { preser
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-slate-700">Its migration key</label>
-                                <input v-model="connectForm.key" type="password" placeholder="upm1.…" autocomplete="off" :class="field" class="font-mono" />
+                                <input
+                                    v-model="connectForm.key"
+                                    type="text"
+                                    name="migration-peer-key"
+                                    autocomplete="off"
+                                    autocapitalize="off"
+                                    spellcheck="false"
+                                    data-1p-ignore
+                                    data-lpignore="true"
+                                    data-form-type="other"
+                                    placeholder="upm1.…"
+                                    :class="field"
+                                    class="font-mono [-webkit-text-security:disc]"
+                                />
                                 <InputError class="mt-1" :message="connectForm.errors.key" />
                             </div>
                             <PrimaryButton :disabled="connectForm.processing || !connectForm.address || !connectForm.key">
