@@ -2,10 +2,8 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,10 +35,8 @@ const (
 	alertPanelLoginSetting = "alert_panel_login"
 	alertPanelLockSetting  = "alert_panel_lockout"
 	alertSSHLoginSetting   = "alert_ssh_login"
-	alertSSHBanSetting     = "alert_ssh_ban"
 	alertCursorSetting     = "alert_login_cursor"
 	alertSSHCheckedSetting = "alert_ssh_checked_at"
-	alertBannedSetting     = "alert_ssh_banned"
 )
 
 func (a *App) smtpConfig() notify.Config {
@@ -173,10 +169,8 @@ func (a *App) anyAlertEnabled() bool {
 	return a.Store.SettingBool(alertPanelLoginSetting, true) ||
 		a.Store.SettingBool(alertPanelLockSetting, true) ||
 		a.Store.SettingBool(alertSSHLoginSetting, true) ||
-		a.Store.SettingBool(alertSSHBanSetting, false) ||
 		a.healthAlert(alertCPUSetting) || a.healthAlert(alertDiskSetting) ||
-		a.healthAlert(alertAttacksSetting) || a.healthAlert(alertCriticalSetting) ||
-		a.healthAlert(alertSuspiciousSetting)
+		a.healthAlert(alertCriticalSetting)
 }
 
 func (a *App) alertSettings(ctx context.Context) map[string]any {
@@ -185,16 +179,12 @@ func (a *App) alertSettings(ctx context.Context) map[string]any {
 		"panel_login":   a.Store.SettingBool(alertPanelLoginSetting, true),
 		"panel_lockout": a.Store.SettingBool(alertPanelLockSetting, true),
 		"ssh_login":     a.Store.SettingBool(alertSSHLoginSetting, true),
-		"ssh_ban":       a.Store.SettingBool(alertSSHBanSetting, false),
 		"cpu_high":      a.healthAlert(alertCPUSetting),
 		"disk_full":     a.healthAlert(alertDiskSetting),
 		"mail_queue":    a.healthAlert(alertMailQueueSetting),
 		"cert_expiry":   a.healthAlert(alertCertsSetting),
-		"web_ban":       a.healthAlert(alertWebBanSetting),
-		"attacks":       a.healthAlert(alertAttacksSetting),
 		"task_failed":   a.Store.SettingBool(alertTaskFailedSetting, true),
 		"critical":      a.healthAlert(alertCriticalSetting),
-		"suspicious":    a.healthAlert(alertSuspiciousSetting),
 	}
 }
 
@@ -220,7 +210,6 @@ func (a *App) securityAlerts(w http.ResponseWriter, r *http.Request) {
 		"panel_login":   alertPanelLoginSetting,
 		"panel_lockout": alertPanelLockSetting,
 		"ssh_login":     alertSSHLoginSetting,
-		"ssh_ban":       alertSSHBanSetting,
 	} {
 		a.Store.SetSetting(setting, strconv.FormatBool(boolInput(input, key, false)))
 	}
@@ -258,21 +247,17 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 
 		minutes++
 
-		// The minute's jobs, spread across it rather than started together.
-		// Each is a handful of sudo, journalctl and fail2ban-client starts;
-		// run back to back they are a second of both cores of a small VPS,
-		// every minute, which is a spike on the CPU graph and a moment the
-		// sites have to share the machine with the panel.
+		// The minute's jobs, spread across it rather than started together,
+		// so the sites never share a moment of the CPU with all of them at
+		// once. None of them bans, scans traffic or reloads nginx.
 		jobs := []func(){
 			func() { a.recordSSHEvents(ctx) },
-			func() { a.checkProtection(ctx) },
 			func() { a.checkLocks(ctx) },
 			func() {
-				// Every five minutes: the ban worker and the jails' own nginx
-				// action give nginx each ban the moment it is made, so this is
-				// the safety net behind them, not the way bans arrive.
-				if minutes%5 == 0 {
-					a.syncNginxBans(ctx, false)
+				// Every ten minutes: a domain allowed to reach a database may
+				// have moved to another address.
+				if minutes%10 == 0 {
+					a.syncDatabaseAccess(ctx)
 				}
 			},
 			func() { a.collectServerLogs(ctx) },
@@ -351,7 +336,7 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 
 		if attempt.Success && a.Store.SettingBool(alertPanelLoginSetting, true) &&
 			!a.Store.KnownLoginAddress(ctx, attempt.UserID, attempt.IP, attempt.ID) {
-			alerts = append(alerts, newAlert("panel_login", levelWarning, "/security?tab=logins", fmt.Sprintf("New sign-in to the panel from %s\n\n"+
+			alerts = append(alerts, newAlert("panel_login", levelWarning, "/security?tab=panel", fmt.Sprintf("New sign-in to the panel from %s\n\n"+
 				"Account: %s\nAddress: %s\nBrowser: %s\nTime: %s\n\n"+
 				"This address had not signed in before. If it was not you, change your password "+
 				"and sign the other browsers out on the Security page.",
@@ -365,7 +350,7 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 
 			if count == limit {
 				lockedSeen[attempt.IP] = true
-				alerts = append(alerts, newAlert("panel_lockout", levelWarning, "/security?tab=logins", fmt.Sprintf("%s was locked out of the panel\n\n"+
+				alerts = append(alerts, newAlert("panel_lockout", levelWarning, "/security?tab=panel", fmt.Sprintf("%s was locked out of the panel\n\n"+
 					"%d failed sign-ins in %d minutes, the last for %q at %s. It cannot try again "+
 					"for %d minutes.", attempt.IP, limit, int(window.Minutes()), attempt.Email, when,
 					int(window.Minutes()))).with("ips", []string{attempt.IP}))
@@ -376,12 +361,11 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 	return alerts
 }
 
-// sshAlerts are SSH logins and new bans since the last look.
+// sshAlerts are SSH logins since the last look.
 func (a *App) sshAlerts() []alert {
 	alerts := []alert{}
 
 	wantLogins := a.Store.SettingBool(alertSSHLoginSetting, true)
-	wantBans := a.Store.SettingBool(alertSSHBanSetting, false)
 
 	checked, _ := strconv.ParseInt(a.Store.Setting(alertSSHCheckedSetting, ""), 10, 64)
 	now := time.Now()
@@ -397,55 +381,23 @@ func (a *App) sshAlerts() []alert {
 
 			alerts = append(alerts, newAlert("ssh_login", levelWarning, "/logs?view=panel&source=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
 				"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
-				"If this was not you, ban the address on the Security page and change the "+
-				"account's password or keys.", event.User, event.IP, event.User, event.IP,
+				"If this was not you, change the account's password or keys on Security → SSH, "+
+				"and turn SSH passwords off.", event.User, event.IP, event.User, event.IP,
 				event.Method, event.Time.Format(time.RFC1123))).with("ips", []string{event.IP}))
 		}
 	}
 
-	// The ban list is compared with the one seen last time, so an alert is
-	// about addresses that are new to it.
-	if wantBans || a.Store.Setting(alertBannedSetting, "") != "" {
-		current := security.Status().Banned
+	return alerts
+}
 
-		var previous []string
-		json.Unmarshal([]byte(a.Store.Setting(alertBannedSetting, "[]")), &previous)
-
-		known := map[string]bool{}
-		for _, address := range previous {
-			known[address] = true
-		}
-
-		fresh := []string{}
-		for _, address := range current {
-			if !known[address] {
-				fresh = append(fresh, address)
-			}
-		}
-
-		// Stored bounded: a busy server bans thousands, and only the newest
-		// matter for telling what is new next minute.
-		sort.Strings(current)
-		if len(current) > 5000 {
-			current = current[len(current)-5000:]
-		}
-
-		encoded, _ := json.Marshal(current)
-		a.Store.SetSetting(alertBannedSetting, string(encoded))
-
-		if wantBans && len(previous) > 0 && len(fresh) > 0 {
-			shown := fresh
-			if len(shown) > 50 {
-				shown = shown[:50]
-			}
-
-			alerts = append(alerts, newAlert("ssh_ban", levelInfo, "/security?tab=bans", fmt.Sprintf("%d %s banned from SSH\n\n%s\n\n"+
-				"Each failed to log in too many times. They are refused on the SSH port; "+
-				"unban one from the Security page.", len(fresh),
-				map[bool]string{true: "address", false: "addresses"}[len(fresh) == 1],
-				strings.Join(shown, "\n"))).with("ips", shown))
-		}
+// syncDatabaseAccess keeps the firewall and MariaDB's accounts in step with
+// the domains allowed to reach a database, whose addresses can move.
+func (a *App) syncDatabaseAccess(ctx context.Context) {
+	if !a.Store.ServiceInstalled("mysql") || !a.Databases.HasDomains(ctx) {
+		return
 	}
 
-	return alerts
+	if err := a.Databases.SyncMySQLAccess(ctx, true); err != nil {
+		a.Log.Warn("could not refresh the MariaDB access settings", "error", err)
+	}
 }

@@ -152,7 +152,7 @@ func DisableFirewall() error {
 
 // NewRule is what the "add a rule" form posts.
 type NewRule struct {
-	Action   string // allow | deny | limit
+	Action   string // allow
 	Port     string // 22, 8000:8100, or empty for every port
 	Protocol string // tcp | udp | any
 	From     string // an address or range, or empty for anywhere
@@ -169,10 +169,10 @@ var (
 func (r NewRule) Validate() map[string]string {
 	problems := map[string]string{}
 
-	switch r.Action {
-	case "allow", "deny", "limit":
-	default:
-		problems["action"] = "Choose allow, deny or limit."
+	// Only ever an opening: everything not opened is already refused, and the
+	// panel does not block addresses.
+	if r.Action != "allow" {
+		problems["action"] = "A rule here opens a port."
 	}
 
 	switch r.Protocol {
@@ -193,8 +193,8 @@ func (r NewRule) Validate() map[string]string {
 		problems["from"] = "Enter an IP address or a range like 203.0.113.0/24, or leave it empty."
 	}
 
-	if r.Port == "" && r.From == "" {
-		problems["port"] = "Give a port, a source address, or both."
+	if r.Port == "" {
+		problems["port"] = "Give a port or a range."
 	}
 
 	if !commentPattern.MatchString(r.Comment) {
@@ -257,38 +257,6 @@ func DeleteRule(number int) error {
 	}
 
 	if result := proc.Run(fmt.Sprintf("sudo ufw --force delete %d", number), time.Minute); !result.OK() {
-		return fmt.Errorf("ufw refused: %s", lastLines(result.Output, 3))
-	}
-
-	return nil
-}
-
-// BlockAddress refuses an address on every port, not just SSH.
-//
-// Inserted at the top, because ufw stops at the first rule that matches and an
-// "allow 80 from anywhere" above it would let the address straight through.
-// An IPv6 rule cannot go above the IPv4 ones, which is what the fallback is
-// for: ufw keeps the two lists apart and puts the plain `deny` at the head of
-// its own.
-func BlockAddress(address, comment string) error {
-	if !ValidAddress(address) {
-		return errors.New("that is not an IP address or a range")
-	}
-
-	if !commentPattern.MatchString(comment) {
-		comment = ""
-	}
-
-	note := ""
-	if comment != "" {
-		note = " comment " + proc.Quote(comment)
-	}
-
-	if proc.Run("sudo ufw insert 1 deny from "+address+note, time.Minute).OK() {
-		return nil
-	}
-
-	if result := proc.Run("sudo ufw deny from "+address+note, time.Minute); !result.OK() {
 		return fmt.Errorf("ufw refused: %s", lastLines(result.Output, 3))
 	}
 

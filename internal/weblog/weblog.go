@@ -158,11 +158,10 @@ var ThreatLabels = map[string]string{
 	ThreatSecret:  "Asking for secret files",
 }
 
-// The paths that mark a request as an attack are the scanner protection's
-// lists, which the owner edits on the Protection tab (security/paths.go):
-// secret paths, one request for which is an attacker whatever the answer, and
-// scanner paths, which count as probing when refused, missing or redirected.
-// The panel hands them over with SetPaths; until it does, the defaults apply.
+// The paths that mark a request as an attack: secret paths, one request for
+// which is an attacker whatever the answer, and scanner paths, which count as
+// probing when refused, missing or redirected. The defaults apply unless
+// SetPaths hands over others.
 type pathRules struct {
 	secrets []*regexp.Regexp
 	probes  []*regexp.Regexp

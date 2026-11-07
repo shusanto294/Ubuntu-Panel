@@ -22,12 +22,10 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/assets"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
-	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/web"
-	"github.com/shusanto294/Ubuntu-Panel/internal/weblog"
 )
 
 func main() {
@@ -37,41 +35,11 @@ func main() {
 		"install the server's apps and exit: all | core | none (default: PANEL_INSTALL_APPS)")
 	upgradeApps := flag.Bool("upgrade-apps", false,
 		"update the apps already on this machine and exit")
-	verifiedBot := flag.String("verified-bot", "",
-		"exit 0 when the address is a search engine's crawler, by forward-confirmed reverse DNS")
-	nginxBan := flag.String("nginx-ban", "", "have nginx refuse the address now (the panel's ban worker runs it as root)")
-	nginxUnban := flag.String("nginx-unban", "", "take the address off nginx's instant ban list (run as root)")
 
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(config.Name, config.Version)
-		return
-	}
-
-	// fail2ban's ignorecommand for the website jails: run before an address is
-	// banned, and exit 0 lets it off. Nothing to load, nothing printed.
-	if *verifiedBot != "" {
-		if _, ok := weblog.CheckDNS(context.Background(), *verifiedBot, weblog.CrawlerDomains()); ok {
-			os.Exit(0)
-		}
-		os.Exit(1)
-	}
-
-	// The ban worker's hands: nginx refuses the address the moment fail2ban
-	// bans it, which is what stops one coming through Cloudflare. Run as root
-	// through sudo, so the panel's own process never writes nginx's files.
-	if *nginxBan != "" || *nginxUnban != "" {
-		address, ban := *nginxBan, true
-		if address == "" {
-			address, ban = *nginxUnban, false
-		}
-
-		if err := security.InstantBan(address, ban); err != nil {
-			fmt.Fprintln(os.Stderr, "ubuntu-panel:", err)
-			os.Exit(1)
-		}
-
 		return
 	}
 

@@ -27,7 +27,7 @@ type SSHConfig struct {
 	PasswordAuthentication bool `json:"password_authentication"`
 
 	// MaxAuthTries is how many attempts one connection gets before sshd drops
-	// it. Separate from fail2ban, which counts across connections.
+	// it.
 	MaxAuthTries int `json:"max_auth_tries"`
 }
 
@@ -87,7 +87,7 @@ func ReadSSH() SSHState {
 	return state
 }
 
-// SSHPorts is just the ports, which the fail2ban jail needs.
+// SSHPorts is just the ports, which the firewall must keep open.
 func SSHPorts() []string {
 	ports := ReadSSH().Ports
 	if len(ports) == 0 {

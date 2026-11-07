@@ -3,14 +3,15 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import IpAddress from '@/Components/IpAddress.vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
-import { confirmDanger } from '@/dialog';
 import { Link, router } from '@inertiajs/vue3';
 
 /*
  * Every site's access log, added up over a window, beside what the processor
  * is doing right now. Built for the moment the CPU is pinned: which program
  * is using it, which site the requests are going to, who is sending them and
- * whether that is an attack — and a button to ban the address that is.
+ * whether that is an attack. Nothing here bans anybody; the firewall closes
+ * ports, and Cloudflare's Under Attack mode (Security → Hardening) stops a
+ * flood before it reaches the server.
  */
 const props = defineProps({
     window: { type: String, default: '1h' },
@@ -18,10 +19,8 @@ const props = defineProps({
     traffic: { type: Object, default: null },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
-    // Why each trusted address is trusted: they are never offered a Ban button.
+    // Why each trusted address is trusted.
     trustedIps: { type: Object, default: () => ({}) },
-    // Addresses something already refuses: offered Unban instead of Ban.
-    bannedIps: { type: Array, default: () => [] },
 
     // Which parts to show: findings, timeline, sites, cpu, ips, attacks,
     // agents, urls. Each stats page shows its own few.
@@ -63,7 +62,7 @@ const setWindow = (key) =>
         {
             preserveScroll: true,
             preserveState: true,
-            only: ['window', 'traffic', 'trustedIps', 'bannedIps', 'processes', 'fpm'],
+            only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'],
             onStart: () => (refreshing.value = true),
             onFinish: () => (refreshing.value = false),
         },
@@ -86,7 +85,7 @@ const refresh = () => {
     if (refreshing.value || document.hidden) return;
 
     router.reload({
-        only: ['traffic', 'trustedIps', 'bannedIps', 'processes', 'fpm'],
+        only: ['traffic', 'trustedIps', 'processes', 'fpm'],
         preserveScroll: true,
         preserveState: true,
         onStart: () => (refreshing.value = true),
@@ -103,30 +102,6 @@ watch(
 );
 
 onBeforeUnmount(() => clearInterval(timer));
-
-// ---------------------------------------------------------------- banning
-
-const ban = async (ip, reason) => {
-    const text =
-        `${ip} will be refused on every port of this server — every site, SSH and the panel. ` +
-        'It can be unbanned from Security → Banned IPs.';
-
-    if (!(await confirmDanger(`Ban ${ip}?`, text, 'Ban'))) return;
-
-    router.post(
-        route('security.bans.store'),
-        { ip, scope: 'server', comment: `From Logs → Traffic: ${reason || 'banned by hand'}`.slice(0, 120) },
-        { preserveScroll: true, preserveState: true, only: ['bannedIps'] },
-    );
-};
-
-const banned = computed(() => new Set(props.bannedIps));
-
-const unban = async (ip) => {
-    if (!(await confirmDanger(`Unban ${ip}?`, 'It is let go from everything that refuses it.', 'Unban'))) return;
-
-    router.post(route('security.bans.release'), { ip }, { preserveScroll: true, preserveState: true, only: ['bannedIps'] });
-};
 
 // ---------------------------------------------------------------- reading
 
@@ -322,22 +297,6 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                     :class="toneClass[f.tone]"
                 >
                     <span class="min-w-0 flex-1 break-words">{{ f.text }}</span>
-                    <button
-                        v-if="f.ip && banned.has(f.ip)"
-                        type="button"
-                        class="rounded-lg bg-white px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
-                        @click="unban(f.ip)"
-                    >
-                        Unban {{ f.ip }}
-                    </button>
-                    <button
-                        v-else-if="f.ip && !trustedIps[f.ip]"
-                        type="button"
-                        class="rounded-lg bg-rose-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-rose-700"
-                        @click="ban(f.ip, f.reason)"
-                    >
-                        Ban {{ f.ip }}
-                    </button>
                 </li>
             </ul>
             <p v-else class="mt-2 text-sm text-slate-500">
@@ -573,7 +532,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                     <span
                                         v-if="ip.trusted"
                                         class="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
-                                        :title="`Never flagged or banned: ${ip.trusted}`"
+                                        :title="`Never flagged: ${ip.trusted}`"
                                         >trusted · {{ ip.trusted }}</span
                                     >
                                     <p class="max-w-[16rem] truncate text-xs text-slate-400" :title="ip.agent">
@@ -612,31 +571,10 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                 <td class="whitespace-nowrap px-5 py-2.5 text-right">
                                     <Link
                                         :href="route('logs.ip', ip.ip)"
-                                        class="mr-3 text-xs font-medium text-brand-600 hover:underline"
+                                        class="text-xs font-medium text-brand-600 hover:underline"
                                     >
                                         Details
                                     </Link>
-                                    <button
-                                        v-if="banned.has(ip.ip)"
-                                        type="button"
-                                        class="rounded-lg px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
-                                        @click="unban(ip.ip)"
-                                    >
-                                        Unban
-                                    </button>
-                                    <button
-                                        v-else-if="!ip.trusted && !trustedIps[ip.ip]"
-                                        type="button"
-                                        class="rounded-lg px-2.5 py-1 text-xs font-medium ring-1 transition"
-                                        :class="
-                                            ip.danger
-                                                ? 'bg-rose-600 text-white ring-rose-600 hover:bg-rose-700'
-                                                : 'text-rose-600 ring-slate-900/10 hover:bg-rose-50'
-                                        "
-                                        @click="ban(ip.ip, ip.verdict)"
-                                    >
-                                        Ban
-                                    </button>
                                 </td>
                             </tr>
                         </tbody>
@@ -668,22 +606,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
                                 <span v-if="trustedIps[ip.name]" class="text-emerald-700">trusted</span>
-                                <button
-                                    v-else-if="banned.has(ip.name)"
-                                    type="button"
-                                    class="font-medium text-slate-700 hover:underline"
-                                    @click="unban(ip.name)"
-                                >
-                                    Unban
-                                </button>
-                                <button
-                                    v-else
-                                    type="button"
-                                    class="font-medium text-rose-600 hover:underline"
-                                    @click="ban(ip.name, `${number(ip.count)} ${th.label.toLowerCase()}`)"
-                                >
-                                    Ban
-                                </button>
+                                <Link :href="route('logs.ip', ip.name)" class="font-medium text-brand-600 hover:underline">Details</Link>
                             </span>
                         </li>
                     </ul>

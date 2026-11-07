@@ -25,7 +25,7 @@ import (
 // Traffic and Server logs are what the machine's own programs wrote: nginx's
 // access log for every site read and added up — which site the requests went
 // to, from where, for what, and which of them are an attack — and the raw
-// files of nginx, PHP-FPM, MySQL, fail2ban and the system, for the line the
+// files of nginx, PHP-FPM, MySQL and the system, for the line the
 // summary cannot give.
 //
 // Traffic exists for the moment the CPU is pinned: it puts what is using the
@@ -311,7 +311,6 @@ func (a *App) serverLogs(ctx context.Context) []serverLog {
 		serverLog{Key: "mysql", Group: "Databases", Label: "MySQL / MariaDB error log", Path: "/var/log/mysql/error.log"},
 		serverLog{Key: "redis", Group: "Databases", Label: "Redis", Path: "/var/log/redis/redis-server.log"},
 		serverLog{Key: "mongodb", Group: "Databases", Label: "MongoDB", Path: "/var/log/mongodb/mongod.log"},
-		serverLog{Key: "fail2ban", Group: "Security", Label: "fail2ban", Path: "/var/log/fail2ban.log"},
 		serverLog{Key: "auth", Group: "Security", Label: "Authentication (SSH, sudo)", Path: "/var/log/auth.log"},
 		serverLog{Key: "ufw", Group: "Security", Label: "Firewall (ufw)", Path: "/var/log/ufw.log"},
 		serverLog{Key: "syslog", Group: "System", Label: "System log", Path: "/var/log/syslog"},
@@ -547,13 +546,6 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 		report, reasons := a.markTrusted(ctx, a.traffic(ctx, window), viewer)
 		props["traffic"] = report
 		props["trustedIps"] = reasons
-	}
-
-	// Which of them are banned already, so they are offered Unban, not Ban.
-	// Asked for on its own after a ban or an unban, which changes it and
-	// nothing else.
-	if inertia.Asked(r, "Logs/Stats", "traffic") || inertia.Asked(r, "Logs/Stats", "bannedIps") {
-		props["bannedIps"] = a.bannedIPs(ctx)
 	}
 
 	// What the CPU is doing is the PHP page's alone: it takes a second to

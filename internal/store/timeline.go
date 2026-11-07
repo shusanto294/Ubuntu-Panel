@@ -42,6 +42,33 @@ func (s *Store) RecordSSHEvents(ctx context.Context, events []SSHEvent) {
 	tx.Commit()
 }
 
+// LastSSHLogins is each account's latest accepted SSH login the panel has
+// kept, by user name. kind is the accepted kind (security.EventAccepted).
+func (s *Store) LastSSHLogins(ctx context.Context, kind string) map[string]SSHEvent {
+	found := map[string]SSHEvent{}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.id, e.kind, e.username, e.ip_address, e.method, e.created_at
+		   FROM ssh_events e
+		   JOIN (SELECT username, MAX(created_at) AS latest FROM ssh_events
+		          WHERE kind = ? GROUP BY username) last
+		     ON last.username = e.username AND last.latest = e.created_at
+		  WHERE e.kind = ?`, kind, kind)
+	if err != nil {
+		return found
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var event SSHEvent
+		if rows.Scan(&event.ID, &event.Kind, &event.User, &event.IP, &event.Method, &event.CreatedAt) == nil {
+			found[event.User] = event
+		}
+	}
+
+	return found
+}
+
 // Timeline filters beyond the task types.
 const (
 	TimelinePanelLogins = "panel-login"

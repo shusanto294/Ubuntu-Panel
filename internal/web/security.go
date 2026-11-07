@@ -2,18 +2,15 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
-	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -23,10 +20,8 @@ import (
 
 // Settings the Security page keeps.
 const (
-	jailSetting            = "security_ssh_jail"
-	loginMaxSetting        = "security_login_max_attempts"
-	loginLockoutSetting    = "security_login_lockout_minutes"
-	fail2banOfferedSetting = "security_fail2ban_offered"
+	loginMaxSetting     = "security_login_max_attempts"
+	loginLockoutSetting = "security_login_lockout_minutes"
 )
 
 // securityTaskActions are the tasks this page starts.
@@ -71,194 +66,28 @@ func (a *App) loginAttempt(r *http.Request, email string) store.LoginAttempt {
 	}
 }
 
-// ------------------------------------------------------------------- SSH jail
-
-// jailConfig is the SSH jail as the panel last saved it, or the defaults.
-func (a *App) jailConfig() security.JailConfig {
-	config := security.Defaults
-
-	if stored := a.Store.Setting(jailSetting, ""); stored != "" {
-		json.Unmarshal([]byte(stored), &config)
-	}
-
-	if config.IgnoreIPs == nil {
-		config.IgnoreIPs = []string{}
-	}
-
-	return config
-}
-
-// effectiveJail is the SSH jail as fail2ban is given it: the saved settings,
-// with every trusted address (trusted.go) as its ignore list rather than the
-// never-ban list alone.
-func (a *App) effectiveJail(ctx context.Context) security.JailConfig {
-	config := a.jailConfig()
-	config.IgnoreIPs = a.trustedList(ctx)
-
-	return config
-}
-
-// applySSHProtection writes the jail fail2ban runs. It is the catalogue's last
-// step for fail2ban as well as what the Security page calls on save.
-func (a *App) applySSHProtection(runner *tasks.Runner) error {
-	if err := security.Apply(a.effectiveJail(context.Background()), security.SSHPorts()); err != nil {
-		return err
-	}
-
-	a.Store.SetSetting(trustedSetting, strings.Join(a.trustedList(context.Background()), " "))
-
-	// The optional jails and rate limits share the never-ban list.
-	if p := a.protection(); p.AnyJail() || p.AnyNginx() {
-		if err := a.applyProtection(context.Background(), p); err != nil {
-			a.Log.Warn("could not update the protections with the never-ban list", "error", err)
-		}
-	}
-
-	if runner != nil {
-		config := a.jailConfig()
-		runner.Writef("SSH is protected: %d failed attempts within %s and an address is %s.\n",
-			config.MaxRetry, humanSeconds(config.FindTime), banDescription(config.BanTime))
-	}
-
-	securityCache.forget()
-
-	return nil
-}
-
-// EnsureSSHProtection makes the default true on every machine, not only the
-// ones installed after it existed: fail2ban is installed if it is missing, and
-// the jail is rewritten if what is on disk is not what the panel would write.
-//
-// Installed once. An operator who removes fail2ban from Apps has decided
-// something, and a panel restart is not a reason to overrule it.
-func (a *App) EnsureSSHProtection(ctx context.Context) {
-	if a.Config.InstallApps == "none" {
-		return
-	}
-
-	if !proc.Which("fail2ban-client") {
-		if a.Store.SettingBool(fail2banOfferedSetting, false) {
-			return
-		}
-
-		a.Store.SetSetting(fail2banOfferedSetting, "1")
-
-		// A first run's install already has it on the list.
-		if a.Store.ServicesPending() {
-			return
-		}
-
-		if a.Catalog.Queue([]string{"fail2ban"}, false) == 0 {
-			return
-		}
-
-		if _, err := a.Queue.PushID(queue.ServicesInstall, "user", 0); err != nil {
-			a.Log.Error("could not queue the fail2ban install", "error", err)
-			return
-		}
-
-		a.Log.Info("installing fail2ban to protect SSH from password guessing")
-
-		return
-	}
-
-	a.Store.SetSetting(fail2banOfferedSetting, "1")
-
-	current, _ := proc.ReadFile(security.JailPath, true)
-	journal := !proc.Ok("sudo test -s /var/log/auth.log")
-
-	if current == security.JailFile(a.effectiveJail(ctx), security.SSHPorts(), journal) {
-		return
-	}
-
-	if err := a.applySSHProtection(nil); err != nil {
-		a.Log.Error("could not protect SSH", "error", err)
-		return
-	}
-
-	a.Log.Info("SSH protection applied", "jail", security.JailPath)
-}
-
 // ---------------------------------------------------------------- snapshot
 
-// securitySnapshot is everything the Security page's checks need. Reading
-// it is half a dozen sudo commands and a journal query — seconds of CPU, on a
-// machine that is being guessed at all day — so only the Security page reads
-// it. That page gets the copy there is, and a copy older than a minute is
-// replaced in the background for the page after. The dashboard used to carry
-// a tile built from it, and opening the dashboard after a break ran apt, ufw
-// and fail2ban-client all at once — which the CPU graph then showed.
+// securitySnapshot is what the Security page reads off the machine: ufw, the
+// listening ports, sshd's configuration, the accounts and apt. Only the page
+// reads it, and only while somebody has it open — nothing in the background
+// asks — so it is kept for a minute between page loads and read again
+// afterwards, or at once with "Check again".
 type securitySnapshot struct {
-	Jail     security.JailStatus
 	SSH      security.SSHState
 	Firewall security.Firewall
+	Ports    []security.Port
 	Updates  security.Updates
-	Events   []security.Event
 	Users    []security.SSHUser
-	Protect  map[string]security.JailStatus
-
-	// BanTimes are when each jail banned each address, and until when.
-	BanTimes map[string]map[string]security.BanTime
 	Taken    time.Time
-
-	// When the slow parts that rarely change were last actually read. A
-	// background refresh keeps them from the copy before until they are this
-	// old (see slowPartAge), rather than running apt and the journal again
-	// every minute for a page nobody has open.
-	UpdatesAt, UsersAt, SSHAt, EventsAt, FirewallAt time.Time
 }
 
-// slowPartAge is how long a background refresh keeps each slow part. apt's
-// list only moves when the daily timer refreshes the cache; the SSH config
-// and the users only when somebody changes them, which forgets the whole
-// snapshot anyway; the SSH events are copied into the database every minute
-// on their own, and this copy is only the Security page's list of them.
-var slowPartAge = struct{ Updates, Users, SSH, Events time.Duration }{
-	Updates: time.Hour, Users: 15 * time.Minute, SSH: 15 * time.Minute, Events: 5 * time.Minute,
-}
-
-// unwatchedPartAge is how long a background refresh keeps the parts that
-// nothing reads while the Security page is closed. The firewall's blocks are
-// read by the nginx sync, but they only change through the panel — which
-// forgets the copy — or by hand. The ban times are only shown on the page,
-// which reads them again when it is opened.
-const unwatchedPartAge = 30 * time.Minute
-
-// The background refresh of the copy: every minute while somebody has the
-// Security page open, and every ten minutes otherwise, when only the nginx
-// sync, the ban alert and the auto-ban read it — and the ban worker writes
-// every ban and unban into it as it happens.
-const (
-	watchedRefreshAfter   = time.Minute
-	unwatchedRefreshAfter = 10 * time.Minute
-)
-
-// gentlePause is the gap between the parts of a background read: each is a
-// sudo and a Python start-up, and one after another without a pause is a run
-// of seconds at 100% on a one-core VPS.
-var gentlePause = time.Second
-
-// securityViewedAt is when the Security page, or its live list of bans, was
-// last asked for (unix seconds).
-var securityViewedAt atomic.Int64
-
-func markSecurityWatched() { securityViewedAt.Store(time.Now().Unix()) }
-
-// securityWatched is whether somebody has had the Security page open in the
-// last two minutes: its Banned IPs tab asks for the list every couple of
-// seconds while it is up.
-func securityWatched() bool {
-	return time.Since(time.Unix(securityViewedAt.Load(), 0)) < 2*time.Minute
-}
+// securityFreshFor is how long a snapshot is shown before it is read again.
+const securityFreshFor = time.Minute
 
 type snapshotCache struct {
 	sync.Mutex
 	value *securitySnapshot
-
-	// generation moves on every forget, so a background read that started
-	// before something changed cannot put its out-of-date answer back.
-	generation int
-	refreshing bool
 
 	// reading serialises the reads themselves: two pages arriving at a cold
 	// cache share one read rather than running two.
@@ -267,196 +96,66 @@ type snapshotCache struct {
 
 var securityCache snapshotCache
 
-// securityStaleAfter is how old a copy can be before the Security page waits
-// for a new one rather than showing it. Nothing else reads it, so a copy can
-// sit for hours between visits, and checks that old are not worth showing as
-// current.
-const securityStaleAfter = 15 * time.Minute
-
 // forget drops the cached snapshot, after anything that changes what it says.
-// The next page reads afresh and waits for it, because it is the page that
-// should show the change.
 func (c *snapshotCache) forget() {
 	c.Lock()
 	c.value = nil
-	c.generation++
 	c.Unlock()
 }
 
-func (a *App) snapshot(fresh bool) *securitySnapshot {
-	securityCache.Lock()
-	current, generation := securityCache.value, securityCache.generation
+func (c *snapshotCache) current(fresh bool) *securitySnapshot {
+	c.Lock()
+	defer c.Unlock()
 
-	if !fresh && current != nil && time.Since(current.Taken) < securityStaleAfter {
-		refreshAfter := unwatchedRefreshAfter
-		if securityWatched() {
-			refreshAfter = watchedRefreshAfter
-		}
-
-		if time.Since(current.Taken) >= refreshAfter && !securityCache.refreshing {
-			securityCache.refreshing = true
-
-			go func() {
-				// Nobody is waiting on this one, so it is read gently: one
-				// part after another, keeping what rarely changes.
-				snapshot := a.readSnapshot(current, true)
-
-				securityCache.Lock()
-				if securityCache.generation == generation {
-					securityCache.value = snapshot
-				}
-				securityCache.refreshing = false
-				securityCache.Unlock()
-			}()
-		}
-
-		securityCache.Unlock()
-
-		return current
+	if !fresh && c.value != nil && time.Since(c.value.Taken) < securityFreshFor {
+		return c.value
 	}
 
-	securityCache.Unlock()
+	return nil
+}
+
+func (a *App) snapshot(fresh bool) *securitySnapshot {
+	if snap := securityCache.current(fresh); snap != nil {
+		return snap
+	}
 
 	securityCache.reading.Lock()
 	defer securityCache.reading.Unlock()
 
 	// Somebody else may have finished a read while this one waited for it.
-	started := time.Now()
+	if snap := securityCache.current(false); snap != nil && !fresh {
+		return snap
+	}
+
+	snap := a.readSnapshot()
 
 	securityCache.Lock()
-	if !fresh && securityCache.value != nil && time.Since(securityCache.value.Taken) < securityStaleAfter {
-		current := securityCache.value
-		securityCache.Unlock()
-
-		return current
-	}
+	securityCache.value = snap
 	securityCache.Unlock()
 
-	snapshot := a.readSnapshot(nil, false)
-
-	securityCache.Lock()
-	if securityCache.value == nil || securityCache.value.Taken.Before(started) {
-		securityCache.value = snapshot
-	}
-	securityCache.Unlock()
-
-	return snapshot
+	return snap
 }
 
-// readSnapshot asks the machine.
-//
-// Read for a page that is waiting (gentle false), every part is asked at once:
-// each is a few hundred milliseconds of sudo, and somebody is watching a
-// spinner. Read in the background (gentle true), the parts are asked one after
-// another, so the panel never takes both cores of a small VPS for a page
-// nobody has open, and the slow parts that rarely change are kept from
-// previous until they are slowPartAge old.
-func (a *App) readSnapshot(previous *securitySnapshot, gentle bool) *securitySnapshot {
-	now := time.Now()
-	snapshot := &securitySnapshot{Taken: now}
-
-	// A copy, so the parts kept below can be read off a snapshot that may be nil.
-	var prev securitySnapshot
-	if previous != nil {
-		prev = *previous
-	}
-
-	keep := func(at time.Time, age time.Duration) bool {
-		return gentle && previous != nil && !at.IsZero() && now.Sub(at) < age
-	}
-
-	// Nobody has the page open: the parts only it shows are kept longer, and
-	// the ban times are not asked for at all.
-	unwatched := gentle && previous != nil && !securityWatched()
-
-	ages := slowPartAge
-	if unwatched {
-		ages.Users = max(ages.Users, unwatchedPartAge)
-		ages.SSH = max(ages.SSH, unwatchedPartAge)
-		ages.Events = max(ages.Events, unwatchedPartAge)
-	}
-
-	parts := []func(){
-		func() { snapshot.Jail = security.Status() },
-	}
-
-	if unwatched && keep(prev.FirewallAt, unwatchedPartAge) {
-		snapshot.Firewall, snapshot.FirewallAt = prev.Firewall, prev.FirewallAt
-	} else {
-		parts = append(parts, func() { snapshot.Firewall, snapshot.FirewallAt = security.ReadFirewall(), time.Now() })
-	}
-
-	if keep(prev.UpdatesAt, ages.Updates) {
-		snapshot.Updates, snapshot.UpdatesAt = prev.Updates, prev.UpdatesAt
-	} else {
-		parts = append(parts, func() { snapshot.Updates, snapshot.UpdatesAt = security.ReadUpdates(), time.Now() })
-	}
-
-	if keep(prev.SSHAt, ages.SSH) {
-		snapshot.SSH, snapshot.SSHAt = prev.SSH, prev.SSHAt
-	} else {
-		parts = append(parts, func() { snapshot.SSH, snapshot.SSHAt = security.ReadSSH(), time.Now() })
-	}
-
-	if keep(prev.EventsAt, ages.Events) {
-		snapshot.Events, snapshot.EventsAt = prev.Events, prev.EventsAt
-	} else {
-		parts = append(parts, func() {
-			snapshot.Events, snapshot.EventsAt = security.ReadEvents(7*24*time.Hour, 1000), time.Now()
-		})
-	}
-
-	if keep(prev.UsersAt, ages.Users) {
-		snapshot.Users, snapshot.UsersAt = prev.Users, prev.UsersAt
-	} else {
-		parts = append(parts, func() {
-			snapshot.Users, snapshot.UsersAt = security.ReadUsers(a.Config.SystemUser), time.Now()
-		})
-	}
-
-	// The optional jails, only those that are on: asking fail2ban is a Python
-	// start-up each.
-	snapshot.Protect = map[string]security.JailStatus{}
-	p := a.protection()
-	if p.AnyJail() {
-		parts = append(parts, func() { snapshot.Protect = security.ProtectStatus(p) })
-	}
-
-	// When each jail banned each address: only the page shows it.
-	snapshot.BanTimes = map[string]map[string]security.BanTime{}
-	if unwatched && prev.BanTimes != nil {
-		snapshot.BanTimes = prev.BanTimes
-	} else {
-		var times sync.Mutex
-		for _, jail := range append([]string{security.Jail}, p.ProtectJails()...) {
-			parts = append(parts, func() {
-				found := security.BanTimes(jail)
-				times.Lock()
-				snapshot.BanTimes[jail] = found
-				times.Unlock()
-			})
-		}
-	}
-
-	if gentle {
-		for i, part := range parts {
-			if i > 0 {
-				time.Sleep(gentlePause)
-			}
-			part()
-		}
-
-		return snapshot
-	}
+// readSnapshot asks the machine, every part at once: somebody is waiting.
+func (a *App) readSnapshot() *securitySnapshot {
+	snap := &securitySnapshot{Taken: time.Now()}
 
 	var wait sync.WaitGroup
-	for _, part := range parts {
+	for _, part := range []func(){
+		func() { snap.Firewall = security.ReadFirewall() },
+		func() { snap.Updates = security.ReadUpdates() },
+		func() { snap.SSH = security.ReadSSH() },
+		func() { snap.Users = security.ReadUsers(a.Config.SystemUser) },
+	} {
 		wait.Add(1)
 		go func() { defer wait.Done(); part() }()
 	}
 	wait.Wait()
 
-	return snapshot
+	// The ports need the firewall's rules.
+	snap.Ports = security.ReadPorts(snap.Firewall, security.SSHPorts(), a.panelPort())
+
+	return snap
 }
 
 // check is one line of the security checklist.
@@ -470,55 +169,58 @@ type check struct {
 }
 
 // checks are what the score is made of, worst first when they fail.
+//
+// Nothing here bans anybody, so what stands between a password guesser and
+// the server is the configuration: SSH that takes keys only, a firewall that
+// closes what is not meant to be public, a panel that wants a second factor.
+// Those are the checks that weigh most.
 func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapshot) []check {
-	jail := a.jailConfig()
 	sshOff := snap.SSH.Readable && !snap.SSH.Service.Running
 
+	risky := []string{}
+	if snap.Firewall.Active {
+		for _, port := range snap.Ports {
+			if port.Risk == "risky" && port.Open && port.Listening && port.Public {
+				risky = append(risky, fmt.Sprintf("%s (%d)", port.Name, port.Port))
+			}
+		}
+	} else {
+		risky = security.ExposedServices(snap.Firewall)
+	}
+
 	list := []check{
-		{
-			Key: "ssh_bruteforce", Label: "SSH brute-force protection", Level: "critical", Tab: "ssh",
-			OK: snap.Jail.Running && snap.Jail.Managed,
-			Detail: map[bool]string{
-				true: fmt.Sprintf("fail2ban bans an address after %d failed attempts, %s.",
-					jail.MaxRetry, banDescription(jail.BanTime)),
-				false: "Nothing stops an address from guessing SSH passwords forever.",
-			}[snap.Jail.Running && snap.Jail.Managed],
-		},
 		{
 			Key: "firewall", Label: "Firewall", Level: "critical", Tab: "firewall",
 			OK: snap.Firewall.Active,
 			Detail: map[bool]string{
-				true:  fmt.Sprintf("ufw is on with %d rules; anything not allowed is refused.", len(snap.Firewall.Rules)),
+				true:  fmt.Sprintf("ufw is on with %d rules; any port not opened is refused.", len(snap.Firewall.Rules)),
 				false: "ufw is off, so every port something listens on is open to the internet.",
 			}[snap.Firewall.Active],
 		},
-		func() check {
-			open := security.ExposedServices(snap.Firewall)
-			return check{
-				Key: "exposed_services", Label: "No database or cache is open to the internet", Level: "critical", Tab: "firewall",
-				OK: len(open) == 0,
-				Detail: map[bool]string{
-					true: "Redis, MongoDB, MariaDB and the like answer this machine only, or the firewall keeps them in.",
-					false: "Reachable from anywhere: " + strings.Join(open, ", ") + ". Bind it to 127.0.0.1 or keep the " +
-						"firewall from allowing its port — an open Redis or MongoDB is the most common way a server is taken over.",
-				}[len(open) == 0],
-			}
-		}(),
 		{
-			Key: "root_login", Label: "Root cannot log in with a password", Level: "warning", Tab: "hardening",
+			Key: "exposed_services", Label: "No database or cache is open to the internet", Level: "critical", Tab: "firewall",
+			OK: len(risky) == 0,
+			Detail: map[bool]string{
+				true: "Databases, caches and admin services answer this machine only, or the firewall keeps them in.",
+				false: "Reachable from anywhere: " + strings.Join(risky, ", ") + ". Close the port on the Ports & firewall " +
+					"tab — an open Redis or MongoDB is the most common way a server is taken over.",
+			}[len(risky) == 0],
+		},
+		{
+			Key: "password_auth", Label: "SSH accepts keys only", Level: "critical", Tab: "ssh",
+			OK: snap.SSH.Readable && !snap.SSH.PasswordAuthentication,
+			Detail: map[bool]string{
+				true:  "Passwords are refused; only keys log in, and a key cannot be guessed.",
+				false: "SSH accepts passwords, and bots try them all day. Add your key on the SSH tab, then turn passwords off.",
+			}[snap.SSH.Readable && !snap.SSH.PasswordAuthentication],
+		},
+		{
+			Key: "root_login", Label: "Root cannot log in with a password", Level: "warning", Tab: "ssh",
 			OK: snap.SSH.Readable && snap.SSH.PermitRootLogin != "yes",
 			Detail: map[bool]string{
 				true:  "root can only log in with a key, or not at all.",
 				false: "root can log in over SSH with a password, which is the account every scanner tries first.",
 			}[snap.SSH.Readable && snap.SSH.PermitRootLogin != "yes"],
-		},
-		{
-			Key: "password_auth", Label: "SSH keys instead of passwords", Level: "info", Tab: "hardening",
-			OK: snap.SSH.Readable && !snap.SSH.PasswordAuthentication,
-			Detail: map[bool]string{
-				true:  "Passwords are refused; only keys log in.",
-				false: "SSH accepts passwords. A key cannot be guessed — turn passwords off once yours is installed.",
-			}[snap.SSH.Readable && !snap.SSH.PasswordAuthentication],
 		},
 		{
 			Key: "two_factor", Label: "Two-factor sign-in to the panel", Level: "warning", Tab: "profile",
@@ -556,8 +258,8 @@ func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapsh
 			Key: "alerts", Label: "Security alerts by email", Level: "info", Tab: "alerts",
 			OK: a.smtpConfig().Ready() && a.anyAlertEnabled(),
 			Detail: map[bool]string{
-				true:  "Sign-ins, lockouts, attacks and server problems are emailed to " + a.alertRecipient(ctx) + ".",
-				false: "Connect an SMTP server in Settings to be emailed about sign-ins, attacks and server problems.",
+				true:  "Sign-ins, lockouts and server problems are emailed to " + a.alertRecipient(ctx) + ".",
+				false: "Connect an SMTP server in Settings to be emailed about sign-ins and server problems.",
 			}[a.smtpConfig().Ready() && a.anyAlertEnabled()],
 		},
 	}
@@ -566,14 +268,14 @@ func (a *App) checks(ctx context.Context, user *store.User, snap *securitySnapsh
 	if sshOff {
 		for i := range list {
 			switch list[i].Key {
-			case "ssh_bruteforce", "root_login", "password_auth":
+			case "root_login", "password_auth":
 				list[i].OK = true
 				list[i].Detail = "SSH is turned off, so nobody can log in over it."
 			}
 		}
 	}
 
-	list = append(list, a.protectionChecks(ctx)...)
+	list = append(list, a.hardeningChecks()...)
 
 	if snap.Updates.Reboot {
 		list = append(list, check{
@@ -604,19 +306,6 @@ func score(list []check) int {
 	}
 
 	return earned * 100 / total
-}
-
-func eventsSince(events []security.Event, window time.Duration) []security.Event {
-	cutoff := time.Now().Add(-window)
-	recent := []security.Event{}
-
-	for _, event := range events {
-		if event.Time.After(cutoff) {
-			recent = append(recent, event)
-		}
-	}
-
-	return recent
 }
 
 // sshEventsSetting is when sshd's log was last copied into the panel.
@@ -664,7 +353,6 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	sess := session.FromContext(r.Context())
 
-	markSecurityWatched()
 	snap := a.snapshot(r.URL.Query().Get("fresh") == "1")
 	list := a.checks(r.Context(), user, snap)
 
@@ -691,29 +379,16 @@ func (a *App) securityIndex(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	events := snap.Events
-	if len(events) > 300 {
-		events = events[:300]
-	}
-
 	a.Render.Render(w, r, "System/Security", inertia.Props{
-		"score":  score(list),
-		"checks": list,
-		"myIp":   session.ClientIP(r),
-		"ssh": map[string]any{
-			"jail":        a.jailConfig(),
-			"status":      snap.Jail,
-			"events":      events,
-			"summary_24h": security.Summarise(eventsSince(snap.Events, 24*time.Hour), 10),
-			"summary_7d":  security.Summarise(snap.Events, 10),
-			"installing":  a.Store.ServicesPending(),
-		},
+		"score":      score(list),
+		"checks":     list,
+		"myIp":       session.ClientIP(r),
 		"hardening":  snap.SSH,
 		"sshService": a.sshServiceProps(snap.SSH.Service),
-		"bans":       a.bans(r.Context(), snap),
-		"protection": a.protectionProps(r.Context(), snap),
-		"users":      a.sshUsers(snap),
+		"server":     a.hardeningProps(r.Context()),
+		"users":      a.sshUsers(r.Context(), snap),
 		"firewall":   snap.Firewall,
+		"ports":      snap.Ports,
 		"forwards":   a.forwards(),
 		"panelPort":  a.panelPort(),
 		"updates":    snap.Updates,
@@ -794,11 +469,6 @@ func (a *App) securityCountries(w http.ResponseWriter, r *http.Request) {
 func (a *App) securityBack(w http.ResponseWriter, r *http.Request, message string, failed bool) {
 	securityCache.forget()
 
-	// A ban or an unban reaches nginx now rather than at the next minute:
-	// for a site behind Cloudflare, nginx is what refuses or lets in. The
-	// fresh read is the one the page is about to show, so it costs nothing.
-	a.syncNginxBans(r.Context(), true)
-
 	if sess := session.FromContext(r.Context()); sess != nil {
 		if failed {
 			sess.Flash("error", message)
@@ -808,193 +478,6 @@ func (a *App) securityBack(w http.ResponseWriter, r *http.Request, message strin
 	}
 
 	inertia.Back(w, r, "/security")
-}
-
-// --------------------------------------------------------- SSH protection
-
-func (a *App) securitySSHProtection(w http.ResponseWriter, r *http.Request) {
-	sess := session.FromContext(r.Context())
-
-	input, err := a.input(r)
-	if err != nil {
-		a.badRequest(w, r, err)
-		return
-	}
-
-	config := security.JailConfig{
-		MaxRetry:  int(intInput(input, "max_retry", 0)),
-		FindTime:  int(intInput(input, "find_time", 0)),
-		BanTime:   int(intInput(input, "ban_time", 0)),
-		IgnoreIPs: splitAddresses(input["ignore_ips"]),
-	}
-
-	if boolInput(input, "permanent", false) {
-		config.BanTime = security.Permanent
-	}
-
-	for field, problem := range config.Validate() {
-		sess.Error(field, problem)
-	}
-
-	if sess.HasErrors() {
-		inertia.Back(w, r, "/security")
-		return
-	}
-
-	encoded, _ := json.Marshal(config)
-	a.Store.SetSetting(jailSetting, string(encoded))
-
-	if !proc.Which("fail2ban-client") {
-		a.securityInstallFail2ban(w, r)
-		return
-	}
-
-	if err := a.applySSHProtection(nil); err != nil {
-		a.securityBack(w, r, err.Error(), true)
-		return
-	}
-
-	a.securityBack(w, r, fmt.Sprintf("Saved. %d failed SSH attempts and an address is %s.",
-		config.MaxRetry, banDescription(config.BanTime)), false)
-}
-
-// securityInstallFail2ban puts fail2ban through the Apps install, whose last
-// step writes the jail.
-func (a *App) securityInstallFail2ban(w http.ResponseWriter, r *http.Request) {
-	user := userFrom(r.Context())
-
-	if proc.Which("fail2ban-client") {
-		if err := a.applySSHProtection(nil); err != nil {
-			a.securityBack(w, r, err.Error(), true)
-			return
-		}
-
-		a.securityBack(w, r, "SSH protection is on.", false)
-		return
-	}
-
-	if a.Catalog.Queue([]string{"fail2ban"}, true) == 0 && !a.Store.ServicesPending() {
-		a.securityBack(w, r, "fail2ban could not be queued for install.", true)
-		return
-	}
-
-	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
-
-	a.securityBack(w, r, "Installing fail2ban. SSH is protected as soon as it finishes — "+
-		"follow it on the Apps page or in Logs.", false)
-}
-
-func (a *App) securityBan(w http.ResponseWriter, r *http.Request) {
-	input, err := a.input(r)
-	if err != nil {
-		a.badRequest(w, r, err)
-		return
-	}
-
-	address := strings.TrimSpace(input["ip"])
-
-	if address == session.ClientIP(r) {
-		a.securityBack(w, r, "That is the address you are using the panel from.", true)
-		return
-	}
-
-	if refusal := a.refuseBan(r.Context(), address, session.ClientIP(r)); refusal != "" {
-		a.securityBack(w, r, refusal, true)
-		return
-	}
-
-	// The whole server is a ufw block: it outlives fail2ban and the trap, and
-	// is refused on every port whatever else is on.
-	if input["scope"] == "server" {
-		if err := security.BlockAddress(address, strings.TrimSpace(input["comment"])); err != nil {
-			a.securityBack(w, r, err.Error(), true)
-			return
-		}
-		a.recordBlockTime(address)
-
-		a.Log.Warn("banned from the server by hand", "ip", address)
-		a.securityBack(w, r, address+" is banned from the whole server.", false)
-
-		return
-	}
-
-	if err := security.Ban(address); err != nil {
-		a.securityBack(w, r, err.Error(), true)
-		return
-	}
-
-	a.Log.Warn("banned from SSH by hand", "ip", address)
-	a.securityBack(w, r, address+" is banned from SSH.", false)
-}
-
-func (a *App) securityUnban(w http.ResponseWriter, r *http.Request) {
-	input, err := a.input(r)
-	if err != nil {
-		a.badRequest(w, r, err)
-		return
-	}
-
-	address := strings.TrimSpace(input["ip"])
-
-	if err := security.Unban(address); err != nil {
-		a.securityBack(w, r, err.Error(), true)
-		return
-	}
-
-	a.Log.Info("unbanned from SSH", "ip", address)
-	a.securityBack(w, r, address+" can connect to SSH again.", false)
-}
-
-// securityTrust adds an address to the jail's never-ban list: by default the
-// one the request came from, which is the operator protecting themselves from
-// their own typing.
-func (a *App) securityTrust(w http.ResponseWriter, r *http.Request) {
-	input, err := a.input(r)
-	if err != nil {
-		a.badRequest(w, r, err)
-		return
-	}
-
-	address := stringInput(input, "ip", session.ClientIP(r))
-
-	if !security.ValidAddress(address) {
-		a.securityBack(w, r, "That is not an IP address or a range.", true)
-		return
-	}
-
-	config := a.jailConfig()
-
-	for _, existing := range config.IgnoreIPs {
-		if existing == address {
-			a.securityBack(w, r, address+" is already trusted.", false)
-			return
-		}
-	}
-
-	config.IgnoreIPs = append(config.IgnoreIPs, address)
-
-	encoded, _ := json.Marshal(config)
-	a.Store.SetSetting(jailSetting, string(encoded))
-
-	if proc.Which("fail2ban-client") {
-		// Unbanned too, in case trusting it is the reason somebody came here.
-		security.Unban(address)
-
-		if security.ValidIP(address) {
-			for jail, status := range security.ProtectStatus(a.protection()) {
-				if containsString(status.Banned, address) {
-					security.UnbanFrom(jail, address)
-				}
-			}
-		}
-
-		if err := a.applySSHProtection(nil); err != nil {
-			a.securityBack(w, r, err.Error(), true)
-			return
-		}
-	}
-
-	a.securityBack(w, r, address+" will never be banned.", false)
 }
 
 // ----------------------------------------------------------- panel sign-in
@@ -1081,7 +564,7 @@ func (a *App) securityFirewallRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule := security.NewRule{
-		Action:   stringInput(input, "action", "allow"),
+		Action:   "allow",
 		Port:     strings.TrimSpace(input["port"]),
 		Protocol: stringInput(input, "protocol", "tcp"),
 		From:     strings.TrimSpace(input["from"]),
@@ -1161,33 +644,45 @@ func countSSHRules(rules []security.Rule, ports []string, ipv6 bool) int {
 	return count
 }
 
-func (a *App) securityFirewallBlock(w http.ResponseWriter, r *http.Request) {
+// securityPort opens a port to everyone or closes it, from the switch beside
+// it on the Ports & firewall tab. Closing removes only the rules that open it
+// to everyone; one for a particular address stays.
+func (a *App) securityPort(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
 		a.badRequest(w, r, err)
 		return
 	}
 
-	address := strings.TrimSpace(input["ip"])
+	port := int(intInput(input, "port", 0))
+	protocol := input["protocol"]
+	open := boolInput(input, "open", false)
+	name := fmt.Sprintf("%d/%s", port, protocol)
 
-	if address == session.ClientIP(r) {
-		a.securityBack(w, r, "That is the address you are using the panel from.", true)
+	if !security.ReadFirewall().Active {
+		a.securityBack(w, r, "The firewall is off, so every port is already reachable. Switch it on first.", true)
 		return
 	}
 
-	if refusal := a.refuseBan(r.Context(), address, session.ClientIP(r)); refusal != "" {
-		a.securityBack(w, r, refusal, true)
-		return
+	if open {
+		err = security.OpenPort(port, protocol, strings.TrimSpace(input["note"]))
+	} else {
+		err = security.ClosePort(port, protocol, security.SSHPorts(), a.panelPort())
 	}
 
-	if err := security.BlockAddress(address, strings.TrimSpace(input["comment"])); err != nil {
+	if err != nil {
 		a.securityBack(w, r, err.Error(), true)
 		return
 	}
-	a.recordBlockTime(address)
 
-	a.Log.Warn("blocked at the firewall", "ip", address)
-	a.securityBack(w, r, address+" is blocked on every port.", false)
+	a.Log.Info("port changed", "port", name, "open", open, "ip", session.ClientIP(r))
+
+	if open {
+		a.securityBack(w, r, "Port "+name+" is open to the internet.", false)
+		return
+	}
+
+	a.securityBack(w, r, "Port "+name+" is closed. The internet can no longer reach it.", false)
 }
 
 // --------------------------------------------------------------- hardening
@@ -1357,53 +852,4 @@ func (a *App) securityRevokeOthers(w http.ResponseWriter, r *http.Request) {
 
 	a.securityBack(w, r, fmt.Sprintf("Signed out %d other %s.", count,
 		map[bool]string{true: "browser", false: "browsers"}[count == 1]), false)
-}
-
-// ----------------------------------------------------------------- helpers
-
-// splitAddresses reads a textarea of addresses, one per line or separated by
-// commas and spaces, with duplicates dropped.
-func splitAddresses(text string) []string {
-	seen := map[string]bool{}
-	list := []string{}
-
-	for _, field := range strings.FieldsFunc(text, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == ',' || r == ' ' || r == '\t'
-	}) {
-		if !seen[field] {
-			seen[field] = true
-			list = append(list, field)
-		}
-	}
-
-	return list
-}
-
-func banDescription(seconds int) string {
-	if seconds == security.Permanent {
-		return "banned permanently"
-	}
-
-	return "banned for " + humanSeconds(seconds)
-}
-
-func humanSeconds(seconds int) string {
-	switch {
-	case seconds%86400 == 0:
-		return plural(seconds/86400, "day")
-	case seconds%3600 == 0:
-		return plural(seconds/3600, "hour")
-	case seconds%60 == 0:
-		return plural(seconds/60, "minute")
-	}
-
-	return plural(seconds, "second")
-}
-
-func plural(count int, unit string) string {
-	if count == 1 {
-		return "1 " + unit
-	}
-
-	return fmt.Sprintf("%d %ss", count, unit)
 }

@@ -1,15 +1,12 @@
 package web
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestTrustReason(t *testing.T) {
 	reasons := map[string]string{
-		"103.91.52.3":     trustSignedIn,
-		"198.51.100.0/24": trustNeverBan,
-		"192.0.2.10":      trustThisServer,
+		"103.91.52.3": trustSignedIn,
+		"10.0.0.0/8":  trustPrivate,
+		"192.0.2.10":  trustThisServer,
 	}
 
 	cases := []struct {
@@ -17,8 +14,9 @@ func TestTrustReason(t *testing.T) {
 	}{
 		{"203.0.113.5", "203.0.113.5", trustYou},
 		{"103.91.52.3", "", trustSignedIn},
-		{"198.51.100.77", "", trustNeverBan},
+		{"10.1.2.3", "", trustPrivate},
 		{"192.0.2.10", "", trustThisServer},
+		{"104.16.0.1", "", trustCloudflare},
 		{"203.0.113.9", "103.91.52.3", ""},
 		{"", "", ""},
 	}
@@ -27,13 +25,5 @@ func TestTrustReason(t *testing.T) {
 		if got := trustReason(reasons, c.address, c.viewer); got != c.want {
 			t.Errorf("trustReason(%q, viewer %q) = %q, want %q", c.address, c.viewer, got, c.want)
 		}
-	}
-
-	// Banning a range that holds a trusted address is refused too.
-	if got := trustReason(reasons, "103.91.52.0/24", ""); !strings.Contains(got, "103.91.52.3") {
-		t.Errorf("a range holding a trusted address: %q", got)
-	}
-	if got := trustReason(reasons, "203.0.113.0/24", ""); got != "" {
-		t.Errorf("an untrusted range: %q", got)
 	}
 }

@@ -15,7 +15,6 @@ const props = defineProps({
     windows: { type: Array, default: () => ['1h', '24h', '7d', '30d'] },
     traffic: { type: Object, default: null },
     trustedIps: { type: Object, default: () => ({}) },
-    bannedIps: { type: Array, default: () => [] },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
 });
@@ -44,7 +43,7 @@ const layout = computed(() => LAYOUT[props.section] ?? LAYOUT.requests);
 const loading = ref(true);
 
 onMounted(() => {
-    const only = ['traffic', 'trustedIps', 'bannedIps'];
+    const only = ['traffic', 'trustedIps'];
     if (props.section === 'php') only.push('processes', 'fpm');
 
     router.reload({
@@ -87,7 +86,6 @@ const errorsLink = computed(
             :processes="processes"
             :fpm="fpm"
             :trusted-ips="trustedIps"
-            :banned-ips="bannedIps"
             :sections="layout.sections"
             :focus="layout.focus ?? ''"
             :loading="loading"

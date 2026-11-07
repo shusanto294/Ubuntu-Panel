@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,10 +21,6 @@ var SharedNginxConfig func(runner *tasks.Runner) error
 // ConfigureMail is the same arrangement for the mail server, which has to be
 // configured once its packages are down.
 var ConfigureMail func(ctx context.Context, userID int64) error
-
-// ConfigureSSHProtection writes the fail2ban jail the Security page manages.
-// Wired in from the web package, which owns the jail's settings.
-var ConfigureSSHProtection func(runner *tasks.Runner) error
 
 // ConfigurePhpMyAdmin puts phpMyAdmin into the state the Databases page
 // promises: served from the panel's own vhost, guarded by the panel's session,
@@ -214,19 +209,6 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 			"sudo mkdir -p /var/www",
 			"printf '// Managed by Ubuntu Panel\\nDPkg::Lock::Timeout \"600\";\\n' | "+
 				"sudo tee /etc/apt/apt.conf.d/99-ubuntu-panel > /dev/null").Group(key)
-
-	case "fail2ban":
-		list.AddFn("Protect SSH from password guessing", func(runner *tasks.Runner) (string, error) {
-			if ConfigureSSHProtection == nil {
-				return "", errors.New("the SSH protection writer is not wired up")
-			}
-
-			if err := ConfigureSSHProtection(runner); err != nil {
-				return "", err
-			}
-
-			return "fail2ban is watching SSH.", nil
-		}).Group(key)
 
 	case "nginx":
 		list.AddFn("Refuse unknown hostnames", func(runner *tasks.Runner) (string, error) {
@@ -576,19 +558,6 @@ func (s *Service) resourcesHolding(ctx context.Context, key string) string {
 		if count := s.Store.EmailDomainCount(ctx); count > 0 {
 			return fmt.Sprintf("%d mail domain%s still configured, and their mailboxes hold mail. "+
 				"Delete them from the Email page first.", count, plural(count, " is", "s are"))
-		}
-
-	case "modsecurity":
-		// Every site's server block says `modsecurity on` while the WAF is:
-		// without the module nginx would refuse to load at all.
-		var saved struct {
-			WAF struct {
-				Enabled bool `json:"enabled"`
-			} `json:"waf"`
-		}
-		json.Unmarshal([]byte(s.Store.Setting("security_protection", "{}")), &saved)
-		if saved.WAF.Enabled {
-			return "The web application firewall is on. Turn it off on Security → Protection first."
 		}
 
 	case "dns":

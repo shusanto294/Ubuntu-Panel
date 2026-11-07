@@ -147,11 +147,11 @@ func (a *App) routes() *router {
 
 	rt.get("/sites/{site}/files", "sites.files", authenticated, a.sitesFiles)
 	rt.get("/sites/{site}/file", "sites.file", admin, a.sitesFileRead)
-	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.markingWork(a.sitesFileWrite))
-	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.markingWork(a.sitesFileAction))
+	rt.post("/sites/{site}/file", "sites.file.save", authenticated, a.sitesFileWrite)
+	rt.post("/sites/{site}/files", "sites.files.action", authenticated, a.sitesFileAction)
 	rt.get("/sites/{site}/download", "sites.download", admin, a.sitesFileDownload)
 	rt.get("/sites/{site}/wp-admin", "sites.wp-admin", admin, a.sitesWPAdmin)
-	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.markingWork(a.sitesFileUpload))
+	rt.post("/sites/{site}/upload", "sites.upload", authenticated, a.sitesFileUpload)
 	rt.get("/databases/{database}/credentials", "databases.credentials", admin,
 		a.databasesCredentials)
 	rt.get("/databases-mongo-connection", "databases.mongo-connection", admin,
@@ -240,28 +240,22 @@ func (a *App) routes() *router {
 	rt.post("/ai/tokens", "ai.tokens.store", authenticated, a.aiStoreToken)
 	rt.delete("/ai/tokens/{token}", "ai.tokens.destroy", authenticated, a.aiDestroyToken)
 
-	// Security: who is trying to get in, and what stops them.
+	// Security: the ports the internet can reach, SSH, the panel's sign-in and
+	// the server's hardening. Nothing here bans an address.
 	rt.get("/security", "security.index", authenticated, a.securityIndex)
 	rt.get("/security/countries", "security.countries", authenticated, a.securityCountries)
-	rt.post("/security/ssh-protection", "security.ssh-protection", authenticated, a.securitySSHProtection)
-	rt.post("/security/ssh-protection/install", "security.ssh-protection.install", authenticated,
-		a.securityInstallFail2ban)
-	rt.get("/security/bans/live", "security.bans.live", authenticated, a.securityBansLive)
-	rt.post("/security/bans", "security.bans.store", authenticated, a.securityBan)
-	rt.post("/security/bans/remove", "security.bans.destroy", authenticated, a.securityUnban)
-	rt.post("/security/bans/release", "security.bans.release", authenticated, a.securityRelease)
-	rt.post("/security/trust", "security.trust", authenticated, a.securityTrust)
 	rt.post("/security/login-protection", "security.login-protection", authenticated,
 		a.securityLoginProtection)
 	rt.post("/security/logins/unlock", "security.logins.unlock", authenticated, a.securityUnlock)
 	rt.post("/security/firewall/enable", "security.firewall.enable", authenticated, a.securityFirewallEnable)
 	rt.post("/security/firewall/disable", "security.firewall.disable", authenticated,
 		a.securityFirewallDisable)
+	rt.post("/security/firewall/ports", "security.firewall.ports", authenticated, a.securityPort)
 	rt.post("/security/firewall/rules", "security.firewall.rules.store", authenticated,
 		a.securityFirewallRule)
 	rt.delete("/security/firewall/rules/{rule}", "security.firewall.rules.destroy", authenticated,
 		a.securityFirewallDelete)
-	rt.post("/security/firewall/block", "security.firewall.block", authenticated, a.securityFirewallBlock)
+	rt.post("/security/firewall/forwards", "security.firewall.forwards", authenticated, a.securityForward)
 	rt.post("/security/hardening", "security.hardening", authenticated, a.securityHardening)
 	rt.post("/security/ssh-service", "security.ssh-service", authenticated, a.securitySSHService)
 	rt.post("/security/updates/automatic", "security.updates.automatic", authenticated,
@@ -269,10 +263,8 @@ func (a *App) routes() *router {
 	rt.post("/security/updates/install", "security.updates.install", authenticated,
 		a.securityInstallUpdates)
 	rt.post("/security/alerts", "security.alerts", authenticated, a.securityAlerts)
-	rt.post("/security/protection", "security.protection", authenticated, a.securityProtection)
+	rt.post("/security/server-hardening", "security.server-hardening", authenticated, a.securityServerHardening)
 	rt.post("/security/locks", "security.locks", authenticated, a.securityLock)
-	rt.post("/security/changes/clear", "security.changes.clear", authenticated, a.securityClearChanges)
-	rt.post("/security/firewall/forwards", "security.firewall.forwards", authenticated, a.securityForward)
 	rt.post("/security/cloudflare-attack", "security.cloudflare-attack", authenticated, a.securityCloudflareAttack)
 	rt.delete("/security/sessions/{session}", "security.sessions.destroy", authenticated,
 		a.securityRevokeSession)
@@ -280,12 +272,12 @@ func (a *App) routes() *router {
 		a.securityRevokeOthers)
 
 	// The accounts that can log in over SSH.
-	rt.post("/security/users", "security.users.store", authenticated, a.rebaselining(a.sshUserStore))
-	rt.post("/security/users/{user}", "security.users.update", authenticated, a.rebaselining(a.sshUserUpdate))
-	rt.delete("/security/users/{user}", "security.users.destroy", authenticated, a.rebaselining(a.sshUserDestroy))
-	rt.post("/security/users/{user}/keys", "security.users.keys.store", authenticated, a.rebaselining(a.sshUserKeyStore))
+	rt.post("/security/users", "security.users.store", authenticated, a.sshUserStore)
+	rt.post("/security/users/{user}", "security.users.update", authenticated, a.sshUserUpdate)
+	rt.delete("/security/users/{user}", "security.users.destroy", authenticated, a.sshUserDestroy)
+	rt.post("/security/users/{user}/keys", "security.users.keys.store", authenticated, a.sshUserKeyStore)
 	rt.post("/security/users/{user}/keys/remove", "security.users.keys.destroy", authenticated,
-		a.rebaselining(a.sshUserKeyDestroy))
+		a.sshUserKeyDestroy)
 
 	// The relay the panel sends its own mail through.
 	rt.patch("/settings/smtp", "settings.smtp", authenticated, a.smtpUpdate)

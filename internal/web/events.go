@@ -60,8 +60,6 @@ func (a *App) collectFiles(ctx context.Context) []serverlog.File {
 			file.Source = serverlog.SourcePHP
 		case log.Key == "mysql" || log.Key == "redis" || log.Key == "mongodb":
 			file.Source = serverlog.SourceDatabase
-		case log.Key == "fail2ban":
-			file.Source = serverlog.SourceFail2ban
 		case log.Key == "auth":
 			file.Source = serverlog.SourceAuth
 		case log.Key == "kern":

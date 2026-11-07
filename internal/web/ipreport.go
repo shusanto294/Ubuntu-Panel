@@ -22,7 +22,7 @@ import (
 // An address's report: everything the server has on one address, for the
 // page a notification about it opens and for /logs/ip/{ip}. What it asked
 // the sites for, from the access logs; what the server logged about it; its
-// panel sign-ins and SSH attempts; whether something has banned it; whether
+// panel sign-ins and SSH attempts; whether
 // it is trusted, or a useful bot — and if it says it is a search engine,
 // whether it really is.
 
@@ -42,7 +42,6 @@ type ipReport struct {
 	Trusted  string          `json:"trusted,omitempty"`
 	GoodBot  *weblog.GoodBot `json:"good_bot,omitempty"`
 	BotCheck *botCheck       `json:"bot_check,omitempty"`
-	Bans     []banSource     `json:"bans"`
 
 	Requests int            `json:"requests"`
 	First    int64          `json:"first"`
@@ -63,7 +62,7 @@ const ipLinesPerFile = 500
 
 func (a *App) ipReport(ctx context.Context, ip, viewer string) ipReport {
 	report := ipReport{
-		IP: ip, Bans: []banSource{}, Statuses: map[string]int{}, Threats: map[string]int{},
+		IP: ip, Statuses: map[string]int{}, Threats: map[string]int{},
 		Sites: []weblog.Count{}, Paths: []weblog.Count{}, Agents: []weblog.Count{},
 		Lines: []ipLine{}, Events: []store.EventEntry{},
 	}
@@ -144,15 +143,6 @@ func (a *App) ipReport(ctx context.Context, ip, viewer string) ipReport {
 		Since: time.Now().AddDate(0, 0, -30).Unix(), Search: ip,
 	}, 30, 0); err == nil {
 		report.Events = events
-	}
-
-	// What is refusing it now.
-	if bans, ok := a.bans(ctx, a.snapshot(false))["list"].([]bannedAddress); ok {
-		for _, row := range bans {
-			if row.IP == ip {
-				report.Bans = row.Sources
-			}
-		}
 	}
 
 	return report

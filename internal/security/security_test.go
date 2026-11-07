@@ -6,59 +6,6 @@ import (
 	"time"
 )
 
-func TestParseJailStatus(t *testing.T) {
-	output := "Status for the jail: sshd\n" +
-		"|- Filter\n" +
-		"|  |- Currently failed:\t2\n" +
-		"|  |- Total failed:\t41\n" +
-		"|  `- File list:\t/var/log/auth.log\n" +
-		"`- Actions\n" +
-		"   |- Currently banned:\t2\n" +
-		"   |- Total banned:\t7\n" +
-		"   `- Banned IP list:\t203.0.113.9 198.51.100.4 not-an-ip\n"
-
-	status := JailStatus{}
-	parseJailStatus(output, &status)
-
-	if status.CurrentlyFailed != 2 || status.TotalFailed != 41 ||
-		status.CurrentlyBanned != 2 || status.TotalBanned != 7 {
-		t.Fatalf("counts were not read: %+v", status)
-	}
-
-	if strings.Join(status.Banned, ",") != "198.51.100.4,203.0.113.9" {
-		t.Fatalf("banned list: %v", status.Banned)
-	}
-}
-
-func TestJailFile(t *testing.T) {
-	file := JailFile(JailConfig{MaxRetry: 3, FindTime: 86400, BanTime: Permanent,
-		IgnoreIPs: []string{"203.0.113.0/24"}}, []string{"22", "2222"}, true)
-
-	for _, want := range []string{
-		"[sshd]", "port     = 22,2222", "maxretry = 3", "bantime  = -1",
-		"ignoreip = 127.0.0.1/8 ::1 203.0.113.0/24", "backend  = systemd",
-	} {
-		if !strings.Contains(file, want) {
-			t.Errorf("jail is missing %q:\n%s", want, file)
-		}
-	}
-}
-
-func TestJailConfigValidate(t *testing.T) {
-	if problems := Defaults.Validate(); len(problems) != 0 {
-		t.Fatalf("the defaults should be valid: %v", problems)
-	}
-
-	bad := JailConfig{MaxRetry: 0, FindTime: 5, BanTime: 10, IgnoreIPs: []string{"1.2.3.4; rm -rf /"}}
-	problems := bad.Validate()
-
-	for _, field := range []string{"max_retry", "find_time", "ban_time", "ignore_ips"} {
-		if problems[field] == "" {
-			t.Errorf("expected a problem with %s", field)
-		}
-	}
-}
-
 func TestParseEvents(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 
@@ -186,25 +133,5 @@ func TestAptPeriodic(t *testing.T) {
 
 	if aptPeriodic("APT::Periodic::Unattended-Upgrade \"0\";", "Unattended-Upgrade") != 0 {
 		t.Fatal("expected it to be off")
-	}
-}
-
-func TestParseBanTimes(t *testing.T) {
-	output := "203.0.113.9 \t2026-11-04 10:00:00 + 86400 = 2026-11-05 10:00:00\n" +
-		"198.51.100.7 \t2026-11-04 11:30:00 + -1 = 9999-12-31 23:59:59\n" +
-		"garbage line\n"
-
-	times := parseBanTimes(output, time.UTC)
-
-	if len(times) != 2 {
-		t.Fatalf("times = %+v", times)
-	}
-
-	at := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
-	if got := times["203.0.113.9"]; got.At != at || got.Until != at+86400 {
-		t.Errorf("a day's ban: %+v", got)
-	}
-	if got := times["198.51.100.7"]; got.Until != 0 {
-		t.Errorf("a permanent ban has no end: %+v", got)
 	}
 }

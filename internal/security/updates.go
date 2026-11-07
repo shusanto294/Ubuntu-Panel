@@ -142,12 +142,3 @@ func InstallSecurityUpdateSteps(list *tasks.List) {
 			"else sudo apt-get install -y -q unattended-upgrades && sudo unattended-upgrade -v; fi")
 	list.Add("What is left", "apt list --upgradable 2>/dev/null | grep -c -- '-security' || true").Optional()
 }
-
-// Fail2banSteps installs fail2ban, which the panel's SSH protection is.
-func Fail2banSteps(list *tasks.List, configure func(runner *tasks.Runner) (string, error)) {
-	list.Add("Install fail2ban",
-		"sudo apt-get update -q",
-		"sudo apt-get install -y -q fail2ban")
-
-	list.AddFn("Protect SSH", configure)
-}

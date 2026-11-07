@@ -81,7 +81,6 @@ func (a *App) registerJobs() {
 		err := a.withSiteUnlocked(ctx, payload.Site, false, func() error {
 			return a.Sites.Destroy(ctx, payload.Site, payload.Files)
 		})
-		a.rebaselineWatch(ctx)
 		return err
 	})
 
@@ -212,9 +211,6 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		// Packages add accounts and services of their own.
-		defer a.rebaselineWatch(ctx)
-
 		return a.Catalog.InstallQueued(ctx, payload.User)
 	})
 
@@ -224,9 +220,6 @@ func (a *App) registerJobs() {
 		if err := decode(job, &payload); err != nil {
 			return err
 		}
-
-		// Packages add accounts and services of their own.
-		defer a.rebaselineWatch(ctx)
 
 		return a.Catalog.UpgradeInstalled(ctx, payload.User)
 	})

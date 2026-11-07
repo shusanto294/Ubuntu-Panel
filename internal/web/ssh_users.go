@@ -11,20 +11,10 @@ import (
 )
 
 // sshUsers is the Security page's list of login accounts, each with the last
-// time it logged in over SSH as far as the log goes back.
-func (a *App) sshUsers(snap *securitySnapshot) []map[string]any {
-	lastLogin := map[string]security.Event{}
-
-	// Newest first, so the first accepted login seen per user is the latest.
-	for _, event := range snap.Events {
-		if event.Kind != security.EventAccepted {
-			continue
-		}
-
-		if _, seen := lastLogin[event.User]; !seen {
-			lastLogin[event.User] = event
-		}
-	}
+// time it logged in over SSH, from the logins the panel has copied out of
+// sshd's log.
+func (a *App) sshUsers(ctx context.Context, snap *securitySnapshot) []map[string]any {
+	lastLogin := a.Store.LastSSHLogins(ctx, security.EventAccepted)
 
 	list := []map[string]any{}
 
@@ -49,7 +39,7 @@ func (a *App) sshUsers(snap *securitySnapshot) []map[string]any {
 
 		if event, ok := lastLogin[user.Name]; ok {
 			entry["last_login"] = map[string]any{
-				"time": event.Time, "ip": event.IP, "method": event.Method,
+				"time": event.CreatedAt, "ip": event.IP, "method": event.Method,
 			}
 		}
 

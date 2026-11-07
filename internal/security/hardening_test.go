@@ -5,76 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 )
-
-func TestTheWatchScriptIsValidShell(t *testing.T) {
-	inner := strings.TrimSuffix(strings.TrimPrefix(watchScript, "sudo sh -c '"), "' 2>/dev/null")
-	inner = strings.ReplaceAll(inner, `'"'"'`, "'")
-	if out, err := exec.Command("sh", "-n", "-c", inner).CombinedOutput(); err != nil {
-		t.Fatalf("the watch script does not parse: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("bash", "-n", "-c", watchScript).CombinedOutput(); err != nil {
-		t.Fatalf("the watch command does not parse: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("bash", "-n", "-c", processListing).CombinedOutput(); err != nil {
-		t.Fatalf("the process listing does not parse: %v\n%s", err, out)
-	}
-}
-
-func TestWatchFindsBackdoorsAndIgnoresThePanel(t *testing.T) {
-	before := ParseWatch(strings.Join([]string{
-		"user\troot\tuid=0 shell=/bin/bash home=/root",
-		"user\tsite1\tuid=1001 shell=/bin/bash home=/var/www/site1",
-		"cron\t/etc/crontab\taaaa",
-		"service\tubuntu-panel.service\t1",
-		"service\tmulti-user.target.wants/app-example.service\t2",
-	}, "\n"), WatchEnv{SiteHomes: []string{"/var/www/site1"}, PanelUnits: []string{"app-example"}})
-
-	if len(before) != 2 {
-		t.Fatalf("the panel's own items were not left out: %+v", before)
-	}
-
-	after := ParseWatch(strings.Join([]string{
-		"user\troot\tuid=0 shell=/bin/bash home=/root",
-		"user\ttoor\tuid=0",
-		"cron\t/etc/crontab\tbbbb",
-		"key\troot\t1234abcd attacker@box",
-		"preload\t/etc/ld.so.preload\tcccc",
-	}, "\n"), WatchEnv{})
-
-	changes := DiffWatch(before, after, time.Unix(1, 0))
-	summaries := []string{}
-	for _, c := range changes {
-		summaries = append(summaries, c.Summary)
-	}
-	joined := strings.Join(summaries, "\n")
-
-	for _, want := range []string{"root's powers: toor", "scheduled jobs in /etc/crontab were changed", "New SSH key for root",
-		"rootkit"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("missing %q in:\n%s", want, joined)
-		}
-	}
-	if strings.Contains(joined, "Removed scheduled jobs") {
-		t.Errorf("an edited cron file was also reported as removed:\n%s", joined)
-	}
-}
-
-func TestCodeChangesAreReported(t *testing.T) {
-	before := ParseSnapshot("index.php\t100\t1700000000.5\nwp-config.php\t300\t1700000000\nold.php\t1\t1\n")
-	after := ParseSnapshot("index.php\t140\t1700001000.1\nwp-config.php\t300\t1700000000.9\nwp-content/uploads/2026/x.php\t20\t1700002000\n")
-
-	change := DiffSnapshots("example.com", before, after, time.Unix(5, 0))
-	if strings.Join(change.Changed, ",") != "index.php" || strings.Join(change.Added, ",") != "wp-content/uploads/2026/x.php" ||
-		strings.Join(change.Removed, ",") != "old.php" || len(change.InUploads) != 1 {
-		t.Errorf("unexpected change: %+v", change)
-	}
-
-	if !DiffSnapshots("x", before, DecodeSnapshot(EncodeSnapshot(before)), time.Now()).Empty() {
-		t.Error("a snapshot read back differs from itself")
-	}
-}
 
 func TestLockCommandsLeaveWritableFolders(t *testing.T) {
 	find := lockFind("/var/www/example.com", "-print")

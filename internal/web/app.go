@@ -80,7 +80,6 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	security.SiteHomes = app.siteHomes
 	catalog.ConfigureMail = app.Mail.Configure
 	catalog.ConfigurePhpMyAdmin = app.EnsurePhpMyAdminReady
-	catalog.ConfigureSSHProtection = app.applySSHProtection
 
 	app.registerJobs()
 	app.registerSecurityJobs()
@@ -126,23 +125,15 @@ func (a *App) Start(ctx context.Context) {
 		// used to be able to open every site.
 		a.EnsureSiteIsolation(ctx)
 
-		// Last, so a first run's install is already queued and fail2ban goes
-		// in with it rather than racing it for the dpkg lock.
-		a.EnsureSSHProtection(ctx)
-		a.RemoveSSHTrap(ctx)
-		a.EnsureProtection(ctx)
+		// The address blocking earlier versions set up comes off, once, and
+		// the hardening switches that are on stay applied.
+		a.EnsureHardening(ctx)
 
-		// After SSH protection, which may have just queued an install of its
-		// own: this one waits for a quiet moment rather than racing it.
 		a.EnsureDNSServer(ctx)
 	}()
 
-	// Security alerts: the clock that emails sign-ins, lockouts and bans.
+	// Alerts: the clock that emails sign-ins, lockouts and server problems.
 	go a.runSecurityAlerts(ctx)
-
-	// The ban worker: follows fail2ban and gives nginx each ban and unban the
-	// moment it happens, which is what stops a visitor behind Cloudflare.
-	go a.runBanWorker(ctx)
 
 	// Panel updates: how the last one went, if this is the panel it installed,
 	// then the check for a newer one, and the automatic update when that is on.
@@ -183,10 +174,6 @@ func (a *App) Handler() http.Handler {
 
 	handler = a.withSecurityHeaders(handler)
 	handler = a.withLogging(handler)
-
-	// Outside the log as well: under attack mode's check is asked once by
-	// every visitor of a site under attack, which is a flood by definition.
-	handler = a.withChallenge(handler)
 	handler = a.withRecovery(handler)
 
 	return handler

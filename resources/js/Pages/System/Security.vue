@@ -2,30 +2,27 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
-import Banned from '@/Components/Security/Banned.vue';
-import SshProtection from '@/Components/Security/SshProtection.vue';
 import SshUsers from '@/Components/Security/SshUsers.vue';
 import LoginActivity from '@/Components/Security/LoginActivity.vue';
 import Firewall from '@/Components/Security/Firewall.vue';
 import Hardening from '@/Components/Security/Hardening.vue';
+import ServerHardening from '@/Components/Security/ServerHardening.vue';
 import Updates from '@/Components/Security/Updates.vue';
 import Sessions from '@/Components/Security/Sessions.vue';
 import Alerts from '@/Components/Security/Alerts.vue';
-import Protection from '@/Components/Security/Protection.vue';
 import { ago, card } from '@/Components/Security/ui';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
 
 const props = defineProps({
     score: Number,
     checks: Array,
     myIp: String,
-    ssh: Object,
     users: Array,
     hardening: Object,
     sshService: Object,
-    bans: Object,
-    protection: Object,
+    server: Object,
     firewall: Object,
+    ports: { type: Array, default: () => [] },
     forwards: { type: Array, default: () => [] },
     panelPort: Number,
     updates: Object,
@@ -38,27 +35,26 @@ const props = defineProps({
     latestTask: Object,
 });
 
-// One page, many tabs, each its own part of the machine. The tab lives in the
-// URL's query so a reload, a bookmark or a link from the dashboard lands on
-// the same one.
+// The tab lives in the URL's query so a reload, a bookmark or a link from an
+// alert lands on the same one.
 const tabs = [
-    { key: 'overview', name: 'Overview' },
-    { key: 'bans', name: 'Banned IPs' },
-    { key: 'protection', name: 'Protection' },
-    { key: 'ssh', name: 'SSH protection' },
-    { key: 'users', name: 'SSH users' },
-    { key: 'logins', name: 'Panel logins' },
-    { key: 'firewall', name: 'Firewall' },
-    { key: 'hardening', name: 'SSH settings' },
+    { key: 'firewall', name: 'Ports & firewall' },
+    { key: 'overview', name: 'Checklist' },
+    { key: 'ssh', name: 'SSH' },
+    { key: 'panel', name: 'Panel sign-in' },
     { key: 'updates', name: 'Updates' },
-    { key: 'sessions', name: 'Sessions' },
+    { key: 'hardening', name: 'Hardening' },
     { key: 'alerts', name: 'Alerts' },
 ];
 
-const tab = ref('overview');
+// Older links name the tabs that were merged or removed.
+const aliases = { users: 'ssh', logins: 'panel', sessions: 'panel', bans: 'firewall', protection: 'hardening' };
+
+const tab = ref('firewall');
 
 onMounted(() => {
-    const asked = new URLSearchParams(window.location.search).get('tab');
+    let asked = new URLSearchParams(window.location.search).get('tab');
+    asked = aliases[asked] ?? asked;
     if (tabs.some((t) => t.key === asked)) tab.value = asked;
 });
 
@@ -68,11 +64,11 @@ watch(tab, (value) => {
     window.history.replaceState(window.history.state, '', url);
 });
 
-// A check's "fix it" goes to the tab that fixes it, or to the page that does.
+// A check's "Fix" goes to the tab that fixes it, or to the page that does.
 const openCheck = (item) => {
     if (item.tab === 'profile') return router.visit(route('profile.edit'));
     if (item.tab === 'settings') return router.visit(route('settings'));
-    tab.value = item.tab;
+    tab.value = aliases[item.tab] ?? item.tab;
 };
 
 const scoreColour = computed(() => {
@@ -101,32 +97,8 @@ const refresh = () =>
         preserveState: true,
     });
 
-const tiles = computed(() => [
-    {
-        label: 'Failed SSH logins, 24 h',
-        value: props.ssh.summary_24h.failed,
-        detail: `from ${props.ssh.summary_24h.unique_ips} addresses`,
-        tab: 'ssh',
-    },
-    {
-        label: 'Banned addresses',
-        value: props.bans.counts.total,
-        detail: props.ssh.status.running ? 'all sources · fail2ban is running' : 'all sources · fail2ban is not running',
-        tab: 'bans',
-    },
-    {
-        label: 'Failed panel logins, 24 h',
-        value: props.logins.failed_24h,
-        detail: `${props.logins.locked.length} address(es) locked out`,
-        tab: 'logins',
-    },
-    {
-        label: 'Security updates waiting',
-        value: props.updates.security,
-        detail: props.updates.automatic ? 'installed automatically' : 'not automatic',
-        tab: 'updates',
-    },
-]);
+const openPorts = computed(() => props.ports.filter((p) => p.open).length);
+const riskyOpen = computed(() => props.ports.filter((p) => p.risk === 'risky' && p.public && (p.open || !props.firewall.active)).length);
 </script>
 
 <template>
@@ -172,22 +144,24 @@ const tiles = computed(() => [
                     @click="tab = t.key"
                 >
                     {{ t.name }}
-                    <span
-                        v-if="t.key === 'bans' && bans.counts.total"
-                        class="ml-1 rounded-full bg-rose-50 px-1.5 text-xs text-rose-700"
-                        >{{ bans.counts.total }}</span
-                    >
-                    <span
-                        v-if="t.key === 'users'"
-                        class="ml-1 text-xs text-slate-400"
-                        >{{ users.length }}</span
-                    >
+                    <span v-if="t.key === 'firewall' && riskyOpen" class="ml-1 rounded-full bg-rose-50 px-1.5 text-xs text-rose-700">{{ riskyOpen }}</span>
+                    <span v-if="t.key === 'overview' && failing.length" class="ml-1 text-xs text-slate-400">{{ failing.length }}</span>
                 </button>
             </nav>
         </div>
 
-        <!-- Overview -->
-        <div v-if="tab === 'overview'" class="space-y-6">
+        <Firewall
+            v-if="tab === 'firewall'"
+            :firewall="firewall"
+            :ports="ports"
+            :forwards="forwards"
+            :ssh-ports="hardening.ports"
+            :panel-port="panelPort"
+            :my-ip="myIp"
+        />
+
+        <!-- Checklist -->
+        <div v-else-if="tab === 'overview'" class="space-y-6">
             <div class="grid gap-6 lg:grid-cols-3">
                 <div :class="card" class="flex items-center gap-4 sm:gap-6">
                     <svg viewBox="0 0 36 36" class="h-24 w-24 shrink-0 -rotate-90 sm:h-28 sm:w-28">
@@ -213,19 +187,25 @@ const tiles = computed(() => [
                 </div>
 
                 <div class="grid grid-cols-2 gap-4 lg:col-span-2">
-                    <button
-                        v-for="tile in tiles"
-                        :key="tile.label"
-                        type="button"
-                        :class="card"
-                        class="min-w-0 break-words !p-4 text-left transition hover:shadow-md sm:!p-5"
-                        @click="tab = tile.tab"
-                    >
-                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                            {{ tile.label }}
-                        </p>
-                        <p class="mt-2 text-2xl font-semibold text-slate-900">{{ tile.value }}</p>
-                        <p class="text-xs text-slate-500">{{ tile.detail }}</p>
+                    <button type="button" :class="card" class="min-w-0 !p-4 text-left transition hover:shadow-md sm:!p-5" @click="tab = 'firewall'">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Open ports</p>
+                        <p class="mt-2 text-2xl font-semibold text-slate-900">{{ firewall.active ? openPorts : 'all' }}</p>
+                        <p class="text-xs text-slate-500">{{ firewall.active ? 'firewall is on' : 'firewall is off' }}</p>
+                    </button>
+                    <button type="button" :class="card" class="min-w-0 !p-4 text-left transition hover:shadow-md sm:!p-5" @click="tab = 'panel'">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Failed panel sign-ins, 24 h</p>
+                        <p class="mt-2 text-2xl font-semibold text-slate-900">{{ logins.failed_24h }}</p>
+                        <p class="text-xs text-slate-500">{{ logins.locked.length }} address(es) waiting to try again</p>
+                    </button>
+                    <button type="button" :class="card" class="min-w-0 !p-4 text-left transition hover:shadow-md sm:!p-5" @click="tab = 'ssh'">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">SSH passwords</p>
+                        <p class="mt-2 text-2xl font-semibold text-slate-900">{{ hardening.password_authentication ? 'allowed' : 'off' }}</p>
+                        <p class="text-xs text-slate-500">{{ hardening.password_authentication ? 'keys only is safer' : 'only keys log in' }}</p>
+                    </button>
+                    <button type="button" :class="card" class="min-w-0 !p-4 text-left transition hover:shadow-md sm:!p-5" @click="tab = 'updates'">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Security updates waiting</p>
+                        <p class="mt-2 text-2xl font-semibold text-slate-900">{{ updates.security }}</p>
+                        <p class="text-xs text-slate-500">{{ updates.automatic ? 'installed automatically' : 'not automatic' }}</p>
                     </button>
                 </div>
             </div>
@@ -233,16 +213,10 @@ const tiles = computed(() => [
             <div :class="card" class="!p-0">
                 <div class="border-b border-slate-100 px-4 py-4 sm:px-6">
                     <h3 class="font-semibold text-slate-900">Checklist</h3>
-                    <p class="text-sm text-slate-500">
-                        What protects this server, and what is still open.
-                    </p>
+                    <p class="text-sm text-slate-500">What protects this server, and what is still open.</p>
                 </div>
                 <ul class="divide-y divide-slate-100">
-                    <li
-                        v-for="item in checks"
-                        :key="item.key"
-                        class="flex flex-wrap items-center gap-3 px-4 py-4 sm:gap-4 sm:px-6"
-                    >
+                    <li v-for="item in checks" :key="item.key" class="flex flex-wrap items-center gap-3 px-4 py-4 sm:gap-4 sm:px-6">
                         <span
                             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold"
                             :class="item.ok ? 'bg-emerald-50 text-emerald-600' : levelStyle[item.level]"
@@ -266,32 +240,18 @@ const tiles = computed(() => [
             </div>
         </div>
 
-        <Banned v-else-if="tab === 'bans'" :bans="bans" :my-ip="myIp" @open="tab = $event" />
-        <Protection v-else-if="tab === 'protection'" :protection="protection" :my-ip="myIp" @open="tab = $event" />
-        <SshProtection
-            v-else-if="tab === 'ssh'"
-            :ssh="ssh"
-            :banned-ips="bans.list.map((b) => b.ip)"
-            :my-ip="myIp"
-            @open="tab = $event"
-        />
-        <SshUsers v-else-if="tab === 'users'" :users="users" :hardening="hardening" :service="sshService" />
-        <LoginActivity v-else-if="tab === 'logins'" :logins="logins" />
-        <Firewall
-            v-else-if="tab === 'firewall'"
-            :firewall="firewall"
-            :forwards="forwards"
-            :ssh-ports="hardening.ports"
-            :panel-port="panelPort"
-            :my-ip="myIp"
-        />
-        <Hardening
-            v-else-if="tab === 'hardening'"
-            :hardening="hardening"
-            :service="sshService"
-        />
+        <div v-else-if="tab === 'ssh'" class="space-y-6">
+            <Hardening :hardening="hardening" :service="sshService" />
+            <SshUsers :users="users" :hardening="hardening" :service="sshService" />
+        </div>
+
+        <div v-else-if="tab === 'panel'" class="space-y-6">
+            <LoginActivity :logins="logins" />
+            <Sessions :sessions="sessions" />
+        </div>
+
         <Updates v-else-if="tab === 'updates'" :updates="updates" :busy="Boolean(activeTask)" />
-        <Sessions v-else-if="tab === 'sessions'" :sessions="sessions" />
+        <ServerHardening v-else-if="tab === 'hardening'" :server="server" />
         <Alerts v-else-if="tab === 'alerts'" :alerts="alerts" :smtp-ready="smtpReady" />
     </AuthenticatedLayout>
 </template>

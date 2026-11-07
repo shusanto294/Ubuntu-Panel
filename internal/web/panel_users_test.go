@@ -41,7 +41,7 @@ func TestReadOnlyAccountsChangeNothing(t *testing.T) {
 		t.Errorf("a read-only account created an account: %d users", len(users))
 	}
 
-	response = p.do(http.MethodPost, "/security/protection", `{"feature":"kernel","enabled":true}`, headers)
+	response = p.do(http.MethodPost, "/security/server-hardening", `{"feature":"kernel","enabled":true}`, headers)
 	response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther && response.StatusCode != http.StatusFound {
 		t.Errorf("a refused change answered %d", response.StatusCode)
