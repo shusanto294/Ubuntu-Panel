@@ -84,6 +84,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	app.registerJobs()
 	app.registerSecurityJobs()
 	app.registerNotificationJobs()
+	app.registerMigrationJobs()
 
 	app.MCP = app.buildMCP()
 

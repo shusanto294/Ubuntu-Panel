@@ -324,6 +324,27 @@ var schema = []string{
 	// up once and kept, so a flag beside an address costs nothing the second
 	// time. An empty country is an address the lookup could not place — a
 	// private range, or one the service did not know — and is not asked again.
+	// Sites and mail domains moved between two panels. Each panel keeps its
+	// own row for a transfer: the sending one ("out") with the address it sent
+	// to and the transfer's id there, the receiving one ("in") with what it is
+	// importing. Credentials are never stored here; the detail column is what
+	// the page shows.
+	`CREATE TABLE IF NOT EXISTS migrations (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		direction   TEXT NOT NULL,
+		kind        TEXT NOT NULL,
+		name        TEXT NOT NULL,
+		peer        TEXT NOT NULL DEFAULT '',
+		remote_id   TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT 'pending',
+		message     TEXT NOT NULL DEFAULT '',
+		task_id     INTEGER,
+		local_id    INTEGER,
+		options     TEXT NOT NULL DEFAULT '{}',
+		created_at  INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`,
+
 	// Every SSH login and attempt, copied out of sshd's log once a minute. The
 	// journal is the machine's to rotate and often keeps days, not months; this
 	// keeps them as long as the panel keeps its own sign-ins, so the Logs page

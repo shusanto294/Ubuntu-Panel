@@ -334,6 +334,24 @@ const deleteDomain = async () => {
             </div>
         </div>
 
+        <div
+            class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"
+        >
+            <div>
+                <h3 class="font-semibold text-slate-900">Move to another server</h3>
+                <p class="text-sm text-slate-500">
+                    Copy every mailbox, with its password and stored mail, and the DKIM key to another server running
+                    Ubuntu Panel, then point the mail DNS records there.
+                </p>
+            </div>
+            <Link
+                :href="`${route('migrate.index')}?mail=${domain.id}`"
+                class="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+            >
+                Move {{ domain.domain }}
+            </Link>
+        </div>
+
         <!-- Removing the domain is last, and on its own. -->
         <div
             class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5"

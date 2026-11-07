@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/migrate"
 	"github.com/shusanto294/Ubuntu-Panel/internal/terminal"
 )
 
@@ -272,6 +273,27 @@ func (a *App) routes() *router {
 		a.securityRevokeSession)
 	rt.post("/security/sessions/others", "security.sessions.others", authenticated,
 		a.securityRevokeOthers)
+
+	// Moving sites and mail domains to another panel, and receiving them.
+	rt.get("/migrate", "migrate.index", authenticated, a.migrateIndex)
+	rt.post("/migrate/key", "migrate.key", authenticated, a.migrateKey)
+	rt.delete("/migrate/key", "migrate.key.destroy", authenticated, a.migrateRevoke)
+	rt.post("/migrate/connect", "migrate.connect", authenticated, a.migrateConnect)
+	rt.post("/migrate/disconnect", "migrate.disconnect", authenticated, a.migrateDisconnect)
+	rt.post("/migrate/start", "migrate.start", authenticated, a.migrateStart)
+	rt.post("/migrate/{migration}/catch-up", "migrate.catch-up", authenticated, a.migrateCatchUp)
+
+	// What the other panel calls. Public, because it has no session here:
+	// every request is sealed with this panel's migration key instead, and
+	// one that is not is refused before it is read.
+	rt.post(migrate.PathHello, "", public, a.migrationAPI(a.migrateHello))
+	rt.post(migrate.PathBegin, "", public, a.migrationAPI(a.migrateBegin))
+	rt.post(migrate.PathUpload, "", public, a.migrateUpload)
+	rt.post(migrate.PathFinish, "", public, a.migrationAPI(a.migrateFinish))
+	rt.post(migrate.PathStatus, "", public, a.migrationAPI(a.migrateStatus))
+	rt.post(migrate.PathFinalize, "", public, a.migrationAPI(a.migrateFinalize))
+	rt.post(migrate.PathCatchUp, "", public, a.migrationAPI(a.migrateCatchUpIn))
+	rt.post(migrate.PathCancel, "", public, a.migrationAPI(a.migrateCancel))
 
 	// The accounts that can log in over SSH.
 	rt.post("/security/users", "security.users.store", authenticated, a.sshUserStore)

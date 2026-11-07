@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
@@ -139,43 +140,8 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 		return errors.New(message)
 	}
 
-	hash, err := dovecotHash(account.Password)
-	if err != nil {
+	if err := s.writeMailbox(account, domain); err != nil {
 		return fail(err.Error())
-	}
-
-	// Same precondition as the domain task, and for the same reason: the tables
-	// are checked where they are used, not remembered elsewhere.
-	if err := s.EnsureSchema(); err != nil {
-		return fail(err.Error())
-	}
-
-	// The domain row first. The mailbox insert selects the domain's id, so a
-	// missing domain makes it a statement that inserts nothing and reports
-	// success — a mailbox the panel calls active and Dovecot has never heard
-	// of, which is a "Login failed" with a correct password behind it.
-	script := fmt.Sprintf("INSERT IGNORE INTO %s.virtual_domains (name) VALUES (%s);\n",
-		mailDB, sqlQuote(domain.Domain))
-
-	script += fmt.Sprintf(
-		"INSERT INTO %s.virtual_users (domain_id, email, password, quota_bytes) "+
-			"SELECT id, %s, %s, %d FROM %s.virtual_domains WHERE name = %s "+
-			"ON DUPLICATE KEY UPDATE password = VALUES(password), quota_bytes = VALUES(quota_bytes);\n",
-		mailDB, sqlQuote(address), sqlQuote(hash),
-		int64(account.QuotaMB)*1024*1024, mailDB, sqlQuote(domain.Domain))
-
-	if err := runSQL(script); err != nil {
-		return fail(err.Error())
-	}
-
-	// Asked of the table rather than assumed from an exit status: the insert
-	// above is a SELECT with no rows on a machine whose mail schema was
-	// reinstalled underneath, and MariaDB calls that success.
-	if !proc.Ok(fmt.Sprintf("sudo mysql -N -B -e %s | grep -q '^1$'",
-		proc.Quote(fmt.Sprintf("SELECT count(*) FROM %s.virtual_users WHERE email = %s;",
-			mailDB, sqlQuote(address))))) {
-		return fail("The mailbox was not written to the mail server's table, so nothing would " +
-			"accept its password. Repair the mail server from the Email page and try again.")
 	}
 
 	list := &tasks.List{}
@@ -235,6 +201,53 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 	s.Store.SetEmailAccountStatus(accountID, "failed", message)
 
 	return errors.New(message)
+}
+
+// writeMailbox puts a mailbox into the table Postfix and Dovecot read, with
+// its password hashed the way Dovecot checks it, and confirms it is there.
+func (s *Service) writeMailbox(account *store.EmailAccount, domain *store.EmailDomain) error {
+	address := account.Address(domain.Domain)
+
+	hash, err := dovecotHash(account.Password)
+	if err != nil {
+		return err
+	}
+
+	// Same precondition as the domain task, and for the same reason: the tables
+	// are checked where they are used, not remembered elsewhere.
+	if err := s.EnsureSchema(); err != nil {
+		return err
+	}
+
+	// The domain row first. The mailbox insert selects the domain's id, so a
+	// missing domain makes it a statement that inserts nothing and reports
+	// success — a mailbox the panel calls active and Dovecot has never heard
+	// of, which is a "Login failed" with a correct password behind it.
+	script := fmt.Sprintf("INSERT IGNORE INTO %s.virtual_domains (name) VALUES (%s);\n",
+		mailDB, sqlQuote(domain.Domain))
+
+	script += fmt.Sprintf(
+		"INSERT INTO %s.virtual_users (domain_id, email, password, quota_bytes) "+
+			"SELECT id, %s, %s, %d FROM %s.virtual_domains WHERE name = %s "+
+			"ON DUPLICATE KEY UPDATE password = VALUES(password), quota_bytes = VALUES(quota_bytes);\n",
+		mailDB, sqlQuote(address), sqlQuote(hash),
+		int64(account.QuotaMB)*1024*1024, mailDB, sqlQuote(domain.Domain))
+
+	if err := runSQL(script); err != nil {
+		return err
+	}
+
+	// Asked of the table rather than assumed from an exit status: the insert
+	// above is a SELECT with no rows on a machine whose mail schema was
+	// reinstalled underneath, and MariaDB calls that success.
+	if !proc.Ok(fmt.Sprintf("sudo mysql -N -B -e %s | grep -q '^1$'",
+		proc.Quote(fmt.Sprintf("SELECT count(*) FROM %s.virtual_users WHERE email = %s;",
+			mailDB, sqlQuote(address))))) {
+		return errors.New("The mailbox was not written to the mail server's table, so nothing would " +
+			"accept its password. Repair the mail server from the Email page and try again.")
+	}
+
+	return nil
 }
 
 // DeleteAccount removes a mailbox, and its stored mail when asked.

@@ -11,6 +11,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
+	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
@@ -153,30 +154,7 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 		return "Mail tables are in place.", nil
 	})
 
-	// The first mail domain decides what this server calls itself, unless
-	// somebody already chose. Postfix greets other servers with that name and
-	// they check it resolves; the machine's own `vmi3499224` does not.
-	list.AddFn("Name this server after the domain", func(runner *tasks.Runner) (string, error) {
-		if existing := s.Store.Setting("mail_hostname", ""); existing != "" {
-			return "This server already greets other servers as " + existing + ".", nil
-		}
-
-		hostname := domain.WebmailHost()
-
-		s.Store.SetSetting("mail_hostname", hostname)
-
-		if err := s.writeConfigs(); err != nil {
-			return "", err
-		}
-
-		if err := runner.Must("sudo postconf -e "+proc.Quote("myhostname="+hostname)+
-			" && sudo systemctl reload postfix", time.Minute); err != nil {
-			return "", err
-		}
-
-		return "This server now greets other servers as " + hostname + ", which resolves to it " +
-			"and matches its certificate.", nil
-	}).Optional()
+	list.AddFn("Name this server after the domain", s.nameServerAfter(domain)).Optional()
 
 	list.AddFn("Register the domain", s.registerDomain(ctx, domainID))
 	list.AddFn("Generate the DKIM key", s.generateDKIM(ctx, domainID))
@@ -212,6 +190,34 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 	s.Store.SetEmailDomainStatus(domainID, "failed", message)
 
 	return errors.New(message)
+}
+
+// nameServerAfter has the first mail domain decide what this server calls
+// itself, unless somebody already chose. Postfix greets other servers with
+// that name and they check it resolves; the machine's own `vmi3499224` does
+// not.
+func (s *Service) nameServerAfter(domain *store.EmailDomain) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		if existing := s.Store.Setting("mail_hostname", ""); existing != "" {
+			return "This server already greets other servers as " + existing + ".", nil
+		}
+
+		hostname := domain.WebmailHost()
+
+		s.Store.SetSetting("mail_hostname", hostname)
+
+		if err := s.writeConfigs(); err != nil {
+			return "", err
+		}
+
+		if err := runner.Must("sudo postconf -e "+proc.Quote("myhostname="+hostname)+
+			" && sudo systemctl reload postfix", time.Minute); err != nil {
+			return "", err
+		}
+
+		return "This server now greets other servers as " + hostname + ", which resolves to it " +
+			"and matches its certificate.", nil
+	}
 }
 
 // DeleteDomain removes the domain, its mailboxes, its DKIM key and its stored

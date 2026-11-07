@@ -189,3 +189,14 @@ func (s *Store) ClearSiteDNSAccount(id int64) {
 	s.db.Exec(`UPDATE sites SET dns_account_id = NULL, manage_dns = 0 WHERE dns_account_id = ?`, id)
 	s.db.Exec(`UPDATE email_domains SET dns_account_id = NULL, manage_dns = 0 WHERE dns_account_id = ?`, id)
 }
+
+// DetachSiteDNS stops the panel managing one site's DNS: its records are left
+// as they are. A site that moved to another server is managed from there.
+func (s *Store) DetachSiteDNS(siteID int64) {
+	s.db.Exec(`UPDATE sites SET dns_account_id = NULL, manage_dns = 0 WHERE id = ?`, siteID)
+}
+
+// DetachMailDNS is the same for a mail domain.
+func (s *Store) DetachMailDNS(domainID int64) {
+	s.db.Exec(`UPDATE email_domains SET dns_account_id = NULL, manage_dns = 0 WHERE id = ?`, domainID)
+}

@@ -1471,6 +1471,20 @@ const destroy = async () => {
             </div>
 
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
+                <h3 class="font-semibold text-slate-800">Move to another server</h3>
+                <p class="mt-2 text-sm text-slate-500">
+                    Copy this site — files, database and settings — to another server running Ubuntu Panel, and point its
+                    DNS there once it works.
+                </p>
+                <Link
+                    :href="`${route('migrate.index')}?site=${site.id}`"
+                    class="mt-4 block w-full rounded-md px-4 py-2 text-center text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
+                >
+                    Move this site
+                </Link>
+            </div>
+
+            <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6">
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
                     Deleting removes the vhost, the systemd service, the site
