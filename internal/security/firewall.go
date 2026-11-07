@@ -96,8 +96,8 @@ func parseRules(output string) []Rule {
 }
 
 // EnableFirewall switches ufw on, having first let in everything the machine
-// needs to stay reachable: SSH on whichever ports sshd listens on, the web
-// ports, and the panel's own port. In that order and before `enable`, because
+// needs to stay reachable: SSH on whichever ports sshd listens on (none when
+// SSH is turned off), the web ports, and the panel's own port. In that order and before `enable`, because
 // a firewall switched on with nothing allowed is the one change this page can
 // make that the page cannot then undo.
 func EnableFirewall(sshPorts []string, panelPort int) error {
@@ -116,10 +116,6 @@ func EnableFirewall(sshPorts []string, panelPort int) error {
 		if _, err := strconv.Atoi(port); err == nil {
 			commands = append(commands, "sudo ufw allow "+port+"/tcp comment 'SSH'")
 		}
-	}
-
-	if len(commands) == 0 {
-		commands = append(commands, "sudo ufw allow OpenSSH")
 	}
 
 	commands = append(commands,

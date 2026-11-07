@@ -251,6 +251,8 @@ func (a *App) routes() *router {
 	rt.post("/security/firewall/disable", "security.firewall.disable", authenticated,
 		a.securityFirewallDisable)
 	rt.post("/security/firewall/ports", "security.firewall.ports", authenticated, a.securityPort)
+	rt.post("/security/firewall/close-unneeded", "security.firewall.close-unneeded", authenticated,
+		a.securityCloseUnneeded)
 	rt.post("/security/firewall/rules", "security.firewall.rules.store", authenticated,
 		a.securityFirewallRule)
 	rt.delete("/security/firewall/rules/{rule}", "security.firewall.rules.destroy", authenticated,

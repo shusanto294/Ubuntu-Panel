@@ -38,8 +38,8 @@ const props = defineProps({
 // The tab lives in the URL's query so a reload, a bookmark or a link from an
 // alert lands on the same one.
 const tabs = [
+    { key: 'overview', name: 'Overview' },
     { key: 'firewall', name: 'Ports & firewall' },
-    { key: 'overview', name: 'Checklist' },
     { key: 'ssh', name: 'SSH' },
     { key: 'panel', name: 'Panel sign-in' },
     { key: 'updates', name: 'Updates' },
@@ -50,7 +50,7 @@ const tabs = [
 // Older links name the tabs that were merged or removed.
 const aliases = { users: 'ssh', logins: 'panel', sessions: 'panel', bans: 'firewall', protection: 'hardening' };
 
-const tab = ref('firewall');
+const tab = ref('overview');
 
 onMounted(() => {
     let asked = new URLSearchParams(window.location.search).get('tab');
@@ -98,7 +98,6 @@ const refresh = () =>
     });
 
 const openPorts = computed(() => props.ports.filter((p) => p.open).length);
-const riskyOpen = computed(() => props.ports.filter((p) => p.risk === 'risky' && p.public && (p.open || !props.firewall.active)).length);
 </script>
 
 <template>
@@ -144,24 +143,13 @@ const riskyOpen = computed(() => props.ports.filter((p) => p.risk === 'risky' &&
                     @click="tab = t.key"
                 >
                     {{ t.name }}
-                    <span v-if="t.key === 'firewall' && riskyOpen" class="ml-1 rounded-full bg-rose-50 px-1.5 text-xs text-rose-700">{{ riskyOpen }}</span>
-                    <span v-if="t.key === 'overview' && failing.length" class="ml-1 text-xs text-slate-400">{{ failing.length }}</span>
                 </button>
             </nav>
         </div>
 
-        <Firewall
-            v-if="tab === 'firewall'"
-            :firewall="firewall"
-            :ports="ports"
-            :forwards="forwards"
-            :ssh-ports="hardening.ports"
-            :panel-port="panelPort"
-            :my-ip="myIp"
-        />
 
-        <!-- Checklist -->
-        <div v-else-if="tab === 'overview'" class="space-y-6">
+        <!-- Overview -->
+        <div v-if="tab === 'overview'" class="space-y-6">
             <div class="grid gap-6 lg:grid-cols-3">
                 <div :class="card" class="flex items-center gap-4 sm:gap-6">
                     <svg viewBox="0 0 36 36" class="h-24 w-24 shrink-0 -rotate-90 sm:h-28 sm:w-28">
@@ -239,6 +227,16 @@ const riskyOpen = computed(() => props.ports.filter((p) => p.risk === 'risky' &&
                 </ul>
             </div>
         </div>
+
+        <Firewall
+            v-else-if="tab === 'firewall'"
+            :firewall="firewall"
+            :ports="ports"
+            :forwards="forwards"
+            :ssh-ports="hardening.ports"
+            :panel-port="panelPort"
+            :my-ip="myIp"
+        />
 
         <div v-else-if="tab === 'ssh'" class="space-y-6">
             <Hardening :hardening="hardening" :service="sshService" />

@@ -43,6 +43,10 @@ type Port struct {
 	// Locked is why it cannot be closed from the page, or "".
 	Locked string `json:"locked"`
 
+	// Needed is what on this server needs it open — the websites, mail,
+	// DNS, a database opened on the Databases page — or "".
+	Needed string `json:"needed"`
+
 	// InRange is the rule number of a port range that opens it, which the
 	// switch cannot split: it is closed by removing that rule.
 	InRange int `json:"in_range"`
@@ -172,11 +176,15 @@ func parseListening(output string) []listener {
 
 // ReadPorts is every port worth showing: the ones something listens on, and
 // the ones the firewall opens.
-func ReadPorts(firewall Firewall, sshPorts []string, panelPort int) []Port {
-	return buildPorts(readListening(), firewall, sshPorts, panelPort)
+//
+// sshPorts are the ports sshd is configured for, named SSH whether or not SSH
+// is running; only the panel's port is locked open, since the panel is how
+// everything else — SSH included — is opened again.
+func ReadPorts(firewall Firewall, sshPorts []string, panelPort int, needed Needed) []Port {
+	return buildPorts(readListening(), firewall, sshPorts, panelPort, needed)
 }
 
-func buildPorts(listening []listener, firewall Firewall, sshPorts []string, panelPort int) []Port {
+func buildPorts(listening []listener, firewall Firewall, sshPorts []string, panelPort int, needed Needed) []Port {
 	ports := map[string]*Port{}
 
 	get := func(key string) *Port {
@@ -236,15 +244,19 @@ func buildPorts(listening []listener, firewall Firewall, sshPorts []string, pane
 		}
 	}
 
-	essential := map[string]string{}
+	sshKeys := map[string]bool{}
 	for _, port := range sshPorts {
 		if port == "ssh" {
 			port = "22"
 		}
-		essential[port+"/tcp"] = "SSH listens here — closing it could lock you out of the server."
+		sshKeys[port+"/tcp"] = true
+		get(port + "/tcp")
 	}
+
+	panelKey := ""
 	if panelPort > 0 {
-		essential[fmt.Sprintf("%d/tcp", panelPort)] = "This panel is reached on this port — closing it would lock you out of the panel."
+		panelKey = fmt.Sprintf("%d/tcp", panelPort)
+		get(panelKey)
 	}
 
 	list := make([]Port, 0, len(ports))
@@ -254,17 +266,21 @@ func buildPorts(listening []listener, firewall Firewall, sshPorts []string, pane
 			port.Name, port.Description, port.Risk = info.name, info.description, info.risk
 		}
 
-		if why, ok := essential[key]; ok {
-			port.Locked = why
+		if why, ok := needed.reason(key); ok {
+			port.Needed = why
+		}
+
+		if sshKeys[key] {
+			port.Name = "SSH"
+			port.Description = knownPorts["22/tcp"].description
+			port.Risk = ""
+		}
+
+		if key == panelKey {
+			port.Name = "Ubuntu Panel"
+			port.Description = "This control panel. Your browser reaches it on this port."
 			port.Risk = "essential"
-			if strings.HasPrefix(why, "This panel") {
-				port.Name = "Ubuntu Panel"
-				port.Description = "This control panel. Your browser reaches it on this port."
-			}
-			if port.Name == "" {
-				port.Name = "SSH"
-				port.Description = knownPorts["22/tcp"].description
-			}
+			port.Locked = "This panel is reached on this port — closing it would lock you out of the panel."
 		}
 
 		if port.Name == "" {
@@ -388,25 +404,17 @@ func OpenPort(port int, protocol, note string) error {
 // protocols — is replaced by one for the others, so closing one port never
 // closes another. Rules for particular addresses are kept.
 //
-// sshPorts and panelPort are refused: closing them is the one change this page
-// could make that it could not then undo.
-func ClosePort(port int, protocol string, sshPorts []string, panelPort int) error {
+// panelPort is refused: closing it is the one change this page could make
+// that it could not then undo. SSH can be closed — the panel opens it again.
+func ClosePort(port int, protocol string, panelPort int) error {
 	if port < 1 || port > 65535 || !validProtocol(protocol) {
 		return errors.New("that is not a port")
 	}
 
 	key := fmt.Sprintf("%d/%s", port, protocol)
 
-	if protocol == "tcp" {
-		for _, ssh := range sshPorts {
-			if ssh == strconv.Itoa(port) || (ssh == "ssh" && port == 22) {
-				return errors.New("SSH listens on this port; closing it could lock everybody out of the server. " +
-					"Move SSH to another port first (SSH settings), then close this one")
-			}
-		}
-		if port == panelPort {
-			return errors.New("this is the port the panel is reached on; closing it would lock you out of the panel")
-		}
+	if protocol == "tcp" && port == panelPort {
+		return errors.New("this is the port the panel is reached on; closing it would lock you out of the panel")
 	}
 
 	firewall := ReadFirewall()
@@ -475,4 +483,212 @@ func ClosePort(port int, protocol string, sshPorts []string, panelPort int) erro
 	}
 
 	return deleteRules(numbers)
+}
+
+// Needed is the ports the server's own work needs, by "port/protocol", each
+// with what needs it: Open are opened to everyone if they are not already —
+// SSH, the panel, the websites, mail and DNS where they are installed — and
+// Keep are left open if they are, because the owner chose them elsewhere in
+// the panel: a database opened to anywhere on the Databases page, a port
+// forward.
+type Needed struct {
+	Open map[string]string
+	Keep map[string]string
+}
+
+func (n Needed) reason(key string) (string, bool) {
+	if why, ok := n.Open[key]; ok {
+		return why, true
+	}
+	why, ok := n.Keep[key]
+	return why, ok
+}
+
+// ruleSignature is what identifies a rule across a re-read, when the numbers
+// have moved.
+func ruleSignature(rule Rule) string {
+	return rule.To + "\x00" + rule.Action + "\x00" + rule.Direction + "\x00" + rule.From
+}
+
+// closable is whether a rule opens something to everyone that nothing needs:
+// every port (a rule with no port), a range, or any port outside needed.
+// Rules for particular addresses are never closable: somebody chose to let
+// that address in.
+func closable(rule Rule, needed Needed) bool {
+	if !inbound(rule) || (rule.Action != "ALLOW" && rule.Action != "LIMIT") || !fromAnywhere(rule) {
+		return false
+	}
+
+	to := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rule.To), "(v6)"))
+	if to == "Anywhere" || to == "" {
+		return true
+	}
+
+	keys, ranges := ruleTargets(rule)
+	if len(ranges) > 0 || len(keys) == 0 {
+		return true
+	}
+
+	for _, key := range keys {
+		if _, ok := needed.reason(key); !ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CloseUnneeded leaves open to everyone only what needed names, and switches
+// the firewall on if it is off. Ports needed by something a removed rule also
+// opened are opened again on their own first, and the needed ports are
+// opened before anything is closed, so nothing the server serves is
+// unreachable for a moment. The answer is the ports it closed.
+//
+// sshPorts are SSH's ports while SSH is running, and nil when it is turned
+// off: an SSH that is off needs nothing open. The panel's port is always
+// needed — closing it would lock the owner out.
+func CloseUnneeded(sshPorts []string, panelPort int, needed Needed) ([]string, error) {
+	if !proc.Which("ufw") {
+		return nil, errors.New("ufw is not installed")
+	}
+
+	if needed.Open == nil {
+		needed.Open = map[string]string{}
+	}
+	for _, port := range sshPorts {
+		if port == "ssh" {
+			port = "22"
+		}
+		if _, err := strconv.Atoi(port); err == nil {
+			needed.Open[port+"/tcp"] = "SSH"
+		}
+	}
+	if panelPort > 0 {
+		needed.Open[fmt.Sprintf("%d/tcp", panelPort)] = "Ubuntu Panel"
+	}
+
+	firewall := ReadFirewall()
+
+	// Off: everything not opened is refused once it is on, and EnableFirewall
+	// opens SSH, the websites and the panel before it switches on.
+	if !firewall.Active {
+		proc.Run("sudo ufw default deny incoming 2>&1", time.Minute)
+		if err := EnableFirewall(sshPorts, panelPort); err != nil {
+			return nil, err
+		}
+		firewall = ReadFirewall()
+	} else if firewall.Incoming != "" && firewall.Incoming != "deny" && firewall.Incoming != "reject" {
+		if result := proc.Run("sudo ufw default deny incoming 2>&1", time.Minute); !result.OK() {
+			return nil, fmt.Errorf("ufw would not refuse incoming connections by default: %s", lastLines(result.Output, 2))
+		}
+	}
+
+	// What stays open to everyone afterwards, from the rules that stay.
+	covered := map[string]bool{}
+	doomed := map[string]bool{}
+	closed := map[string]bool{}
+
+	for _, rule := range firewall.Rules {
+		if closable(rule, needed) {
+			doomed[ruleSignature(rule)] = true
+			keys, _ := ruleTargets(rule)
+			for _, key := range keys {
+				if _, ok := needed.reason(key); !ok {
+					closed[key] = true
+				}
+			}
+			if len(keys) == 0 {
+				closed[strings.TrimSpace(strings.TrimSuffix(rule.To, "(v6)"))] = true
+			}
+			continue
+		}
+
+		if inbound(rule) && (rule.Action == "ALLOW" || rule.Action == "LIMIT") && fromAnywhere(rule) {
+			keys, _ := ruleTargets(rule)
+			for _, key := range keys {
+				covered[key] = true
+			}
+		}
+	}
+
+	// Open what is needed and not covered by a rule that stays — including
+	// what a closable rule was opening alongside something unneeded. Keep
+	// ports are only put back when a closable rule was what opened them.
+	reopen := map[string]string{}
+	for key, why := range needed.Open {
+		if !covered[key] {
+			reopen[key] = why
+		}
+	}
+	for _, rule := range firewall.Rules {
+		if !doomed[ruleSignature(rule)] {
+			continue
+		}
+		keys, _ := ruleTargets(rule)
+		for _, key := range keys {
+			if why, ok := needed.Keep[key]; ok && !covered[key] {
+				reopen[key] = why
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(reopen))
+	for key := range reopen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		number, protocol, _ := strings.Cut(key, "/")
+		value, _ := strconv.Atoi(number)
+		if err := OpenPort(value, protocol, reopen[key]); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(doomed) == 0 {
+		return nil, nil
+	}
+
+	// The numbers moved with every rule added: delete by what each rule is.
+	numbers := []int{}
+	for _, rule := range ReadFirewall().Rules {
+		if doomed[ruleSignature(rule)] && closable(rule, needed) {
+			numbers = append(numbers, rule.Number)
+		}
+	}
+
+	if err := deleteRules(numbers); err != nil {
+		return nil, err
+	}
+
+	list := make([]string, 0, len(closed))
+	for key := range closed {
+		list = append(list, key)
+	}
+	sort.Strings(list)
+
+	return list, nil
+}
+
+// RuleOpens is whether a rule lets everyone reach a port ("port/protocol").
+func RuleOpens(rule Rule, key string) bool {
+	if !inbound(rule) || (rule.Action != "ALLOW" && rule.Action != "LIMIT") || !fromAnywhere(rule) {
+		return false
+	}
+
+	keys, ranges := ruleTargets(rule)
+	if containsText(keys, key) {
+		return true
+	}
+
+	number, protocol, _ := strings.Cut(key, "/")
+	value, _ := strconv.Atoi(number)
+	for _, r := range ranges {
+		if value >= r.from && value <= r.to && (r.protocol == "" || r.protocol == protocol) {
+			return true
+		}
+	}
+
+	return false
 }

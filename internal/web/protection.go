@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -31,6 +32,10 @@ const (
 	// ipBlockingRemovedSetting is set once the leftovers of the address
 	// blocking are off the machine.
 	ipBlockingRemovedSetting = "security_ip_blocking_removed"
+
+	// portsClosedSetting is set once the firewall has been brought down to
+	// what the server needs (2.21.1).
+	portsClosedSetting = "security_unneeded_ports_closed"
 )
 
 // serverHardening is the switches, as saved. The names are the ones the old
@@ -87,6 +92,22 @@ func (a *App) EnsureHardening(ctx context.Context) {
 
 		if err == nil {
 			a.Store.SetSetting(ipBlockingRemovedSetting, time.Now().Format(time.RFC3339))
+		}
+	}
+
+	// Once: the firewall on, and open only for what the server needs — SSH,
+	// the panel, the websites, and mail, DNS and databases where they are
+	// set up. After that, what the owner opens on the Ports tab stays open.
+	// Not while the apps are still going in: their own steps open ports.
+	if a.Store.Setting(portsClosedSetting, "") == "" && proc.Which("ufw") && !a.Store.ServicesPending() {
+		closed, err := security.CloseUnneeded(liveSSHPorts(), a.panelPort(), a.neededPorts(ctx))
+		if err != nil {
+			a.Log.Error("could not close the ports the server does not need", "error", err)
+		} else {
+			if len(closed) > 0 {
+				a.Log.Info("closed the ports the server does not need", "closed", strings.Join(closed, " "))
+			}
+			a.Store.SetSetting(portsClosedSetting, time.Now().Format(time.RFC3339))
 		}
 	}
 

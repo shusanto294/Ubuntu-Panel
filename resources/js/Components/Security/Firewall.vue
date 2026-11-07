@@ -26,8 +26,11 @@ const active = computed(() => props.firewall.active);
 
 // Reachable from outside: something listens on a public address, or the
 // firewall opens it. Everything else answers this machine only.
-const outside = computed(() => props.ports.filter((p) => p.public || p.open || p.allowed_from.length));
-const local = computed(() => props.ports.filter((p) => !(p.public || p.open || p.allowed_from.length)));
+// SSH and the panel are always listed here, open or closed, so either can be
+// switched from this list whatever state it is in.
+const facesOutside = (p) => p.public || p.open || p.allowed_from.length || p.name === 'SSH' || Boolean(p.locked);
+const outside = computed(() => props.ports.filter(facesOutside));
+const local = computed(() => props.ports.filter((p) => !facesOutside(p)));
 
 const showLocal = ref(false);
 const showRules = ref(false);
@@ -37,7 +40,7 @@ const enable = async () => {
     if (
         !(await confirmAction(
             'Switch the firewall on?',
-            `SSH (${ports}), the websites (80, 443) and the panel (${props.panelPort}) are opened first. Every other incoming port is closed. You can open more afterwards.`,
+            `SSH (${ports}), the websites (80, 443), the panel (${props.panelPort}), and mail, DNS and databases where they are set up are opened first. Every other incoming port is closed. You can open more afterwards.`,
             'Switch on',
         ))
     )
@@ -50,6 +53,26 @@ const disable = async () => {
         return;
     router.post(route('security.firewall.disable'), {}, { preserveScroll: true });
 };
+
+// Close everything the server does not need: SSH, the panel, the websites,
+// and mail, DNS and databases where they are set up stay open.
+const closeUnneeded = async () => {
+    const extra = props.ports.filter((p) => p.open && !p.needed && !p.locked);
+    const list = extra.map((p) => `${p.port}/${p.protocol} (${p.name})`).join(', ');
+    if (
+        !(await confirmAction(
+            'Close every port the server does not need?',
+            (extra.length ? `These will be closed: ${list}. ` : '') +
+                'SSH, the panel, the websites, and mail, DNS and databases where they are set up stay open. Rules that let in one particular address are kept.',
+            'Close them',
+        ))
+    )
+        return;
+    busy.value = 'all';
+    router.post(route('security.firewall.close-unneeded'), {}, { preserveScroll: true, onFinish: () => (busy.value = '') });
+};
+
+const unneededOpen = computed(() => props.ports.filter((p) => p.open && !p.needed && !p.locked).length);
 
 // ---------------------------------------------------------------- the switch
 
@@ -69,9 +92,14 @@ const toggle = async (p) => {
         if (!ok) return;
     } else {
         const web = p.protocol === 'tcp' && (p.port === 80 || p.port === 443);
-        const text = web
+        const ssh = p.name === 'SSH';
+        const text = ssh
+            ? 'Nobody will be able to connect over SSH or SFTP from outside — site SFTP accounts included. The panel and its Terminal keep working, and you can open the port again here at any time.'
+            : web
             ? 'Your websites will stop answering on this port' + (p.port === 80 ? ', and Let’s Encrypt will not be able to renew certificates.' : '.')
-            : p.listening
+            : p.needed
+              ? `${p.needed} needs this port; it will stop working for anyone outside this server.`
+              : p.listening
               ? `${p.programs.join(', ') || 'The program'} keeps running, but nobody outside this server can reach it.`
               : 'The rule that opens it is removed.';
         if (!(await confirmDanger(`Close ${label}?`, text, 'Close'))) return;
@@ -85,11 +113,25 @@ const toggle = async (p) => {
     );
 };
 
+// What is really true of the port right now: whether the firewall lets the
+// internet in, and whether anything is there to answer.
 const state = (p) => {
-    if (!active.value) return p.public ? { text: 'Reachable — firewall off', style: 'bg-rose-50 text-rose-700' } : null;
-    if (p.open) return { text: 'Open', style: p.risk === 'risky' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700' };
-    if (p.allowed_from.length) return { text: 'Some addresses only', style: 'bg-sky-50 text-sky-700' };
-    return { text: 'Closed', style: 'bg-slate-100 text-slate-600' };
+    const red = 'bg-rose-50 text-rose-700';
+    const green = 'bg-emerald-50 text-emerald-700';
+    const grey = 'bg-slate-100 text-slate-600';
+
+    if (!active.value) {
+        if (p.listening && p.public) return { text: 'Reachable — the firewall is off', style: red };
+        return { text: 'Nothing listening', style: grey };
+    }
+    if (p.open) {
+        if (!p.listening) return { text: 'Open in the firewall · nothing listening', style: 'bg-amber-50 text-amber-700' };
+        if (!p.public) return { text: 'Open in the firewall · answers this server only', style: grey };
+        return { text: 'Open — reachable from the internet', style: p.risk === 'risky' ? red : green };
+    }
+    if (p.allowed_from.length) return { text: 'Open to some addresses only', style: 'bg-sky-50 text-sky-700' };
+    if (p.listening && p.public) return { text: 'Closed — the firewall blocks it', style: grey };
+    return { text: 'Closed', style: grey };
 };
 
 // ----------------------------------------------------------- open a port
@@ -177,11 +219,23 @@ const actionStyle = {
 
         <!-- The ports. -->
         <div :class="card" class="!p-0">
-            <div class="border-b border-slate-100 px-4 py-4 sm:px-6">
-                <h3 class="font-semibold text-slate-900">Ports the internet can reach</h3>
-                <p class="text-sm text-slate-500">
-                    What each one is for, and whether the firewall lets it in. Close anything you do not use.
-                </p>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
+                <div class="min-w-0">
+                    <h3 class="font-semibold text-slate-900">Ports the internet can reach</h3>
+                    <p class="text-sm text-slate-500">
+                        What each one is for, and whether the firewall lets it in. Only what the server needs should be open.
+                    </p>
+                </div>
+                <button
+                    v-if="active"
+                    type="button"
+                    class="rounded-xl px-4 py-2 text-sm font-medium transition disabled:opacity-50"
+                    :class="unneededOpen ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-white text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50'"
+                    :disabled="busy !== ''"
+                    @click="closeUnneeded"
+                >
+                    {{ busy === 'all' ? 'Closing…' : unneededOpen ? `Close ${unneededOpen} unneeded ${unneededOpen === 1 ? 'port' : 'ports'}` : 'Close unneeded ports' }}
+                </button>
             </div>
 
             <ul class="divide-y divide-slate-100">
@@ -195,8 +249,11 @@ const actionStyle = {
                             <span v-if="p.risk === 'risky'" class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                                 keep closed
                             </span>
-                            <span v-else-if="p.risk === 'essential'" class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
-                                needed
+                            <span v-else-if="p.risk === 'essential' || p.needed" class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+                                needed{{ p.needed && p.risk !== 'essential' ? ` · ${p.needed}` : '' }}
+                            </span>
+                            <span v-else-if="p.open && active" class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                                not needed
                             </span>
                             <span v-if="state(p)" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="state(p).style">
                                 {{ state(p).text }}

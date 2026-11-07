@@ -76,12 +76,12 @@ func TestBuildPorts(t *testing.T) {
 	}}
 
 	ports := map[string]Port{}
-	for _, port := range buildPorts(listening, firewall, []string{"22"}, 8443) {
+	for _, port := range buildPorts(listening, firewall, []string{"22"}, 8443, Needed{}) {
 		ports[port.Name] = port
 	}
 
-	if p := ports["SSH"]; !p.Open || p.Locked == "" || p.Risk != "essential" {
-		t.Errorf("SSH should be open and locked: %+v", p)
+	if p := ports["SSH"]; !p.Open || p.Locked != "" {
+		t.Errorf("SSH should be open and closable: %+v", p)
 	}
 	if p := ports["Ubuntu Panel"]; !p.Open || p.Locked == "" || p.Listening {
 		t.Errorf("the panel's port should be open and locked: %+v", p)
@@ -114,6 +114,36 @@ func TestBlocksAddress(t *testing.T) {
 
 	for _, c := range cases {
 		if got := blocksAddress(c.rule); got != c.want {
+			t.Errorf("%+v: want %v, got %v", c.rule, c.want, got)
+		}
+	}
+}
+
+func TestClosable(t *testing.T) {
+	needed := Needed{
+		Open: map[string]string{"22/tcp": "SSH", "80/tcp": "Websites", "443/tcp": "Websites", "25/tcp": "Mail"},
+		Keep: map[string]string{"3306/tcp": "Databases"},
+	}
+
+	cases := []struct {
+		rule Rule
+		want bool
+	}{
+		{Rule{To: "22/tcp", Action: "ALLOW", From: "Anywhere"}, false},
+		{Rule{To: "Nginx Full", Action: "ALLOW", From: "Anywhere"}, false},
+		{Rule{To: "3306/tcp", Action: "ALLOW", From: "Anywhere"}, false},
+		{Rule{To: "6379/tcp", Action: "ALLOW", From: "Anywhere"}, true},
+		{Rule{To: "80", Action: "ALLOW", From: "Anywhere"}, true}, // 80/udp is not needed
+		{Rule{To: "25,465/tcp", Action: "ALLOW", From: "Anywhere"}, true},
+		{Rule{To: "6000:6100/tcp", Action: "ALLOW", From: "Anywhere"}, true},
+		{Rule{To: "Anywhere", Action: "ALLOW", From: "Anywhere"}, true},
+		{Rule{To: "6379/tcp", Action: "ALLOW", From: "203.0.113.4"}, false},
+		{Rule{To: "6379/tcp", Action: "ALLOW", Direction: "OUT", From: "Anywhere"}, false},
+		{Rule{To: "6379/tcp", Action: "DENY", From: "Anywhere"}, false},
+	}
+
+	for _, c := range cases {
+		if got := closable(c.rule, needed); got != c.want {
 			t.Errorf("%+v: want %v, got %v", c.rule, c.want, got)
 		}
 	}

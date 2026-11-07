@@ -153,7 +153,7 @@ func (a *App) readSnapshot() *securitySnapshot {
 	wait.Wait()
 
 	// The ports need the firewall's rules.
-	snap.Ports = security.ReadPorts(snap.Firewall, security.SSHPorts(), a.panelPort())
+	snap.Ports = security.ReadPorts(snap.Firewall, security.SSHPorts(), a.panelPort(), a.neededPorts(context.Background()))
 
 	return snap
 }
@@ -534,14 +534,90 @@ func (a *App) securityUnlock(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- firewall
 
+// securityFirewallEnable switches the firewall on with only what the server
+// needs open, and securityCloseUnneeded closes the rest on one that is on:
+// both are CloseUnneeded, which opens what is needed before closing anything.
 func (a *App) securityFirewallEnable(w http.ResponseWriter, r *http.Request) {
-	if err := security.EnableFirewall(security.SSHPorts(), a.panelPort()); err != nil {
+	a.closeUnneeded(w, r, "The firewall is on")
+}
+
+func (a *App) securityCloseUnneeded(w http.ResponseWriter, r *http.Request) {
+	a.closeUnneeded(w, r, "Done")
+}
+
+func (a *App) closeUnneeded(w http.ResponseWriter, r *http.Request, done string) {
+	closed, err := security.CloseUnneeded(liveSSHPorts(), a.panelPort(), a.neededPorts(r.Context()))
+	if err != nil {
 		a.securityBack(w, r, err.Error(), true)
 		return
 	}
 
-	a.Log.Info("firewall enabled")
-	a.securityBack(w, r, "The firewall is on. SSH, the web ports and the panel are let through.", false)
+	a.Log.Info("unneeded ports closed", "closed", strings.Join(closed, " "), "ip", session.ClientIP(r))
+
+	if len(closed) == 0 {
+		a.securityBack(w, r, done+". Only what this server needs is open: SSH, the panel, the websites, "+
+			"and mail, DNS and databases where they are set up.", false)
+		return
+	}
+
+	a.securityBack(w, r, done+". Closed "+strings.Join(closed, ", ")+" — only what this server needs is open now.", false)
+}
+
+// liveSSHPorts are SSH's ports while SSH is running, and none while it is
+// turned off: an SSH that is off needs no port open.
+func liveSSHPorts() []string {
+	if !security.SSHRunning() {
+		return nil
+	}
+	return security.SSHPorts()
+}
+
+// neededPorts are the ports the server's own work needs open to everyone:
+// the websites always, mail and DNS when the panel installed them; and the
+// ones the owner opened elsewhere in the panel — MariaDB opened to anywhere
+// on the Databases page, MongoDB for desktop clients, port forwards — which
+// are left open if they are.
+func (a *App) neededPorts(ctx context.Context) security.Needed {
+	needed := security.Needed{
+		Open: map[string]string{"80/tcp": "Websites", "443/tcp": "Websites"},
+		Keep: map[string]string{},
+	}
+
+	for _, port := range liveSSHPorts() {
+		if port == "ssh" {
+			port = "22"
+		}
+		needed.Keep[port+"/tcp"] = "SSH"
+	}
+
+	if a.Store.ServiceInstalled("mail") {
+		for _, port := range []string{"25", "465", "587", "993", "995"} {
+			needed.Open[port+"/tcp"] = "Mail"
+		}
+	}
+
+	if a.Store.ServiceInstalled("dns") {
+		needed.Open["53/tcp"] = "DNS"
+		needed.Open["53/udp"] = "DNS"
+	}
+
+	var mysql []string
+	a.settingJSON("mysql_firewall_applied", &mysql)
+	for _, source := range mysql {
+		if source == "any" {
+			needed.Keep["3306/tcp"] = "Databases (opened to anywhere on the Databases page)"
+		}
+	}
+
+	if a.Store.ServiceInstalled("mongodb") {
+		needed.Keep["27017/tcp"] = "Databases (MongoDB, for desktop clients)"
+	}
+
+	for _, forward := range a.forwards() {
+		needed.Keep[fmt.Sprintf("%d/%s", forward.Port, forward.Protocol)] = "Port forwarding"
+	}
+
+	return needed
 }
 
 func (a *App) securityFirewallDisable(w http.ResponseWriter, r *http.Request) {
@@ -591,18 +667,26 @@ func (a *App) securityFirewallRule(w http.ResponseWriter, r *http.Request) {
 func (a *App) securityFirewallDelete(w http.ResponseWriter, r *http.Request) {
 	number := int(routeID(r, "rule"))
 
-	// The rule that lets SSH in is the one whose removal nobody can undo from
-	// outside, so it is looked up and refused rather than trusted to a
-	// confirmation dialog.
-	for _, rule := range security.ReadFirewall().Rules {
-		if rule.Number != number {
+	// The rule that lets the panel in is the one whose removal cannot be
+	// undone from here, so it is looked up and refused rather than trusted to
+	// a confirmation dialog — while it is the last one for its address family.
+	panel := fmt.Sprintf("%d/tcp", a.panelPort())
+	rules := security.ReadFirewall().Rules
+
+	for _, rule := range rules {
+		if rule.Number != number || !security.RuleOpens(rule, panel) {
 			continue
 		}
 
-		if isSSHRule(rule, security.SSHPorts()) && rule.Action != "DENY" && rule.Action != "REJECT" &&
-			countSSHRules(security.ReadFirewall().Rules, security.SSHPorts(), rule.IPv6) <= 1 {
-			a.securityBack(w, r, "That is the rule that lets SSH in. Add another first, or switch "+
-				"the firewall off — removing it would lock everybody out.", true)
+		others := 0
+		for _, other := range rules {
+			if other.Number != number && other.IPv6 == rule.IPv6 && security.RuleOpens(other, panel) {
+				others++
+			}
+		}
+
+		if others == 0 {
+			a.securityBack(w, r, "That is the rule that lets you reach this panel. Removing it would lock you out.", true)
 			return
 		}
 	}
@@ -613,35 +697,6 @@ func (a *App) securityFirewallDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.securityBack(w, r, "Rule removed.", false)
-}
-
-func isSSHRule(rule security.Rule, ports []string) bool {
-	to := strings.TrimSpace(strings.TrimSuffix(rule.To, "(v6)"))
-
-	if strings.EqualFold(to, "OpenSSH") || to == "22" || to == "22/tcp" {
-		return true
-	}
-
-	for _, port := range ports {
-		if to == port || to == port+"/tcp" {
-			return true
-		}
-	}
-
-	return false
-}
-
-func countSSHRules(rules []security.Rule, ports []string, ipv6 bool) int {
-	count := 0
-
-	for _, rule := range rules {
-		if rule.IPv6 == ipv6 && isSSHRule(rule, ports) && (rule.Action == "ALLOW" || rule.Action == "LIMIT") &&
-			strings.HasPrefix(rule.From, "Anywhere") {
-			count++
-		}
-	}
-
-	return count
 }
 
 // securityPort opens a port to everyone or closes it, from the switch beside
@@ -667,7 +722,7 @@ func (a *App) securityPort(w http.ResponseWriter, r *http.Request) {
 	if open {
 		err = security.OpenPort(port, protocol, strings.TrimSpace(input["note"]))
 	} else {
-		err = security.ClosePort(port, protocol, security.SSHPorts(), a.panelPort())
+		err = security.ClosePort(port, protocol, a.panelPort())
 	}
 
 	if err != nil {
