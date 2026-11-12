@@ -33,8 +33,9 @@
 #                            address opens a control panel's login form
 #   PANEL_SWAP=1             create a swapfile if the box has none and < 1.5 GB
 #   PANEL_SKIP_APT=0         skip the apt dependency step
-#   PANEL_INSTALL_APPS=all   what the installer puts on the machine before it
-#                            starts the panel: all | core | none
+#   PANEL_INSTALL_APPS=none  what the installer puts on the machine before it
+#                            starts the panel: none | core | all. With none,
+#                            an app is installed when a site needs it
 #   PANEL_UPDATE_APPS=1      on an update, ask apt for the newest of everything
 #                            the panel installed, and add the newest PHP it
 #                            knows about. 0 leaves the machine as it is
@@ -1002,12 +1003,13 @@ else
     conf_ensure PANEL_WORKERS   "2"
 fi
 
-# What a first start puts on the machine by itself. `all` is every app on the
-# Apps page, which is what makes a fresh server ready to host a site without
-# anybody installing anything first; `core` is only what a site cannot run
-# without; `none` leaves it to you. It happens once, on a panel that has never
-# installed an app.
-conf_ensure PANEL_INSTALL_APPS  "${PANEL_INSTALL_APPS:-all}"
+# What a first start puts on the machine by itself. `none`, the default, is
+# nothing: the site form, the Databases page and the Email page each install
+# the apps they need the first time they need them, so a server only ever has
+# what it uses. `core` is only what a site cannot run without; `all` is every
+# app on the Apps page. It happens once, on a panel that has never installed
+# an app.
+conf_ensure PANEL_INSTALL_APPS  "${PANEL_INSTALL_APPS:-none}"
 
 conf_ensure PANEL_REPOSITORY    "https://github.com/shusanto294/Ubuntu-Panel"
 conf_ensure PANEL_UPDATE_BRANCH "main"
@@ -1299,7 +1301,7 @@ fi
 # so nothing it writes is owned by root.
 
 APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
-APPS_CHOICE="${APPS_CHOICE:-all}"
+APPS_CHOICE="${APPS_CHOICE:-none}"
 
 if [ "$MODE" = update ] && [ "$PANEL_SKIP_APT" = "1" ]; then
     same "PANEL_SKIP_APT=1 — the apps on this machine are left as they are."
@@ -1329,7 +1331,7 @@ elif [ "$MODE" = update ]; then
         warn "the Apps page has the console, and a Retry beside each app."
     fi
 elif [ "$APPS_CHOICE" = none ]; then
-    same "PANEL_INSTALL_APPS=none — nothing installed; pick what you need on the Apps page."
+    same "No apps installed up front — each one is installed when a site, database or mail domain needs it."
 elif [ "$PANEL_SKIP_APT" = "1" ]; then
     same "PANEL_SKIP_APT=1 — skipping."
 else

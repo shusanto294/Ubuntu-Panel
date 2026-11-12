@@ -20,7 +20,7 @@ const (
 
 	// Version is stamped into the page payload and reported by --version.
 	// Bumped in the same commit as the tag that builds a release from it.
-	Version = "2.23.1"
+	Version = "2.24.0"
 )
 
 // Config is the whole of the panel's settings. Every field has a working
@@ -63,10 +63,11 @@ type Config struct {
 	Workers int
 
 	// InstallApps is what a first start puts on the machine by itself:
-	// `all` (everything in the catalogue), `core` (only what a site cannot run
-	// without), or `none`. It happens once, on a panel that has never installed
-	// anything, so re-running it after somebody removed an app does not put it
-	// back.
+	// `none` (the default — each app is installed when a site, database or
+	// mail domain first needs it), `core` (only what a site cannot run
+	// without), or `all` (everything in the catalogue). It happens once, on a
+	// panel that has never installed anything, so re-running it after
+	// somebody removed an app does not put it back.
 	InstallApps string
 
 	// Debug serves the frontend from disk and logs every request. Off in
@@ -109,7 +110,7 @@ func Load(path string) (*Config, error) {
 		Repository:   get("PANEL_REPOSITORY", "https://github.com/shusanto294/Ubuntu-Panel"),
 		UpdateBranch: get("PANEL_UPDATE_BRANCH", "main"),
 		AppKey:       get("PANEL_APP_KEY", ""),
-		InstallApps:  strings.ToLower(get("PANEL_INSTALL_APPS", "all")),
+		InstallApps:  strings.ToLower(get("PANEL_INSTALL_APPS", "none")),
 		Debug:        truthy(get("PANEL_DEBUG", "")),
 	}
 

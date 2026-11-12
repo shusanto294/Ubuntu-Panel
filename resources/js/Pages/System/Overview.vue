@@ -73,9 +73,11 @@ useLiveRefresh(busy, [
         <!--
             The lead tile is filled and the rest are white, which is how the
             eye finds the number that matters first. Each carries a tinted
-            icon chip so the row reads as four things rather than four numbers.
+            icon chip so the row reads as three things rather than three numbers.
+            There is no apps tile: the panel installs an app when something
+            needs it, so how many are installed is not a number to watch.
         -->
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-3">
             <Link
                 :href="route('sites.index')"
                 class="rounded-2xl bg-brand-600 p-5 text-white shadow-sm transition hover:bg-brand-700"
@@ -134,48 +136,6 @@ useLiveRefresh(busy, [
                         </p>
                     </div>
                 </div>
-            </Link>
-
-            <Link
-                :href="route('services.index')"
-                class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5 transition hover:shadow-md"
-            >
-                <div class="flex items-center gap-3">
-                    <span
-                        class="flex h-10 w-10 items-center justify-center rounded-full"
-                        :class="
-                            system.services_failed_count
-                                ? 'bg-rose-50 text-rose-600'
-                                : 'bg-brand-50 text-brand-600'
-                        "
-                    >
-                        <svg
-                            class="h-5 w-5"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M6 6.878V6a2.25 2.25 0 012.25-2.25h7.5A2.25 2.25 0 0118 6v.878M4.5 9.878A2.25 2.25 0 016.75 7.5h10.5A2.25 2.25 0 0119.5 9.878M3 12.75A2.25 2.25 0 015.25 10.5h13.5A2.25 2.25 0 0121 12.75V18a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-5.25z"
-                            />
-                        </svg>
-                    </span>
-                    <div>
-                        <p class="text-sm text-slate-500">Apps</p>
-                        <p class="text-2xl font-semibold text-slate-900">
-                            {{ counts.services_installed }}/{{ counts.services_total }}
-                        </p>
-                    </div>
-                </div>
-                <p
-                    v-if="system.services_failed_count"
-                    class="mt-2 text-xs text-rose-600"
-                >
-                    {{ system.services_failed_count }} failed
-                </p>
             </Link>
 
             <Link

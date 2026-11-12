@@ -105,6 +105,26 @@ func TestNoneInstallsNothing(t *testing.T) {
 	}
 }
 
+// Nothing set is nothing installed: an app goes on the machine when a site,
+// database or mail domain first needs it, not before.
+func TestTheDefaultInstallsNothing(t *testing.T) {
+	app := bootstrapApp(t, "")
+
+	app.BootstrapApps(context.Background())
+
+	if queued := app.Store.QueuedServices(context.Background()); len(queued) > 0 {
+		t.Fatalf("an unset PANEL_INSTALL_APPS queued %v", queued)
+	}
+
+	if err := app.InstallAppsNow(context.Background(), "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if queued := app.Store.QueuedServices(context.Background()); len(queued) > 0 {
+		t.Fatalf("the installer queued %v by default", queued)
+	}
+}
+
 // It happens once. An operator who removed MongoDB is not asking for it back on
 // the next restart.
 func TestItOnlyEverRunsOnce(t *testing.T) {

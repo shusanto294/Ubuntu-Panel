@@ -150,13 +150,14 @@ func hasHost(hosts []string, wanted string) bool {
 // gets started — a binary run by hand, a container, a machine whose first
 // install was interrupted before the apps step.
 //
-// PANEL_INSTALL_APPS decides how much: `all` is the catalogue, `core` is what
-// no site can run without, `none` is nothing.
+// PANEL_INSTALL_APPS decides how much: `none`, the default, is nothing — each
+// app is installed from the page that first needs it — `core` is what no site
+// can run without, and `all` is the catalogue.
 func (a *App) BootstrapApps(ctx context.Context) {
 	choice := a.Config.InstallApps
 
 	if choice == "" {
-		choice = "all"
+		choice = "none"
 	}
 
 	if choice == "none" || a.Store.SettingBool(bootstrapSetting, false) {
@@ -279,7 +280,7 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 	}
 
 	if choice == "" {
-		choice = "all"
+		choice = "none"
 	}
 
 	if choice == "none" {

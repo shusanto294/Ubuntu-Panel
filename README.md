@@ -35,14 +35,14 @@ picks a different one, Settings → Panel port moves it later, and either way th
 installer opens it in ufw — a firewall at your host, a security group or a
 network rule, has to allow it there as well.
 
-The installer puts the software a server needs on the machine before it starts
-the panel — nginx, PHP-FPM, MariaDB, Certbot, WP-CLI, Node and the rest of the
-Apps page — so the first sign-in lands on a server that is finished. That is
-the long part of the install: five to fifteen minutes on a small VPS, printed
-step by step as it goes. Set `PANEL_INSTALL_APPS=core` for only what a site
-cannot run without, or `none` to choose them yourself. It happens once, on a
-machine the panel has never installed an app on, so removing one afterwards is
-a decision the panel keeps.
+The installer does not put apps on the machine up front. Each one is installed
+the first time something needs it: creating a WordPress site installs PHP,
+MariaDB and WP-CLI from the site form, a Node.js site installs Node, the Email
+page installs the mail server — so a server only ever has what it uses, and the
+install itself takes a minute or two. Set `PANEL_INSTALL_APPS=core` to install
+what a site cannot run without before the first sign-in, or `all` for every app
+on the Apps page. Either happens once, on a machine the panel has never
+installed an app on, so removing one afterwards is a decision the panel keeps.
 
 Options are environment variables, or flags after `bash -s --`:
 
@@ -440,7 +440,7 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_PUBLIC` | `$PANEL_ROOT/public` (only with `PANEL_DEBUG`) |
 | `PANEL_APP_KEY` | — (written by the installer; encrypts every stored credential) |
 | `PANEL_WORKERS` | `2` (`1` on a machine under 1.5 GB) |
-| `PANEL_INSTALL_APPS` | `all` — what the installer puts on the machine before starting the panel: `all`, `core` or `none` |
+| `PANEL_INSTALL_APPS` | `none` — what the installer puts on the machine before starting the panel: `none` (each app when it is first needed), `core` or `all` |
 | `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel` |
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |

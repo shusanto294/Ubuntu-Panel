@@ -93,15 +93,6 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	services, _ := a.Store.Services(r.Context())
-
-	installed := 0
-	for _, service := range services {
-		if service.Status == store.ServiceInstalled {
-			installed++
-		}
-	}
-
 	a.Render.Render(w, r, "System/Overview", inertia.Props{
 		"system":  a.systemSummary(r.Context()),
 		"metrics": metrics.Summary(),
@@ -112,10 +103,8 @@ func (a *App) overview(w http.ResponseWriter, r *http.Request) {
 		}),
 		"historyRanges": store.MetricRanges,
 		"counts": map[string]any{
-			"sites":              a.Store.SiteCount(r.Context()),
-			"databases":          a.Store.DatabaseCount(r.Context(), ""),
-			"services_installed": installed,
-			"services_total":     len(catalog.Entries),
+			"sites":     a.Store.SiteCount(r.Context()),
+			"databases": a.Store.DatabaseCount(r.Context(), ""),
 		},
 		"sites":          recent,
 		"activeTask":     a.firstActiveTask(r, "provision", "site", "database", "mail"),
