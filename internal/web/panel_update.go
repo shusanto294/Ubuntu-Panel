@@ -40,6 +40,13 @@ const (
 	// once the new version is running — the installer is told to skip it.
 	updateAppsSetting = "panel_update_apps_pending"
 
+	// appsUpgradedSetting is when an update last brought the apps up to date.
+	// Once a day is enough: apt-get update and an upgrade are seconds of every
+	// core on a small machine, and three panel releases in an afternoon are
+	// not three reasons to ask apt again.
+	appsUpgradedSetting = "panel_update_apps_upgraded_at"
+	appsUpgradeEvery    = 24 * time.Hour
+
 	// updateResultSetting is how the last one went, for the Settings card.
 	updateResultSetting = "panel_update_result"
 
@@ -118,6 +125,11 @@ func (a *App) startPanelUpdate(ctx context.Context, userID int64, auto bool) err
 	command := fmt.Sprintf(
 		"sudo systemctl reset-failed %[1]s >/dev/null 2>&1; "+
 			"sudo systemd-run --unit=%[1]s --description='Ubuntu Panel update' --collect "+
+			// Its own unit, so it does not inherit the panel's low priority:
+			// given the same here, so an update never takes the CPU or the
+			// disk from the sites while it runs.
+			"-p Nice=19 -p CPUWeight=20 -p IOWeight=20 "+
+			"-p IOSchedulingClass=best-effort -p IOSchedulingPriority=7 "+
 			"--setenv=PANEL_UPDATE_APPS=0 /bin/bash -c %[2]s",
 		updateUnit, proc.Quote(a.updateUnitScript()))
 
@@ -186,8 +198,10 @@ func (a *App) reconcilePanelUpdate(ctx context.Context) string {
 		result.State = "succeeded"
 		result.Message = fmt.Sprintf("Updated from %s to %s.", from, config.Version)
 
-		if upgradeApps {
+		lastUpgrade, _ := strconv.ParseInt(a.Store.Setting(appsUpgradedSetting, ""), 10, 64)
+		if upgradeApps && time.Since(time.Unix(lastUpgrade, 0)) >= appsUpgradeEvery {
 			if _, err := a.Queue.PushID(queue.ServicesUpgrade, "user", 0); err == nil {
+				a.Store.SetSetting(appsUpgradedSetting, strconv.FormatInt(time.Now().Unix(), 10))
 				result.Message += " The server's apps are being brought up to date in the " +
 					"background; the Apps page has the console."
 			}

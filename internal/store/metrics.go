@@ -310,6 +310,21 @@ func (s *Store) bucketBreakdowns(ctx context.Context, window MetricRange, from t
 	return out
 }
 
+// LastDiskUsage is when the disk breakdown was last measured, zero if never.
+func (s *Store) LastDiskUsage(ctx context.Context) time.Time {
+	var at int64
+
+	s.db.QueryRowContext(ctxOrBackground(ctx),
+		`SELECT coalesce(max(strftime('%s', sampled_at)), 0) FROM metric_samples
+		  WHERE disk_usage IS NOT NULL`).Scan(&at)
+
+	if at == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(at, 0)
+}
+
 type diskBreakdown struct {
 	at    int64
 	usage json.RawMessage

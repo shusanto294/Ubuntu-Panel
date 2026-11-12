@@ -132,8 +132,12 @@ func (a *App) collectServerLogs(ctx context.Context) {
 		stats[fields[2]] = stat{inode: fields[0], size: size}
 	}
 
-	events := []store.ServerEvent{}
 	trusted := a.trustedSet(ctx)
+
+	// What to read, decided first, so every read of the minute goes out in
+	// one sudo rather than one per file: a sudo is a process start, a PAM
+	// session and two lines in auth.log — which this then reads next minute.
+	reads := []logRead{}
 
 	for _, file := range files {
 		current, ok := stats[file.Path]
@@ -146,7 +150,9 @@ func (a *App) collectServerLogs(ctx context.Context) {
 		// Rotated since the last read: the rest of the old file first.
 		if known && inode != current.inode {
 			if old, ok := stats[file.Path+".1"]; ok && old.inode == inode && old.size > offset {
-				events = append(events, a.readLogBytes(ctx, file, file.Path+".1", offset, old.size, trusted)...)
+				rotated := file
+				rotated.Path = file.Path + ".1"
+				reads = append(reads, logRead{file: rotated, from: offset, to: old.size})
 			}
 			offset = 0
 		}
@@ -165,10 +171,23 @@ func (a *App) collectServerLogs(ctx context.Context) {
 			continue
 		}
 
-		read, consumed := a.readLogFile(ctx, file, start, current.size, skipFirst, trusted)
-		events = append(events, read...)
+		reads = append(reads, logRead{file: file, from: start, to: current.size, skipFirst: skipFirst,
+			cursor: true, inode: current.inode})
+	}
 
-		a.Store.SetLogCursor(ctx, file.Path, current.inode, start+consumed)
+	events := []store.ServerEvent{}
+
+	for _, batch := range logBatches(reads) {
+		contents := readLogBatch(ctx, batch)
+
+		for i, read := range batch {
+			found, consumed := a.logEvents(read.file, contents[i], read.skipFirst, trusted)
+			events = append(events, found...)
+
+			if read.cursor {
+				a.Store.SetLogCursor(ctx, read.file.Path, read.inode, read.from+consumed)
+			}
+		}
 	}
 
 	if err := a.Store.RecordServerEvents(ctx, events); err != nil {
@@ -176,29 +195,99 @@ func (a *App) collectServerLogs(ctx context.Context) {
 	}
 }
 
-// readLogBytes reads a rotated file's tail, where the cursor is not moved.
-func (a *App) readLogBytes(ctx context.Context, file serverlog.File, path string, from, to int64, trusted map[string]bool) []store.ServerEvent {
-	copied := file
-	copied.Path = path
-	events, _ := a.readLogFile(ctx, copied, from, to, false, trusted)
-
-	return events
+// logRead is one stretch of one file the minute's copy reads: [from, to), at
+// most collectMaxBytes of it. cursor says whether the file's cursor moves
+// after it — not for a rotated file's tail, which is read once and left.
+type logRead struct {
+	file      serverlog.File
+	from, to  int64
+	skipFirst bool
+	cursor    bool
+	inode     string
 }
 
-// readLogFile reads [from, to) of a file and returns its events and how many
-// bytes of whole lines were read — a line still being written is left for the
-// next minute.
-func (a *App) readLogFile(ctx context.Context, file serverlog.File, from, to int64, skipFirst bool, trusted map[string]bool) ([]store.ServerEvent, int64) {
-	length := min(to-from, collectMaxBytes)
+func (r logRead) length() int64 { return min(r.to-r.from, collectMaxBytes) }
 
+// logBatchBytes is the most one sudo reads. A minute is normally a few
+// kilobytes; this is for the first minute and for catching up, so a machine
+// with a lot of logs is not held in memory all at once.
+const logBatchBytes = 32 << 20
+
+// logBatches groups the reads so each group is one sudo of at most
+// logBatchBytes — a single file larger than that is a group of its own.
+func logBatches(reads []logRead) [][]logRead {
+	batches := [][]logRead{}
+	current, size := []logRead{}, int64(0)
+
+	for _, read := range reads {
+		if len(current) > 0 && size+read.length() > logBatchBytes {
+			batches = append(batches, current)
+			current, size = []logRead{}, 0
+		}
+
+		current = append(current, read)
+		size += read.length()
+	}
+
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+
+	return batches
+}
+
+// readLogBatch reads every stretch in one sudo, each preceded by a marker
+// made fresh for this read — a line in a log cannot contain it — and returns
+// them in order. A file that could not be read comes back empty.
+func readLogBatch(ctx context.Context, batch []logRead) [][]byte {
+	marker := "@@panel-log-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "-" +
+		strconv.Itoa(len(batch)) + "@@"
+
+	var script strings.Builder
+	for i, read := range batch {
+		fmt.Fprintf(&script, "printf '%%s %d\\n' %s; tail -c +%d %s 2>/dev/null | head -c %d; ",
+			i, proc.Quote(marker), read.from+1, proc.Quote(read.file.Path), read.length())
+	}
+
+	// A failure is not returned: what came before it is still good, and the
+	// rest reads as empty and is tried again next minute from the same cursor.
+	var output bytes.Buffer
+	proc.Pipe(ctx, "sudo bash -c "+proc.Quote(script.String()), 2*time.Minute, nil, &output)
+
+	return splitLogBatch(output.Bytes(), marker, len(batch))
+}
+
+// splitLogBatch takes a batch's output apart at its markers.
+func splitLogBatch(output []byte, marker string, count int) [][]byte {
+	contents := make([][]byte, count)
+	token := []byte(marker + " ")
+
+	parts := bytes.Split(output, token)
+	for _, part := range parts[1:] {
+		header, body, ok := bytes.Cut(part, []byte("\n"))
+		if !ok {
+			continue
+		}
+
+		index, err := strconv.Atoi(string(header))
+		if err != nil || index < 0 || index >= count {
+			continue
+		}
+
+		contents[index] = body
+	}
+
+	return contents
+}
+
+// logEvents reads a stretch of a file and returns its events and how many
+// bytes of whole lines it held — a line still being written is left for the
+// next minute.
+func (a *App) logEvents(file serverlog.File, contents []byte, skipFirst bool, trusted map[string]bool) ([]store.ServerEvent, int64) {
 	reader := &serverlog.Reader{File: file, Location: time.Local, Now: time.Now(), PanelUser: a.Config.SystemUser,
 		Trusted: trusted}
 	sink := &cursorWriter{skip: skipFirst, line: reader.Line}
-
-	command := fmt.Sprintf("sudo tail -c +%d %s | head -c %d", from+1, proc.Quote(file.Path), length)
-	if err := proc.Pipe(ctx, command, 2*time.Minute, nil, sink); err != nil {
-		a.Log.Debug("could not read a log", "path", file.Path, "error", err)
-	}
+	sink.Write(contents)
 
 	read := reader.Events
 	dropped := 0

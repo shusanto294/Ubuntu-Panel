@@ -281,12 +281,25 @@ func sample(ctx context.Context, db *store.Store) {
 
 	watcher := system.Sampler{Sites: sites}
 
-	// The disk is measured by walking it, which takes a while on a full one:
-	// in the background, as soon as the panel starts and then hourly, and
-	// written down with the minute that follows.
+	// The disk is measured by walking every file of every site, which is
+	// real work on a full disk — so not at start, which is busy enough on its
+	// own, and then every six hours: disk use moves slowly, and a walk an hour
+	// was a spike an hour. Skipped when the last one is recent enough, so a
+	// panel restarted three times in an afternoon walks the disk once.
 	disk := make(chan *system.Usage, 1)
 	go func() {
+		wait := 5 * time.Minute
+		if last := db.LastDiskUsage(ctx); !last.IsZero() {
+			wait = max(wait, time.Until(last.Add(diskEvery)))
+		}
+
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+
 			if usage := system.DiskUsage(sites()); usage != nil {
 				select {
 				case disk <- usage:
@@ -294,11 +307,7 @@ func sample(ctx context.Context, db *store.Store) {
 				}
 			}
 
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Hour):
-			}
+			wait = diskEvery
 		}
 	}()
 
@@ -355,6 +364,9 @@ func sample(ctx context.Context, db *store.Store) {
 		}
 	}
 }
+
+// diskEvery is how often the disk breakdown is measured.
+const diskEvery = 6 * time.Hour
 
 // asJSON is a breakdown as the samples table keeps it, or empty when there
 // is none.

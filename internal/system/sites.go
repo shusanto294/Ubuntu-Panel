@@ -79,6 +79,12 @@ func WatchCWDs(out io.Writer) error {
 	writer := bufio.NewWriter(out)
 	fast := map[int]bool{}
 
+	// Whether each process is PHP, read once per process rather than every
+	// second: its name does not change, and two hundred reads a second of
+	// files whose answer is already known is the helper costing more than
+	// what it measures.
+	php := map[int]bool{}
+
 	for {
 		seen := map[int]map[string]int{}
 
@@ -100,6 +106,8 @@ func WatchCWDs(out io.Writer) error {
 
 		// Every process once a second, which is also when a new PHP worker
 		// is found.
+		alive := map[int]bool{}
+
 		entries, _ := os.ReadDir("/proc")
 		for _, entry := range entries {
 			pid, err := strconv.Atoi(entry.Name())
@@ -111,9 +119,23 @@ func WatchCWDs(out io.Writer) error {
 				continue
 			}
 
-			if comm, err := os.ReadFile("/proc/" + entry.Name() + "/comm"); err == nil &&
-				strings.HasPrefix(string(comm), "php") {
+			alive[pid] = true
+
+			isPHP, known := php[pid]
+			if !known {
+				comm, err := os.ReadFile("/proc/" + entry.Name() + "/comm")
+				isPHP = err == nil && strings.HasPrefix(string(comm), "php")
+				php[pid] = isPHP
+			}
+
+			if isPHP {
 				fast[pid] = true
+			}
+		}
+
+		for pid := range php {
+			if !alive[pid] {
+				delete(php, pid)
 			}
 		}
 

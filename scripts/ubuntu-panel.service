@@ -58,5 +58,13 @@ PrivateTmp=no
 # what those open.
 LimitNOFILE=8192
 
+# Behind the sites for CPU and disk: everything the panel runs — its own
+# clocks, an app install, a site's build — gets a fifth of the share a site's
+# PHP or Node does when they want the machine at the same time, and all of it
+# when nothing else does. The panel also lowers its own nice value on start;
+# this is the same thing at the cgroup, where it covers every child too.
+CPUWeight=20
+IOWeight=20
+
 [Install]
 WantedBy=multi-user.target

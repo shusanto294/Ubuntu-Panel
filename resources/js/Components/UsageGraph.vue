@@ -277,7 +277,7 @@ const breakdownLines = computed(() => {
 // and minutes from before an update never had one.
 const missingBreakdown = computed(() =>
     props.kind === 'disk'
-        ? 'Measuring what is using the disk. It shows here within a few minutes, and is measured again every hour.'
+        ? 'What is using the disk is measured a few minutes after the panel starts, then every six hours. It shows here once it has been.'
         : 'No breakdown was recorded for this time.',
 );
 
