@@ -1,6 +1,7 @@
 package system
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,7 +27,7 @@ func TestSpikeGroupsAPoolAndSharesTheMachine(t *testing.T) {
 		30: {ticks: 520, name: "mariadbd"},    // 0.2 s
 	}
 
-	spike := spikeOf(before, after, time.Second, 2, 70, time.Unix(100, 0), fakeCommand)
+	spike := spikeOf(before, after, time.Second, 2, 70, time.Unix(100, 0), fakeCommand, nil)
 
 	if len(spike.Top) != 2 {
 		t.Fatalf("top is %+v", spike.Top)
@@ -48,7 +49,7 @@ func TestSpikeCountsFinishedChildrenOnTheParent(t *testing.T) {
 	before := map[int]procTicks{1: {ticks: 10, children: 0, name: "ubuntu-panel"}}
 	after := map[int]procTicks{1: {ticks: 12, children: 80, name: "ubuntu-panel"}}
 
-	spike := spikeOf(before, after, time.Second, 2, 41, time.Unix(100, 0), fakeCommand)
+	spike := spikeOf(before, after, time.Second, 2, 41, time.Unix(100, 0), fakeCommand, nil)
 
 	if len(spike.Top) != 1 || spike.Top[0].CPU != 41 || spike.Top[0].Finished != 40 {
 		t.Fatalf("top is %+v", spike.Top)
@@ -67,7 +68,7 @@ func TestSpikeDoesNotCountALongChildsWholeLife(t *testing.T) {
 		1: {ticks: 10, children: 360010, name: "php-fpm8.3"}, // the hour, plus 0.1 s
 	}
 
-	spike := spikeOf(before, after, time.Second, 2, 55, time.Unix(100, 0), fakeCommand)
+	spike := spikeOf(before, after, time.Second, 2, 55, time.Unix(100, 0), fakeCommand, nil)
 
 	if len(spike.Top) != 1 || spike.Top[0].CPU != 5 {
 		t.Fatalf("top is %+v", spike.Top)
@@ -97,5 +98,169 @@ func TestSamplerKeepsTheBusiestSpike(t *testing.T) {
 
 	if next := s.Take(); next.Spike != nil {
 		t.Fatalf("an empty window has %+v", next.Spike)
+	}
+}
+
+// A worker busy for a site is that site's, by name, with what it ran under
+// it; a worker split between two sites in the second is shared between them.
+func TestSpikePutsWorkersDownToTheirSites(t *testing.T) {
+	before := map[int]procTicks{
+		20: {ticks: 1000, name: "php-fpm8.3"},
+		21: {ticks: 1000, name: "php-fpm8.3"},
+		22: {ticks: 1000, name: "php-fpm8.3"},
+		30: {ticks: 500, name: "mariadbd"},
+	}
+	after := map[int]procTicks{
+		20: {ticks: 1060, name: "php-fpm8.3"}, // 0.6 s, shop.test
+		21: {ticks: 1040, name: "php-fpm8.3"}, // 0.4 s, half each
+		22: {ticks: 1010, name: "php-fpm8.3"}, // 0.1 s, no site known
+		30: {ticks: 520, name: "mariadbd"},    // 0.2 s
+	}
+
+	sites := func(pid int) []siteShare {
+		switch pid {
+		case 20:
+			return []siteShare{{domain: "shop.test", weight: 1}}
+		case 21:
+			return []siteShare{{domain: "shop.test", weight: 0.5}, {domain: "blog.test", weight: 0.5}}
+		}
+		return nil
+	}
+
+	command := func(pid int, name string) string {
+		if pid >= 20 && pid <= 22 {
+			return "php-fpm: pool www"
+		}
+		return name
+	}
+
+	spike := spikeOf(before, after, time.Second, 2, 65, time.Unix(100, 0), command, sites)
+
+	byName := map[string]SpikeProcess{}
+	for _, line := range spike.Top {
+		byName[line.Name] = line
+	}
+
+	shop := byName["shop.test"]
+	if !shop.Site || shop.CPU != 40 || shop.Programs != "PHP ×2" {
+		t.Fatalf("shop is %+v", shop)
+	}
+
+	if blog := byName["blog.test"]; !blog.Site || blog.CPU != 10 || blog.Programs != "PHP" {
+		t.Fatalf("blog is %+v", blog)
+	}
+
+	if pool := byName["php-fpm: pool www"]; pool.Site || pool.CPU != 5 {
+		t.Fatalf("the unknown worker is %+v", pool)
+	}
+
+	if spike.Top[0].Name != "shop.test" {
+		t.Fatalf("busiest first, got %+v", spike.Top)
+	}
+}
+
+// A quiet second still says what it was spent on.
+func TestSpikeOfAQuietSecond(t *testing.T) {
+	before := map[int]procTicks{30: {ticks: 500, name: "mariadbd"}}
+	after := map[int]procTicks{30: {ticks: 501, name: "mariadbd"}}
+
+	spike := spikeOf(before, after, time.Second, 2, 0.5, time.Unix(100, 0), fakeCommand, nil)
+
+	if len(spike.Top) != 1 || spike.Top[0].CPU != 0.5 {
+		t.Fatalf("top is %+v", spike.Top)
+	}
+}
+
+func TestMemoryIsBySiteThenProgram(t *testing.T) {
+	procs := map[int]procTicks{
+		20: {name: "php-fpm8.3", rssMB: 100},
+		21: {name: "php-fpm8.3", rssMB: 100},
+		22: {name: "php-fpm8.3", rssMB: 50},
+		30: {name: "mariadbd", rssMB: 400},
+		40: {name: "node", rssMB: 150},
+	}
+
+	sites := func(pid int) string {
+		switch pid {
+		case 20, 21:
+			return "shop.test"
+		case 40:
+			return "app.test"
+		}
+		return ""
+	}
+
+	usage := memoryOf(procs, 1000, time.Unix(100, 0), sites)
+
+	if len(usage.Top) != 4 {
+		t.Fatalf("top is %+v", usage.Top)
+	}
+
+	if first := usage.Top[0]; first.Name != "mariadbd" || first.Percent != 40 || first.Site {
+		t.Fatalf("first is %+v", first)
+	}
+
+	if shop := usage.Top[1]; shop.Name != "shop.test" || !shop.Site || shop.Percent != 20 ||
+		shop.Detail != "PHP ×2" || shop.Bytes != 200<<20 {
+		t.Fatalf("shop is %+v", shop)
+	}
+
+	if app := usage.Top[2]; app.Name != "app.test" || app.Detail != "Node.js" {
+		t.Fatalf("app is %+v", app)
+	}
+}
+
+func TestSiteIndexFindsTheDeepestRoot(t *testing.T) {
+	index := newSiteIndex([]SiteRoot{
+		{Domain: "example.com", Root: "/var/www/example.com/"},
+		{Domain: "shop.example.com", Root: "/var/www/example.com/shop"},
+		{Domain: "broken", Root: "/"},
+	})
+
+	cases := map[string]string{
+		"/var/www/example.com":                 "example.com",
+		"/var/www/example.com/public/wp-admin": "example.com",
+		"/var/www/example.com/shop/public":     "shop.example.com",
+		"/var/www/example.community":           "",
+		"/root":                                "",
+	}
+
+	for directory, want := range cases {
+		if got := index.site(directory); got != want {
+			t.Errorf("%s is %q, want %q", directory, got, want)
+		}
+	}
+}
+
+func TestSiteSharesSplitBySightings(t *testing.T) {
+	index := newSiteIndex([]SiteRoot{{Domain: "a.test", Root: "/var/www/a"}, {Domain: "b.test", Root: "/var/www/b"}})
+
+	shares := siteShares(map[string]int{"/var/www/a/public": 3, "/var/www/b": 1, "/tmp": 5}, index)
+
+	if len(shares) != 2 || shares[0].domain != "a.test" || shares[0].weight != 0.75 || shares[1].weight != 0.25 {
+		t.Fatalf("shares are %+v", shares)
+	}
+
+	if none := siteShares(map[string]int{"/var/lib/mysql": 10}, index); none != nil {
+		t.Fatalf("no site, got %+v", none)
+	}
+}
+
+func TestCWDFeedReadsSeconds(t *testing.T) {
+	var feed cwdFeed
+
+	feed.read(strings.NewReader("20\t3\t/var/www/a\n20\t1\t/var/www/b\n\n21\t10\t/var/www/c\n"))
+
+	latest := feed.snapshot()
+	if len(latest) != 1 || latest[20]["/var/www/a"] != 3 || latest[20]["/var/www/b"] != 1 {
+		t.Fatalf("latest is %+v", latest)
+	}
+}
+
+func TestParseDu(t *testing.T) {
+	sizes := parseDu("12345\t/var/www/a\n999\t/var/log\nnot a line\n")
+
+	if sizes["/var/www/a"] != 12345 || sizes["/var/log"] != 999 || len(sizes) != 2 {
+		t.Fatalf("sizes are %+v", sizes)
 	}
 }

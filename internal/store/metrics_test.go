@@ -176,3 +176,61 @@ func TestHistoryCarriesTheBusiestSpike(t *testing.T) {
 		t.Fatal("a quiet minute has a spike")
 	}
 }
+
+// Memory shows the breakdown of the minute it peaked; the disk, measured
+// hourly, shows the last measurement on every point after it.
+func TestHistoryCarriesMemoryAndDisk(t *testing.T) {
+	st := metricStore(t)
+
+	st.RecordMetrics(MetricSample{CPU: 5, Memory: 30, MemoryUsage: `{"top":[{"name":"low"}]}`,
+		DiskUsage: `{"top":[{"name":"shop.test","site":true}]}`})
+	st.RecordMetrics(MetricSample{CPU: 5, Memory: 60, MemoryUsage: `{"top":[{"name":"high"}]}`})
+
+	points := st.MetricHistory(context.Background(), "24h")["points"].([]map[string]any)
+	if len(points) != 1 {
+		t.Fatalf("points are %#v", points)
+	}
+
+	if memory, _ := points[0]["memory_spike"].(json.RawMessage); !strings.Contains(string(memory), "high") {
+		t.Fatalf("memory is %#v", points[0]["memory_spike"])
+	}
+
+	if disk, _ := points[0]["disk_spike"].(json.RawMessage); !strings.Contains(string(disk), "shop.test") {
+		t.Fatalf("disk is %#v", points[0]["disk_spike"])
+	}
+}
+
+// Old minutes keep only their quarter hour's busiest breakdown.
+func TestPruneThinsOldBreakdowns(t *testing.T) {
+	st := metricStore(t)
+
+	for i, peak := range []float64{20, 90, 40} {
+		st.RecordMetrics(MetricSample{CPU: 5, CPUPeak: peak, Spike: `{"cpu":1}`, MemoryUsage: `{"top":[]}`})
+		// Three minutes of one quarter hour, a day ago.
+		st.db.Exec(`UPDATE metric_samples SET sampled_at = datetime(
+		    (strftime('%s', 'now', '-1 day') / 900) * 900 + ?, 'unixepoch') WHERE id = ?`, i*60, i+1)
+	}
+
+	st.RecordMetrics(MetricSample{CPU: 5, Spike: `{"cpu":2}`}) // recent: untouched
+
+	st.PruneMetrics()
+
+	var kept []float64
+	rows, _ := st.db.Query(`SELECT cpu_max FROM metric_samples WHERE cpu_spike IS NOT NULL ORDER BY id`)
+	for rows.Next() {
+		var peak float64
+		rows.Scan(&peak)
+		kept = append(kept, peak)
+	}
+	rows.Close()
+
+	if len(kept) != 2 || kept[0] != 90 || kept[1] != 5 {
+		t.Fatalf("kept spikes at %v, want the 90 and the recent one", kept)
+	}
+
+	var memory int
+	st.db.QueryRow(`SELECT count(*) FROM metric_samples WHERE memory_usage IS NOT NULL`).Scan(&memory)
+	if memory != 1 {
+		t.Fatalf("%d old memory breakdowns kept, want 1", memory)
+	}
+}

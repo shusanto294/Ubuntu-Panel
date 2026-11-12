@@ -35,8 +35,18 @@ func main() {
 		"install the server's apps and exit: all | core | none (default: PANEL_INSTALL_APPS)")
 	upgradeApps := flag.Bool("upgrade-apps", false,
 		"update the apps already on this machine and exit")
+	watchCWDs := flag.Bool("watch-cwds", false,
+		"report where each process is working, once a second (the panel runs this as root itself)")
 
 	flag.Parse()
+
+	// The helper the panel starts with sudo, so the CPU and memory graphs can
+	// say which site a PHP worker was busy for: where a process is working is
+	// only readable as root. It reads, writes to the panel, and nothing else.
+	if *watchCWDs {
+		system.WatchCWDs(os.Stdout)
+		return
+	}
 
 	if *showVersion {
 		fmt.Println(config.Name, config.Version)
@@ -255,7 +265,46 @@ func run(configPath string) error {
 // every second in between, so the minute is recorded as its average and its
 // peak rather than as whatever the last instant of it happened to be.
 func sample(ctx context.Context, db *store.Store) {
-	var watcher system.Sampler
+	sites := func() []system.SiteRoot {
+		list, err := db.Sites(ctx)
+		if err != nil {
+			return nil
+		}
+
+		roots := make([]system.SiteRoot, 0, len(list))
+		for _, site := range list {
+			roots = append(roots, system.SiteRoot{Domain: site.Domain, Root: site.RootPath})
+		}
+
+		return roots
+	}
+
+	watcher := system.Sampler{Sites: sites}
+
+	// The disk is measured by walking it, which takes a while on a full one:
+	// in the background, a few minutes after starting and then hourly, and
+	// written down with the minute that follows.
+	disk := make(chan *system.Usage, 1)
+	go func() {
+		wait := 2 * time.Minute
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+
+			if usage := system.DiskUsage(sites()); usage != nil {
+				select {
+				case disk <- usage:
+				default:
+				}
+			}
+
+			wait = time.Hour
+		}
+	}()
 
 	second := time.NewTicker(time.Second)
 	defer second.Stop()
@@ -286,13 +335,22 @@ func sample(ctx context.Context, db *store.Store) {
 			memory, memoryPeak = metrics.MemoryPercent, metrics.MemoryPercent
 		}
 
+		diskUsage := ""
+		select {
+		case usage := <-disk:
+			diskUsage = asJSON(usage)
+		default:
+		}
+
 		db.RecordMetrics(store.MetricSample{
 			CPU: window.CPUAverage, CPUPeak: window.CPUPeak,
 			Memory: memory, MemoryPeak: memoryPeak,
 			Disk: metrics.DiskPercent, Swap: metrics.SwapPercent, Load: metrics.Load[0],
 			MemoryUsed: int64(metrics.MemoryUsed), MemoryTotal: int64(metrics.MemoryTotal),
 			DiskUsed: int64(metrics.DiskUsed), DiskTotal: int64(metrics.DiskTotal),
-			Spike: spikeJSON(window.Spike),
+			Spike:       asJSON(window.Spike),
+			MemoryUsage: asJSON(window.Memory),
+			DiskUsage:   diskUsage,
 		})
 
 		if time.Since(pruned) > 6*time.Hour {
@@ -302,14 +360,14 @@ func sample(ctx context.Context, db *store.Store) {
 	}
 }
 
-// spikeJSON is a minute's busiest second as the samples table keeps it, or
-// empty when the CPU never got that busy.
-func spikeJSON(spike *system.Spike) string {
-	if spike == nil {
+// asJSON is a breakdown as the samples table keeps it, or empty when there
+// is none.
+func asJSON[T any](value *T) string {
+	if value == nil {
 		return ""
 	}
 
-	encoded, err := json.Marshal(spike)
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return ""
 	}

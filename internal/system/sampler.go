@@ -14,6 +14,17 @@ import (
 type Sampler struct {
 	cpu CPUMeter
 
+	// Sites lists the sites, so what a process does for one is shown as that
+	// site rather than as "php-fpm: pool www". Read once a minute; nil leaves
+	// every process under its program's name.
+	Sites func() []SiteRoot
+
+	sites    siteIndex
+	sitesAt  time.Time
+	cwds     cwdFeed
+	lastSite map[int]string // the site a process was last seen working for
+	memoryMB float64
+
 	// The process table at the last reading, so a busy second can say what
 	// was busy in it. Only the recorder's goroutine touches these.
 	procs   map[int]procTicks
@@ -28,7 +39,8 @@ type Sampler struct {
 	memMax float64
 	memN   int
 
-	// spike is the minute's busiest second at or above SpikeAt, nil if none.
+	// spike is the minute's busiest second, nil before there was a second to
+	// compare against.
 	spike *Spike
 }
 
@@ -40,9 +52,12 @@ type Window struct {
 	MemoryAverage float64
 	MemoryPeak    float64
 
-	// Spike is the window's busiest second at or above SpikeAt and what was
-	// using it; nil when the CPU never got that high.
+	// Spike is the window's busiest second and what was using it.
 	Spike *Spike
+
+	// Memory is what was holding memory at the end of the window; nil when
+	// the process table could not be read.
+	Memory *Usage
 }
 
 // Tick takes one reading.
@@ -52,6 +67,8 @@ func (s *Sampler) Tick() {
 
 	var memory Metrics
 	readMemory(&memory)
+
+	s.memoryMB = memory.MemoryTotal / (1 << 20)
 
 	s.observe(cpu, memory.MemoryPercent, memory.MemoryTotal > 0)
 }
@@ -79,7 +96,7 @@ func (s *Sampler) observe(cpu, memory float64, memoryKnown bool) {
 
 // watchProcesses reads the process table beside the CPU reading — the same
 // second, since both are measured from the reading before — and, when the
-// CPU was at SpikeAt or above, writes down what was using it.
+// second is the busiest of the minute so far, writes down what was using it.
 //
 // Reading the table is a stat file per process, which is a few milliseconds
 // every second: what htop does, and the only way to know afterwards what a
@@ -97,7 +114,9 @@ func (s *Sampler) watchProcesses(cpu float64) {
 	previous, elapsed := s.procs, now.Sub(s.procsAt)
 	s.procs, s.procsAt = current, now
 
-	if previous == nil || cpu < SpikeAt {
+	shares := s.watchSites(now, current)
+
+	if previous == nil || cpu < 0 {
 		return
 	}
 
@@ -113,15 +132,71 @@ func (s *Sampler) watchProcesses(cpu float64) {
 		s.cores = cores()
 	}
 
-	spike := spikeOf(previous, current, elapsed, s.cores, cpu, now, commandLine)
+	spike := spikeOf(previous, current, elapsed, s.cores, cpu, now, commandLine,
+		func(pid int) []siteShare { return shares[pid] })
 
 	s.mu.Lock()
 	s.spike = &spike
 	s.mu.Unlock()
 }
 
+// watchSites is which sites each process in the table was working for in
+// the last second, and remembers it: a PHP worker between two requests is
+// back in / and is still the last site's until it works for another.
+func (s *Sampler) watchSites(now time.Time, procs map[int]procTicks) map[int][]siteShare {
+	if s.Sites == nil {
+		return nil
+	}
+
+	if s.sites == nil || now.Sub(s.sitesAt) >= time.Minute {
+		s.sites, s.sitesAt = newSiteIndex(s.Sites()), now
+	}
+
+	s.cwds.start()
+
+	if s.lastSite == nil {
+		s.lastSite = map[int]string{}
+	}
+
+	for pid := range s.lastSite {
+		if _, alive := procs[pid]; !alive {
+			delete(s.lastSite, pid)
+		}
+	}
+
+	shares := map[int][]siteShare{}
+
+	for pid, directories := range s.cwds.snapshot() {
+		if found := siteShares(directories, s.sites); len(found) > 0 {
+			shares[pid] = found
+			s.lastSite[pid] = found[0].domain
+		}
+	}
+
+	for pid, domain := range s.lastSite {
+		if _, ok := shares[pid]; !ok {
+			shares[pid] = []siteShare{{domain: domain, weight: 1}}
+		}
+	}
+
+	return shares
+}
+
 // Take returns the window and starts the next one.
 func (s *Sampler) Take() Window {
+	window := s.take()
+
+	// Only the recorder's goroutine touches the table and the sites, which
+	// is the one that takes.
+	if s.procs != nil {
+		memory := memoryOf(s.procs, s.memoryMB, time.Now(), func(pid int) string { return s.lastSite[pid] })
+		window.Memory = &memory
+	}
+
+	return window
+}
+
+func (s *Sampler) take() Window {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

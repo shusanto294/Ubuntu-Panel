@@ -71,9 +71,13 @@ type MetricSample struct {
 
 	MemoryUsed, MemoryTotal, DiskUsed, DiskTotal int64
 
-	// Spike is the minute's busiest second and what used it, as JSON, or
-	// empty when the CPU never reached system.SpikeAt.
+	// Spike is the minute's busiest second and what used it, as JSON.
 	Spike string
+
+	// MemoryUsage is what held memory at the end of the minute, and
+	// DiskUsage what used the disk when it was last measured — only on the
+	// minute that measured it. JSON, or empty.
+	MemoryUsage, DiskUsage string
 }
 
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
@@ -86,26 +90,54 @@ func (s *Store) RecordMetrics(sample MetricSample) {
 		cpuPeak = math.Max(sample.CPU, sample.CPUPeak)
 	}
 
-	spike := any(nil)
-	if sample.Spike != "" {
-		spike = sample.Spike
+	orNull := func(text string) any {
+		if text == "" {
+			return nil
+		}
+		return text
 	}
 
 	s.db.Exec(
 		`INSERT INTO metric_samples
 		    (cpu_percent, cpu_max, memory_percent, memory_max, disk_percent, swap_percent,
-		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at, cpu_spike)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at, cpu_spike,
+		     memory_usage, disk_usage)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cpu, cpuPeak, sample.Memory, math.Max(sample.Memory, sample.MemoryPeak),
 		sample.Disk, sample.Swap, sample.MemoryUsed, sample.MemoryTotal,
 		sample.DiskUsed, sample.DiskTotal, sample.Load,
-		time.Now().UTC().Format("2006-01-02 15:04:05"), spike)
+		time.Now().UTC().Format("2006-01-02 15:04:05"), orNull(sample.Spike),
+		orNull(sample.MemoryUsage), orNull(sample.DiskUsage))
 }
 
-// PruneMetrics deletes samples past the retention window.
+// thinAfter is how old a minute is before only the busiest of its quarter
+// hour keeps its breakdown. Past the 1-hour graph, a point is a quarter of an
+// hour or more, and shows the busiest breakdown inside it — which is the
+// busiest of the quarter hours inside it — so the others are never read.
+const thinAfter = "-2 hours"
+
+// PruneMetrics deletes samples past the retention window, and the breakdowns
+// no graph will show again: a minute's is a kilobyte or two, and every minute
+// has one.
 func (s *Store) PruneMetrics() {
 	s.db.Exec(`DELETE FROM metric_samples WHERE sampled_at < datetime('now', ?)`,
 		"-"+strconv.Itoa(retainDays)+" days")
+
+	for _, column := range []struct{ breakdown, peak string }{
+		{"cpu_spike", "coalesce(cpu_max, cpu_percent, 0)"},
+		{"memory_usage", "coalesce(memory_max, memory_percent, 0)"},
+	} {
+		s.db.Exec(`UPDATE metric_samples SET ` + column.breakdown + ` = NULL
+		  WHERE id IN (
+		    SELECT id FROM (
+		      SELECT id, row_number() OVER (
+		               PARTITION BY strftime('%s', sampled_at) / 900
+		               ORDER BY ` + column.peak + ` DESC, id) AS rank
+		        FROM metric_samples
+		       WHERE ` + column.breakdown + ` IS NOT NULL
+		         AND sampled_at < datetime('now', '` + thinAfter + `'))
+		     WHERE rank > 1)`)
+	}
 }
 
 // MetricHistory is the recorded past of this machine's CPU, memory and disk,
@@ -169,10 +201,29 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 	// What each point's busiest second was: the spike with the highest CPU
 	// in the bucket, read on its own rather than as a bare column beside the
 	// averages, which SQLite only fills from the right row for a lone max().
-	spikes := s.bucketSpikes(ctx, window, from)
+	spikes := s.bucketBreakdowns(ctx, window, from, "cpu_spike", "coalesce(cpu_max, cpu_percent, 0)")
+	memory := s.bucketBreakdowns(ctx, window, from, "memory_usage", "coalesce(memory_max, memory_percent, 0)")
+	disks := s.diskBreakdowns(ctx, from)
+
 	for _, point := range points {
-		if spike, ok := spikes[point["t"].(int64)]; ok {
+		t := point["t"].(int64)
+
+		if spike, ok := spikes[t]; ok {
 			point["cpu_spike"] = spike
+		}
+
+		if usage, ok := memory[t]; ok {
+			point["memory_spike"] = usage
+		}
+
+		// The disk is measured hourly, and changes slowly: a point shows the
+		// last measurement taken by the end of it.
+		end := t + int64(window.Bucket)
+		for i := len(disks) - 1; i >= 0; i-- {
+			if disks[i].at < end {
+				point["disk_spike"] = disks[i].usage
+				break
+			}
 		}
 	}
 
@@ -224,16 +275,18 @@ func whole(value nullFloat) any {
 	return int64(value.Value)
 }
 
-// bucketSpikes is the busiest recorded spike of each bucket since from, keyed
-// by the bucket's start in unix seconds, as the JSON it was stored as.
-func (s *Store) bucketSpikes(ctx context.Context, window MetricRange, from time.Time) map[int64]json.RawMessage {
+// bucketBreakdowns is, for each bucket since from, the breakdown in column
+// from the sample whose peak was highest, keyed by the bucket's start in unix
+// seconds, as the JSON it was stored as.
+func (s *Store) bucketBreakdowns(ctx context.Context, window MetricRange, from time.Time,
+	column, peak string) map[int64]json.RawMessage {
 	out := map[int64]json.RawMessage{}
 	best := map[int64]float64{}
 
 	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
-		`SELECT (strftime('%s', sampled_at) / ?) * ?, coalesce(cpu_max, 0), cpu_spike
+		`SELECT (strftime('%s', sampled_at) / ?) * ?, `+peak+`, `+column+`
 		   FROM metric_samples
-		  WHERE sampled_at >= ? AND cpu_spike IS NOT NULL`,
+		  WHERE sampled_at >= ? AND `+column+` IS NOT NULL`,
 		window.Bucket, window.Bucket, from.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return out
@@ -242,16 +295,52 @@ func (s *Store) bucketSpikes(ctx context.Context, window MetricRange, from time.
 
 	for rows.Next() {
 		var bucket int64
-		var peak float64
-		var spike string
+		var value float64
+		var breakdown string
 
-		if rows.Scan(&bucket, &peak, &spike) != nil || !json.Valid([]byte(spike)) {
+		if rows.Scan(&bucket, &value, &breakdown) != nil || !json.Valid([]byte(breakdown)) {
 			continue
 		}
 
-		if current, seen := best[bucket]; !seen || peak > current {
-			best[bucket], out[bucket] = peak, json.RawMessage(spike)
+		if current, seen := best[bucket]; !seen || value > current {
+			best[bucket], out[bucket] = value, json.RawMessage(breakdown)
 		}
+	}
+
+	return out
+}
+
+type diskBreakdown struct {
+	at    int64
+	usage json.RawMessage
+}
+
+// diskBreakdowns is every disk measurement since from, oldest first, and the
+// last one before it, which is what the first points show.
+func (s *Store) diskBreakdowns(ctx context.Context, from time.Time) []diskBreakdown {
+	out := []diskBreakdown{}
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT strftime('%s', sampled_at), disk_usage FROM metric_samples
+		  WHERE disk_usage IS NOT NULL AND sampled_at >= coalesce(
+		        (SELECT max(sampled_at) FROM metric_samples
+		          WHERE disk_usage IS NOT NULL AND sampled_at < ?), ?)
+		  ORDER BY sampled_at`,
+		from.Format("2006-01-02 15:04:05"), from.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var at int64
+		var usage string
+
+		if rows.Scan(&at, &usage) != nil || !json.Valid([]byte(usage)) {
+			continue
+		}
+
+		out = append(out, diskBreakdown{at: at, usage: json.RawMessage(usage)})
 	}
 
 	return out

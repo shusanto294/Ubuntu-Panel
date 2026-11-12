@@ -12,10 +12,13 @@ const props = defineProps({
     label: { type: String, required: true },
     // Hue for this metric, held across every range so the card keeps its identity.
     color: { type: String, default: '#4f46e5' },
-    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null,
-    //    s?: { at, cpu, top: [{ name, command, processes, cpu, finished }] } | null }],
-    // oldest first. `s` is the point's busiest second and what was using it.
+    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null, s?: breakdown | null }],
+    // oldest first. `s` is what was behind the point — the sites and programs:
+    //   cpu:          { at, cpu, top: [{ name, site, programs, command, processes, cpu, finished }] }
+    //   memory, disk: { at, top: [{ name, site, detail, bytes, percent }] }
     points: { type: Array, default: () => [] },
+    // Which of those shapes `s` is, and how the tooltip words it.
+    kind: { type: String, default: 'cpu' },
     // The live reading, which is fresher than the newest recorded point.
     current: { type: [Number, null], default: null },
     // Context under the number, e.g. "3.1 GB of 7.8 GB".
@@ -70,9 +73,11 @@ const series = computed(() => {
     }));
 
     // The live reading is the line's last point, so the line ends where the
-    // number above it is now.
+    // number above it is now. It carries the newest breakdown there is, which
+    // says the time it is from.
     if (props.current !== null && props.current !== undefined) {
-        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, live: true });
+        const latest = [...out].reverse().find((p) => p.s)?.s ?? null;
+        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, s: latest, live: true });
     }
 
     return out;
@@ -216,15 +221,79 @@ const hoverTime = computed(() =>
         : '',
 );
 
-const spikeTime = computed(() =>
-    hover.value?.point.s
-        ? new Date(hover.value.point.s.at * 1000).toLocaleTimeString(undefined, {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-          })
-        : '',
+// What the breakdown is of, and when it was taken.
+const breakdownHeading = computed(() => {
+    const s = hover.value?.point.s;
+    if (!s) return '';
+
+    const at = new Date(s.at * 1000);
+
+    if (props.kind === 'disk') {
+        return `Measured ${at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    const time = at.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: props.kind === 'cpu' ? '2-digit' : undefined,
+    });
+
+    return props.kind === 'cpu' ? `Busiest second, ${time}` : `In use at ${time}`;
+});
+
+const breakdownLines = computed(() => {
+    const s = hover.value?.point.s;
+    if (!s?.top) return [];
+
+    return s.top.map((item) =>
+        props.kind === 'cpu'
+            ? {
+                  name: item.name,
+                  site: !!item.site,
+                  title: item.command,
+                  detail: item.site
+                      ? item.programs
+                      : item.finished >= 1 && item.finished >= item.cpu / 2
+                        ? 'incl. programs it ran'
+                        : '',
+                  count: !item.site && item.processes > 1 ? item.processes : 0,
+                  percent: item.cpu,
+                  bytes: null,
+              }
+            : {
+                  name: item.name,
+                  site: !!item.site,
+                  title: item.name,
+                  detail: item.detail ?? '',
+                  count: 0,
+                  percent: item.percent,
+                  bytes: item.bytes,
+              },
+    );
+});
+
+const emptyBreakdown = computed(() =>
+    props.kind === 'cpu' ? 'Nothing was using the CPU.' : 'Nothing to show.',
 );
+
+// A quiet machine's lines are fractions of a percent; they keep a decimal
+// so they are not all "0%".
+const percent = (value) => {
+    if (value === null || value === undefined) return '—';
+    return value >= 10 ? `${value.toFixed(0)}%` : `${value.toFixed(1)}%`;
+};
+
+const size = (value) => {
+    if (!value && value !== 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let n = Number(value);
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+        n /= 1024;
+        i++;
+    }
+    return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+};
 
 // Keep the tooltip inside the card rather than letting it run off the edge.
 // One with processes in it is wider and taller: it sits below a high point
@@ -232,7 +301,7 @@ const spikeTime = computed(() =>
 const tooltipStyle = computed(() => {
     if (!hover.value) return {};
 
-    const half = hover.value.point.s ? 125 : 56;
+    const half = hover.value.point.s ? 135 : 56;
     const clamped = Math.max(half, Math.min(width.value - half, hover.value.x));
 
     if (!hover.value.point.s) {
@@ -368,32 +437,47 @@ const tone = computed(() => {
                 <span class="block text-[10px] text-slate-300">{{ hover.point.live ? 'now' : hoverTime }}</span>
 
                 <div
-                    v-if="hover.point.s && hover.point.s.top?.length"
-                    class="mt-1.5 w-[230px] border-t border-white/15 pt-1.5 text-left whitespace-normal"
+                    v-if="hover.point.s"
+                    class="mt-1.5 w-[250px] border-t border-white/15 pt-1.5 text-left whitespace-normal"
                 >
                     <p class="text-[10px] text-slate-300">
-                        Busiest second, {{ spikeTime }}:
-                        <span class="font-semibold text-white tabular-nums">{{ hover.point.s.cpu.toFixed(0) }}%</span>
+                        {{ breakdownHeading
+                        }}<template v-if="kind === 'cpu'"
+                            >:
+                            <span class="font-semibold text-white tabular-nums">{{
+                                percent(hover.point.s.cpu)
+                            }}</span></template
+                        >
                     </p>
-                    <ul class="mt-1 space-y-0.5">
+                    <ul v-if="breakdownLines.length" class="mt-1 space-y-0.5">
                         <li
-                            v-for="process in hover.point.s.top"
-                            :key="process.name"
+                            v-for="line in breakdownLines"
+                            :key="(line.site ? 'site:' : '') + line.name"
                             class="flex items-baseline justify-between gap-2"
                         >
-                            <span class="min-w-0 truncate" :title="process.command">
-                                {{ process.name }}
-                                <span v-if="process.processes > 1" class="text-slate-400">×{{ process.processes }}</span>
-                                <span
-                                    v-if="process.finished >= 1 && process.finished >= process.cpu / 2"
-                                    class="block text-[10px] text-slate-400"
-                                >
-                                    incl. programs it ran
+                            <span class="min-w-0" :title="line.title">
+                                <span class="flex items-baseline gap-1">
+                                    <span
+                                        v-if="line.site"
+                                        class="shrink-0 rounded bg-indigo-400/25 px-1 text-[9px] font-medium uppercase tracking-wide text-indigo-200"
+                                        >site</span
+                                    >
+                                    <span class="min-w-0 truncate">{{ line.name }}</span>
+                                    <span v-if="line.count" class="shrink-0 text-slate-400">×{{ line.count }}</span>
+                                </span>
+                                <span v-if="line.detail" class="block truncate text-[10px] text-slate-400">
+                                    {{ line.detail }}
                                 </span>
                             </span>
-                            <span class="shrink-0 font-semibold tabular-nums">{{ process.cpu.toFixed(0) }}%</span>
+                            <span class="shrink-0 text-right tabular-nums">
+                                <span v-if="line.bytes !== null" class="mr-1 text-[10px] text-slate-400">{{
+                                    size(line.bytes)
+                                }}</span>
+                                <span class="font-semibold">{{ percent(line.percent) }}</span>
+                            </span>
                         </li>
                     </ul>
+                    <p v-else class="mt-1 text-[10px] text-slate-400">{{ emptyBreakdown }}</p>
                 </div>
             </div>
 

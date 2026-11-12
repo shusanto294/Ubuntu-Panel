@@ -169,7 +169,7 @@ const points = (key) =>
         t: point.t,
         v: point[key],
         p: point[`${key}_peak`] ?? null,
-        // The busiest second inside the point and what was using it.
+        // What was behind the point — the sites and programs using it.
         s: point[`${key}_spike`] ?? null,
     }));
 
@@ -235,6 +235,7 @@ const loadTone = computed(() => {
         <div class="grid gap-4 lg:grid-cols-3">
             <UsageGraph
                 label="CPU"
+                kind="cpu"
                 color="#4f46e5"
                 :points="points('cpu')"
                 :current="metrics?.cpu?.usage ?? null"
@@ -244,6 +245,7 @@ const loadTone = computed(() => {
             />
             <UsageGraph
                 label="Memory"
+                kind="memory"
                 color="#0d9488"
                 :points="points('memory')"
                 :current="metrics?.memory?.percent ?? null"
@@ -257,6 +259,7 @@ const loadTone = computed(() => {
             />
             <UsageGraph
                 label="Disk"
+                kind="disk"
                 color="#ea580c"
                 :points="points('disk')"
                 :current="metrics?.disk?.percent ?? null"
