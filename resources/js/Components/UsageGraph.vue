@@ -272,6 +272,15 @@ const breakdownLines = computed(() => {
     );
 });
 
+// A point with no breakdown says why, rather than looking like the hover is
+// broken: the disk is measured hourly and the first one takes a few minutes,
+// and minutes from before an update never had one.
+const missingBreakdown = computed(() =>
+    props.kind === 'disk'
+        ? 'Measuring what is using the disk. It shows here within a few minutes, and is measured again every hour.'
+        : 'No breakdown was recorded for this time.',
+);
+
 const emptyBreakdown = computed(() =>
     props.kind === 'cpu' ? 'Nothing was using the CPU.' : 'Nothing to show.',
 );
@@ -301,12 +310,10 @@ const size = (value) => {
 const tooltipStyle = computed(() => {
     if (!hover.value) return {};
 
-    const half = hover.value.point.s ? 135 : 56;
+    // Every tooltip now carries a breakdown or a line saying why there is
+    // none, so every one is placed like a tall one.
+    const half = hover.value.point.s ? 135 : 110;
     const clamped = Math.max(half, Math.min(width.value - half, hover.value.x));
-
-    if (!hover.value.point.s) {
-        return { left: `${clamped}px`, top: `${Math.max(4, hover.value.y - 46)}px` };
-    }
 
     return hover.value.y < HEIGHT / 2
         ? { left: `${clamped}px`, top: `${hover.value.y + 12}px` }
@@ -479,6 +486,12 @@ const tone = computed(() => {
                     </ul>
                     <p v-else class="mt-1 text-[10px] text-slate-400">{{ emptyBreakdown }}</p>
                 </div>
+                <p
+                    v-else
+                    class="mt-1.5 w-[200px] border-t border-white/15 pt-1.5 text-left text-[10px] whitespace-normal text-slate-400"
+                >
+                    {{ missingBreakdown }}
+                </p>
             </div>
 
             <div

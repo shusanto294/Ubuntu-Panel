@@ -282,19 +282,11 @@ func sample(ctx context.Context, db *store.Store) {
 	watcher := system.Sampler{Sites: sites}
 
 	// The disk is measured by walking it, which takes a while on a full one:
-	// in the background, a few minutes after starting and then hourly, and
+	// in the background, as soon as the panel starts and then hourly, and
 	// written down with the minute that follows.
 	disk := make(chan *system.Usage, 1)
 	go func() {
-		wait := 2 * time.Minute
-
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(wait):
-			}
-
 			if usage := system.DiskUsage(sites()); usage != nil {
 				select {
 				case disk <- usage:
@@ -302,7 +294,11 @@ func sample(ctx context.Context, db *store.Store) {
 				}
 			}
 
-			wait = time.Hour
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Hour):
+			}
 		}
 	}()
 

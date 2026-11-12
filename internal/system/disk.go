@@ -62,8 +62,13 @@ func DiskUsage(sites []SiteRoot) *Usage {
 	}
 
 	// Missing directories are said so on stderr and left out; that is fine.
-	result := proc.Run("sudo -n nice -n 19 ionice -c3 du -sb --one-file-system "+
-		strings.Join(quoted, " ")+" 2>/dev/null", 15*time.Minute)
+	// The lowest best-effort I/O priority rather than the idle class: on a
+	// disk that is never idle — a database writing all day — idle I/O can
+	// wait forever, and the measurement with it. Without ionice where the
+	// machine will not allow it (some containers).
+	result := proc.Run(`io=""; ionice -c2 -n7 true 2>/dev/null && io="ionice -c2 -n7"; `+
+		`sudo -n nice -n 19 $io du -sb --one-file-system `+strings.Join(quoted, " ")+` 2>/dev/null`,
+		15*time.Minute)
 
 	sizes := parseDu(result.Output)
 
