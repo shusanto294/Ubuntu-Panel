@@ -301,7 +301,7 @@ func (a *App) checkAlerts(ctx context.Context) {
 	var alerts []alert
 
 	alerts = append(alerts, a.panelAlerts(ctx)...)
-	alerts = append(alerts, a.sshAlerts()...)
+	alerts = append(alerts, a.sshAlerts(ctx)...)
 	alerts = append(alerts, a.healthAlerts(ctx)...)
 	alerts = append(alerts, a.taskAlerts(ctx)...)
 
@@ -362,29 +362,40 @@ func (a *App) panelAlerts(ctx context.Context) []alert {
 }
 
 // sshAlerts are SSH logins since the last look.
-func (a *App) sshAlerts() []alert {
+//
+// Read from the panel's own copy of sshd's log, which recordSSHEvents brought
+// up to date earlier in the same minute, rather than from the journal again:
+// a journalctl is a process opening every journal file, and twice a minute
+// that was a visible share of an idle machine. The look covers up to the
+// moment of that copy, not up to now, so a login logged in between is the
+// next minute's, not nobody's.
+func (a *App) sshAlerts(ctx context.Context) []alert {
 	alerts := []alert{}
 
-	wantLogins := a.Store.SettingBool(alertSSHLoginSetting, true)
+	copied, _ := strconv.ParseInt(a.Store.Setting(sshEventsSetting, ""), 10, 64)
+	if copied <= 0 {
+		return alerts
+	}
 
 	checked, _ := strconv.ParseInt(a.Store.Setting(alertSSHCheckedSetting, ""), 10, 64)
-	now := time.Now()
-	a.Store.SetSetting(alertSSHCheckedSetting, strconv.FormatInt(now.Unix(), 10))
+	if copied <= checked {
+		return alerts
+	}
 
-	if wantLogins && checked > 0 {
-		since := now.Sub(time.Unix(checked, 0)) + 5*time.Second
+	a.Store.SetSetting(alertSSHCheckedSetting, strconv.FormatInt(copied, 10))
 
-		for _, event := range security.ReadEvents(since, 50) {
-			if event.Kind != security.EventAccepted || !event.Time.After(time.Unix(checked, 0)) {
-				continue
-			}
+	if checked <= 0 || !a.Store.SettingBool(alertSSHLoginSetting, true) {
+		return alerts
+	}
 
-			alerts = append(alerts, newAlert("ssh_login", levelWarning, "/logs?view=panel&source=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
-				"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
-				"If this was not you, change the account's password or keys on Security → SSH, "+
-				"and turn SSH passwords off.", event.User, event.IP, event.User, event.IP,
-				event.Method, event.Time.Format(time.RFC1123))).with("ips", []string{event.IP}))
-		}
+	for _, event := range a.Store.SSHEventsBetween(ctx, security.EventAccepted, checked, copied, 50) {
+		when := time.Unix(event.CreatedAt, 0)
+
+		alerts = append(alerts, newAlert("ssh_login", levelWarning, "/logs?view=panel&source=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
+			"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
+			"If this was not you, change the account's password or keys on Security → SSH, "+
+			"and turn SSH passwords off.", event.User, event.IP, event.User, event.IP,
+			event.Method, when.Format(time.RFC1123))).with("ips", []string{event.IP}))
 	}
 
 	return alerts

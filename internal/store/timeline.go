@@ -69,6 +69,32 @@ func (s *Store) LastSSHLogins(ctx context.Context, kind string) map[string]SSHEv
 	return found
 }
 
+// SSHEventsBetween is the events of one kind kept with after < created_at <=
+// until, oldest first, at most limit of them.
+func (s *Store) SSHEventsBetween(ctx context.Context, kind string, after, until int64, limit int) []SSHEvent {
+	events := []SSHEvent{}
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT id, kind, username, ip_address, method, created_at
+		   FROM ssh_events
+		  WHERE kind = ? AND created_at > ? AND created_at <= ?
+		  ORDER BY created_at, id
+		  LIMIT ?`, kind, after, until, limit)
+	if err != nil {
+		return events
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var event SSHEvent
+		if rows.Scan(&event.ID, &event.Kind, &event.User, &event.IP, &event.Method, &event.CreatedAt) == nil {
+			events = append(events, event)
+		}
+	}
+
+	return events
+}
+
 // Timeline filters beyond the task types.
 const (
 	TimelinePanelLogins = "panel-login"
@@ -308,7 +334,7 @@ func (s *Store) ClearLogs(ctx context.Context, kinds []string, before time.Time)
 		case LogsTasks:
 			result, err = s.db.ExecContext(ctx,
 				`DELETE FROM activity_logs
-				  WHERE status != 'running' AND CAST(strftime('%s', created_at) AS INTEGER) < ?`, cutoff)
+				  WHERE created_at < datetime(?, 'unixepoch') AND status != 'running'`, cutoff)
 		case LogsLogins:
 			result, err = s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE created_at < ?`, cutoff)
 		case LogsSSH:

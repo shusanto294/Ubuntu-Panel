@@ -187,6 +187,9 @@ var schema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS activity_logs_type_status ON activity_logs(type, status)`,
 	`CREATE INDEX IF NOT EXISTS activity_logs_created ON activity_logs(id DESC)`,
+	// The hourly prune finds old tasks by date. Without this it read every row,
+	// and a task's row carries its whole console output.
+	`CREATE INDEX IF NOT EXISTS activity_logs_created_at ON activity_logs(created_at)`,
 
 	`CREATE TABLE IF NOT EXISTS email_domains (
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,

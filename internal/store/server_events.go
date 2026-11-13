@@ -334,7 +334,7 @@ func (s *Store) EventCounts(ctx context.Context, since int64) map[string]int {
 	counts := map[string]int{}
 
 	single := map[string]string{
-		EventsPanel:  `SELECT count(*) FROM activity_logs WHERE CAST(strftime('%s', created_at) AS INTEGER) >= ?`,
+		EventsPanel:  `SELECT count(*) FROM activity_logs WHERE created_at >= datetime(?, 'unixepoch')`,
 		EventsLogins: `SELECT count(*) FROM login_attempts WHERE created_at >= ?`,
 		EventsSSH:    `SELECT count(*) FROM ssh_events WHERE created_at >= ?`,
 	}

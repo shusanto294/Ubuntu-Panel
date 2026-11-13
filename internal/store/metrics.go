@@ -135,7 +135,8 @@ func (s *Store) PruneMetrics() {
 		               ORDER BY ` + column.peak + ` DESC, id) AS rank
 		        FROM metric_samples
 		       WHERE ` + column.breakdown + ` IS NOT NULL
-		         AND sampled_at < datetime('now', '` + thinAfter + `'))
+		         AND sampled_at < datetime('now', '` + thinAfter + `')
+		         AND sampled_at >= datetime('now', '` + thinAfter + `', '-1 day'))
 		     WHERE rank > 1)`)
 	}
 }
