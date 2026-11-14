@@ -10,6 +10,7 @@ package system
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -410,12 +411,14 @@ func MemoryMB() int64 {
 // naming a PHP-FPM socket that is not there, and every request to it is a 502
 // — so the choice is worth making an informed one.
 func InstalledPHPVersions() []string {
-	result := proc.Run("ls /run/php/*-fpm.sock 2>/dev/null", 15*time.Second)
+	// A glob, not ls: this is asked every minute, and a shell is a process.
+	sockets, _ := filepath.Glob("/run/php/*-fpm.sock")
+	found := strings.Join(sockets, "\n")
 
 	versions := []string{}
 
 	for _, version := range config.PHPVersions {
-		if strings.Contains(result.Output, "php"+version+"-fpm.sock") {
+		if strings.Contains(found, "php"+version+"-fpm.sock") {
 			versions = append(versions, version)
 		}
 	}

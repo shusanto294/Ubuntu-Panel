@@ -62,6 +62,7 @@ var health struct {
 	cpu        system.CPUMeter
 	hotMinutes int
 	certsAt    time.Time
+	mailAt     time.Time
 }
 
 // cooled is whether an alert may be sent again, and marks it sent if so.
@@ -104,7 +105,16 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 			metrics.DiskPercent, metrics.DiskFree, metrics.DiskTotal)))
 	}
 
-	if a.healthAlert(alertMailQueueSetting) && a.Store.ServiceInstalled("mail") {
+	// Every five minutes: counting the queue is a sudo find, and a queue
+	// that is filling with spam is still filling five minutes later.
+	health.Lock()
+	mailDue := time.Since(health.mailAt) >= 5*time.Minute
+	if mailDue {
+		health.mailAt = time.Now()
+	}
+	health.Unlock()
+
+	if mailDue && a.healthAlert(alertMailQueueSetting) && a.Store.ServiceInstalled("mail") {
 		if queued := mailQueue(); queued >= mailQueueAlert && a.cooled("mail_queue", 6*time.Hour) {
 			alerts = append(alerts, newAlert("mail_queue", levelWarning, "/logs?view=server&source=mail", fmt.Sprintf("%d messages are waiting in the mail queue\n\n"+
 				"A queue this long usually means a mailbox's password was stolen and it is sending "+

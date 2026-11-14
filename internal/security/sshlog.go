@@ -135,6 +135,23 @@ func ReadEvents(since time.Duration, limit int) []Event {
 	return parseEvents(oldestFirst(output), time.Now(), since, limit)
 }
 
+// ParseAuthLog reads the SSH logins out of a stretch of auth.log, oldest
+// first as the file has them.
+func ParseAuthLog(text string, now time.Time) []Event {
+	lines := []string{}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "sshd[") || strings.Contains(line, "sshd-session[") {
+			lines = append(lines, line)
+		}
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+
+	return parseEvents(strings.Join(lines, "\n"), now, 10*365*24*time.Hour, 0)
+}
+
 // oldestFirst turns the newest-first lines above back into log order, which
 // is the order parseEvents pairs an "Invalid user" line with the one after it.
 func oldestFirst(output string) string {

@@ -327,6 +327,16 @@ func (a *App) recordSSHEvents(ctx context.Context) {
 	now := time.Now()
 	window := 7 * 24 * time.Hour
 
+	// auth.log is read every minute anyway, and when that copy is up to date
+	// the logins in it are already in the table: a journalctl is a process
+	// opening every journal file, which on an idle machine was the panel's
+	// minute showing on the graph. The journal is still read the first time,
+	// at every start for the minutes the panel was down, and on a machine
+	// without auth.log.
+	if sshFromAuthLog.Load() && a.Store.Setting(sshEventsSetting, "") != "" {
+		return
+	}
+
 	if last, err := strconv.ParseInt(a.Store.Setting(sshEventsSetting, ""), 10, 64); err == nil && last > 0 {
 		if since := now.Sub(time.Unix(last, 0)) + 2*time.Minute; since < window {
 			window = since

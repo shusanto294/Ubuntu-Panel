@@ -3,13 +3,19 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
@@ -107,42 +113,36 @@ func (a *App) collectServerLogs(ctx context.Context) {
 		return
 	}
 
-	// Every file and its rotated copy in one sudo.
+	// Every file and its rotated copy, stat'd by the panel itself where it
+	// can see them, and in one sudo for the rest.
 	paths := make([]string, 0, 2*len(files))
 	for _, file := range files {
-		paths = append(paths, proc.Quote(file.Path), proc.Quote(file.Path+".1"))
+		paths = append(paths, file.Path, file.Path+".1")
 	}
 
-	type stat struct {
-		inode string
-		size  int64
-	}
-
-	stats := map[string]stat{}
-	output := proc.Run("sudo stat -c '%i %s %n' "+strings.Join(paths, " ")+" 2>/dev/null", time.Minute).Output
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.SplitN(strings.TrimSpace(line), " ", 3)
-		if len(fields) != 3 {
-			continue
-		}
-		size, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		stats[fields[2]] = stat{inode: fields[0], size: size}
-	}
+	started := time.Now()
+	stats := statLogs(paths)
 
 	trusted := a.trustedSet(ctx)
 
-	// What to read, decided first, so every read of the minute goes out in
-	// one sudo rather than one per file: a sudo is a process start, a PAM
-	// session and two lines in auth.log — which this then reads next minute.
+	// What to read, decided first, so every read the panel cannot make itself
+	// goes out in one sudo rather than one per file: a sudo is a process
+	// start, a PAM session and two lines in auth.log — which this then reads
+	// next minute.
 	reads := []logRead{}
+
+	// Whether the copy of auth.log is up to date, which makes it the SSH
+	// log's copy too (see recordSSHEvents).
+	authSeen, authBehind := false, false
 
 	for _, file := range files {
 		current, ok := stats[file.Path]
 		if !ok {
 			continue
+		}
+
+		if file.Source == serverlog.SourceAuth {
+			authSeen = true
 		}
 
 		inode, offset, known := a.Store.LogCursor(ctx, file.Path)
@@ -176,23 +176,169 @@ func (a *App) collectServerLogs(ctx context.Context) {
 	}
 
 	events := []store.ServerEvent{}
+	logins := []store.SSHEvent{}
 
-	for _, batch := range logBatches(reads) {
+	take := func(read logRead, contents []byte) {
+		found, consumed := a.logEvents(read.file, contents, read.skipFirst, trusted)
+		events = append(events, found...)
+
+		if read.cursor {
+			a.Store.SetLogCursor(ctx, read.file.Path, read.inode, read.from+consumed)
+		}
+
+		if read.file.Source == serverlog.SourceAuth {
+			logins = append(logins, sshEventsIn(contents[:consumed], read.skipFirst)...)
+			if read.length() < read.to-read.from || int64(len(contents)) < read.length() {
+				authBehind = true
+			}
+		}
+	}
+
+	// The panel's own reads first, one file at a time, so a minute of
+	// catching up is never every file's megabytes held at once.
+	viaSudo := []logRead{}
+	for _, read := range reads {
+		contents, ok := readLogDirect(read.file.Path, read.from, read.length())
+		if !ok {
+			viaSudo = append(viaSudo, read)
+			continue
+		}
+
+		take(read, contents)
+	}
+
+	for _, batch := range logBatches(viaSudo) {
 		contents := readLogBatch(ctx, batch)
 
 		for i, read := range batch {
-			found, consumed := a.logEvents(read.file, contents[i], read.skipFirst, trusted)
-			events = append(events, found...)
-
-			if read.cursor {
-				a.Store.SetLogCursor(ctx, read.file.Path, read.inode, read.from+consumed)
-			}
+			take(read, contents[i])
 		}
 	}
 
 	if err := a.Store.RecordServerEvents(ctx, events); err != nil {
 		a.Log.Warn("could not keep the server's log lines", "error", err)
 	}
+
+	a.recordAuthLogins(ctx, logins, authSeen && !authBehind, started)
+}
+
+// recordAuthLogins keeps the SSH logins read out of auth.log, and when the
+// copy is up to date says so: then the SSH log has been copied up to the
+// moment the files were looked at — less two seconds for a line still on its
+// way to the file, which is then the next minute's — and the minute's
+// journalctl is not needed.
+func (a *App) recordAuthLogins(ctx context.Context, logins []store.SSHEvent, current bool, at time.Time) {
+	a.Store.RecordSSHEvents(ctx, logins)
+
+	sshFromAuthLog.Store(current)
+	if !current {
+		return
+	}
+
+	copied := at.Unix() - 2
+	if last, _ := strconv.ParseInt(a.Store.Setting(sshEventsSetting, ""), 10, 64); copied > last {
+		a.Store.SetSetting(sshEventsSetting, strconv.FormatInt(copied, 10))
+	}
+}
+
+// sshFromAuthLog is whether the last minute's copy of auth.log was complete,
+// so it is where the SSH logins come from rather than the journal.
+var sshFromAuthLog atomic.Bool
+
+// sshEventsIn are the SSH logins in a stretch of auth.log.
+func sshEventsIn(contents []byte, skipFirst bool) []store.SSHEvent {
+	if skipFirst {
+		if _, rest, ok := bytes.Cut(contents, []byte("\n")); ok {
+			contents = rest
+		} else {
+			contents = nil
+		}
+	}
+
+	found := security.ParseAuthLog(string(contents), time.Now())
+	events := make([]store.SSHEvent, 0, len(found))
+
+	for _, event := range found {
+		events = append(events, store.SSHEvent{
+			Kind: event.Kind, User: event.User, IP: event.IP, Method: event.Method,
+			CreatedAt: event.Time.Unix(),
+		})
+	}
+
+	return events
+}
+
+// logStat is what the collector needs of a file: which file it is, and how
+// long.
+type logStat struct {
+	inode string
+	size  int64
+}
+
+// statLogs looks at the files as the panel itself — which the unit puts in
+// the adm group, the one Ubuntu's logs are readable by — and asks sudo only
+// about the ones it may not see, all in one. A file that is not there is left
+// out.
+func statLogs(paths []string) map[string]logStat {
+	stats := map[string]logStat{}
+	denied := []string{}
+
+	for _, path := range paths {
+		info, err := os.Stat(path)
+
+		switch {
+		case err == nil:
+			stats[path] = logStat{inode: inodeOf(info), size: info.Size()}
+		case errors.Is(err, fs.ErrPermission):
+			denied = append(denied, proc.Quote(path))
+		}
+	}
+
+	if len(denied) == 0 {
+		return stats
+	}
+
+	output := proc.Run("sudo stat -L -c '%i %s %n' "+strings.Join(denied, " ")+" 2>/dev/null", time.Minute).Output
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), " ", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		size, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		stats[fields[2]] = logStat{inode: fields[0], size: size}
+	}
+
+	return stats
+}
+
+// inodeOf is a file's inode as stat -c %i prints it, which is how the cursors
+// written before the panel read the files itself have it.
+func inodeOf(info fs.FileInfo) string {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return strconv.FormatUint(uint64(st.Ino), 10)
+	}
+
+	return ""
+}
+
+// readLogDirect reads at most length bytes of a file from offset, as the
+// panel itself. It reports false only when the panel may not open the file,
+// which is sudo's to read; a file gone since it was looked at reads as empty
+// and is tried again next minute from the same place.
+func readLogDirect(path string, offset, length int64) ([]byte, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, !errors.Is(err, fs.ErrPermission)
+	}
+	defer file.Close()
+
+	contents := make([]byte, length)
+	n, _ := file.ReadAt(contents, offset)
+
+	return contents[:n], true
 }
 
 // logRead is one stretch of one file the minute's copy reads: [from, to), at

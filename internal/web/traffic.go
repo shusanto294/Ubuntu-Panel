@@ -346,29 +346,17 @@ func (a *App) serverLogs(ctx context.Context) []serverLog {
 		}
 	}
 
-	// One sudo for every file rather than one each.
 	paths := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
-		paths = append(paths, proc.Quote(candidate.Path))
+		paths = append(paths, candidate.Path)
 	}
 
-	sizes := map[string]int64{}
-
-	output := proc.Run("sudo stat -c '%s %n' "+strings.Join(paths, " ")+" 2>/dev/null", 30*time.Second).Output
-	for _, line := range strings.Split(output, "\n") {
-		size, name, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok {
-			continue
-		}
-		if n, err := strconv.ParseInt(size, 10, 64); err == nil {
-			sizes[name] = n
-		}
-	}
+	stats := statLogs(paths)
 
 	found := []serverLog{}
 	for _, candidate := range candidates {
-		if size, ok := sizes[candidate.Path]; ok {
-			candidate.Size = size
+		if stat, ok := stats[candidate.Path]; ok {
+			candidate.Size = stat.size
 			found = append(found, candidate)
 		}
 	}

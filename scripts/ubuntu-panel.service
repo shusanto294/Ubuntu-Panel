@@ -17,6 +17,10 @@ Type=simple
 User=ubuntupanel
 Group=ubuntupanel
 
+# adm is the group Ubuntu's logs and journal are readable by, so the panel's
+# minute copy of them is a file read rather than a sudo, a bash and a cat.
+SupplementaryGroups=adm
+
 WorkingDirectory=/opt/ubuntu-panel
 ExecStart=/opt/ubuntu-panel/bin/ubuntu-panel --config /etc/ubuntu-panel/panel.conf
 
