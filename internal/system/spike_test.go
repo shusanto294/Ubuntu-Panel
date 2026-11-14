@@ -27,9 +27,10 @@ func TestSpikeGroupsAPoolAndSharesTheMachine(t *testing.T) {
 		30: {ticks: 520, name: "mariadbd"},    // 0.2 s
 	}
 
-	spike := spikeOf(before, after, time.Second, 2, 70, time.Unix(100, 0), fakeCommand, nil)
+	spike := spikeOf(before, after, time.Second, 2, 70, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
 
-	if len(spike.Top) != 2 {
+	// 60% found in the processes; the other 10% of the 70 is "Other".
+	if len(spike.Top) != 3 || !spike.Top[2].Other || spike.Top[2].CPU != 10 {
 		t.Fatalf("top is %+v", spike.Top)
 	}
 
@@ -49,7 +50,7 @@ func TestSpikeCountsFinishedChildrenOnTheParent(t *testing.T) {
 	before := map[int]procTicks{1: {ticks: 10, children: 0, name: "ubuntu-panel"}}
 	after := map[int]procTicks{1: {ticks: 12, children: 80, name: "ubuntu-panel"}}
 
-	spike := spikeOf(before, after, time.Second, 2, 41, time.Unix(100, 0), fakeCommand, nil)
+	spike := spikeOf(before, after, time.Second, 2, 41, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
 
 	if len(spike.Top) != 1 || spike.Top[0].CPU != 41 || spike.Top[0].Finished != 40 {
 		t.Fatalf("top is %+v", spike.Top)
@@ -68,10 +69,79 @@ func TestSpikeDoesNotCountALongChildsWholeLife(t *testing.T) {
 		1: {ticks: 10, children: 360010, name: "php-fpm8.3"}, // the hour, plus 0.1 s
 	}
 
-	spike := spikeOf(before, after, time.Second, 2, 55, time.Unix(100, 0), fakeCommand, nil)
+	spike := spikeOf(before, after, time.Second, 2, 55, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
 
-	if len(spike.Top) != 1 || spike.Top[0].CPU != 5 {
+	if len(spike.Top) != 2 || spike.Top[0].CPU != 5 || !spike.Top[1].Other || spike.Top[1].CPU != 50 {
 		t.Fatalf("top is %+v", spike.Top)
+	}
+}
+
+func sumOf(top []SpikeProcess) float64 {
+	tenths := 0
+	for _, line := range top {
+		tenths += int(line.CPU*10 + 0.5)
+	}
+	return float64(tenths) / 10
+}
+
+// A process that started inside the second — the panel's minute starting a
+// sudo — is counted whole, not left out for missing from the first reading.
+func TestSpikeCountsAProcessStartedInTheSecond(t *testing.T) {
+	before := map[int]procTicks{1: {ticks: 10, name: "ubuntu-panel"}}
+	after := map[int]procTicks{
+		1:  {ticks: 11, name: "ubuntu-panel"},
+		90: {ticks: 50, parent: 1, name: "sudo"}, // 0.5 s, new
+	}
+
+	spike := spikeOf(before, after, time.Second, 2, 25.5, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
+
+	if len(spike.Top) != 2 || spike.Top[0].Name != "sudo" || spike.Top[0].CPU != 25 {
+		t.Fatalf("top is %+v", spike.Top)
+	}
+}
+
+// The kernel's interrupts and the host's steal are lines of their own, and
+// what nothing explains is "Other": the lines add up to the figure.
+func TestSpikeLinesAddUpToTheFigure(t *testing.T) {
+	before := map[int]procTicks{}
+	after := map[int]procTicks{}
+	for pid := 1; pid <= 9; pid++ {
+		before[pid] = procTicks{ticks: 100, name: "p" + string(rune('0'+pid))}
+		after[pid] = procTicks{ticks: 100 + uint64(pid), name: "p" + string(rune('0'+pid))}
+	}
+
+	spike := spikeOf(before, after, time.Second, 3, 27, kernelTime{interrupts: 2.2, steal: 1.1},
+		time.Unix(100, 0), fakeCommand, nil)
+
+	if got := sumOf(spike.Top); got != 27 {
+		t.Fatalf("lines add up to %v: %+v", got, spike.Top)
+	}
+
+	if last := spike.Top[len(spike.Top)-1]; !last.Other {
+		t.Fatalf("other is not last: %+v", spike.Top)
+	}
+
+	if len(spike.Top) != spikeTop+1 {
+		t.Fatalf("top is %+v", spike.Top)
+	}
+}
+
+// Lines that found more than the figure are scaled down to it.
+func TestSpikeLinesNeverAddUpToMore(t *testing.T) {
+	before := map[int]procTicks{1: {ticks: 0, name: "a"}, 2: {ticks: 0, name: "b"}}
+	after := map[int]procTicks{1: {ticks: 60, name: "a"}, 2: {ticks: 40, name: "b"}}
+
+	spike := spikeOf(before, after, time.Second, 1, 80, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
+
+	if got := sumOf(spike.Top); got != 80 || spike.Top[0].CPU != 48 || spike.Top[1].CPU != 32 {
+		t.Fatalf("lines add up to %v: %+v", got, spike.Top)
+	}
+}
+
+func TestRoundToTotal(t *testing.T) {
+	got := roundToTotal([]float64{3.33, 3.33, 3.34}, 10)
+	if got[0]+got[1]+got[2] != 100 {
+		t.Fatalf("rounded to %v", got)
 	}
 }
 
@@ -134,7 +204,7 @@ func TestSpikePutsWorkersDownToTheirSites(t *testing.T) {
 		return name
 	}
 
-	spike := spikeOf(before, after, time.Second, 2, 65, time.Unix(100, 0), command, sites)
+	spike := spikeOf(before, after, time.Second, 2, 65, kernelTime{}, time.Unix(100, 0), command, sites)
 
 	byName := map[string]SpikeProcess{}
 	for _, line := range spike.Top {
@@ -164,7 +234,7 @@ func TestSpikeOfAQuietSecond(t *testing.T) {
 	before := map[int]procTicks{30: {ticks: 500, name: "mariadbd"}}
 	after := map[int]procTicks{30: {ticks: 501, name: "mariadbd"}}
 
-	spike := spikeOf(before, after, time.Second, 2, 0.5, time.Unix(100, 0), fakeCommand, nil)
+	spike := spikeOf(before, after, time.Second, 2, 0.5, kernelTime{}, time.Unix(100, 0), fakeCommand, nil)
 
 	if len(spike.Top) != 1 || spike.Top[0].CPU != 0.5 {
 		t.Fatalf("top is %+v", spike.Top)

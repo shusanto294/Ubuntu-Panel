@@ -9,8 +9,17 @@ import (
 	"time"
 )
 
-// spikeTop is how many lines a breakdown keeps.
+// spikeTop is how many lines a breakdown keeps; whatever is left over is one
+// more line, "Other", so the lines always add up to the second's figure.
 const spikeTop = 6
+
+// kernelTime is the part of a second that no process is charged for, as
+// percent of the whole machine: interrupts (irq and softirq — network and
+// disk work done by the kernel) and steal (time the host kept for others).
+type kernelTime struct {
+	interrupts float64
+	steal      float64
+}
 
 // Spike is a minute's busiest second, and what was using it. Every minute has
 // one, however quiet: a graph at 2% is still somebody's 2%.
@@ -28,6 +37,14 @@ type SpikeProcess struct {
 	Command   string  `json:"command"`   // the busiest one's command line
 	Processes int     `json:"processes"` // how many were busy
 	CPU       float64 `json:"cpu"`       // percent of the whole machine, like the graph
+
+	// Kernel is set on the lines that are not a process: the kernel's
+	// interrupts and the host's steal. Other is set on the line that holds
+	// the rest — the programs past the first few, and time no reading could
+	// put down to anything (a program that started and was gone between two
+	// readings with nobody waiting for it yet).
+	Kernel bool `json:"kernel,omitempty"`
+	Other  bool `json:"other,omitempty"`
 
 	// Site is set when Name is a site's domain rather than a program, and
 	// Programs then says what was running for it: "PHP ×3".
@@ -146,8 +163,11 @@ func readProcTicks() map[int]procTicks {
 // spikeOf is what used the CPU between two readings of the process table,
 // elapsed apart, on a machine of cores. A process working for a site is put
 // down to the site; everything else to its program.
+//
+// The lines add up to cpu, the second's figure on the graph, to the tenth: a
+// breakdown that leaves most of a spike out says nothing about the spike.
 func spikeOf(before, after map[int]procTicks, elapsed time.Duration, cores int, cpu float64,
-	at time.Time, command func(pid int, name string) string, sites attribution) Spike {
+	kernel kernelTime, at time.Time, command func(pid int, name string) string, sites attribution) Spike {
 	spike := Spike{At: at.Unix(), CPU: round(cpu), Top: []SpikeProcess{}}
 
 	seconds := elapsed.Seconds()
@@ -198,10 +218,10 @@ func spikeOf(before, after map[int]procTicks, elapsed time.Duration, cores int, 
 	}
 
 	for pid, now := range after {
-		then, ok := before[pid]
-		if !ok {
-			continue
-		}
+		// A process not in the first reading started inside the second, so
+		// all of its time so far is this second's: the panel's minute jobs
+		// are a sudo started and still running when the second ends.
+		then := before[pid]
 
 		own, finished := delta(then.ticks, now.ticks), delta(then.children+counted[pid], now.children)
 		if own+finished == 0 {
@@ -239,9 +259,32 @@ func spikeOf(before, after map[int]procTicks, elapsed time.Duration, cores int, 
 		add(key, name, false, pid, now.name, used, done)
 	}
 
+	if kernel.interrupts > 0 {
+		groups["kernel:interrupts"] = &group{SpikeProcess: SpikeProcess{Name: "Kernel interrupts",
+			Kernel: true, CPU: kernel.interrupts, Command: "network and disk work done by the kernel"}}
+	}
+	if kernel.steal > 0 {
+		groups["kernel:steal"] = &group{SpikeProcess: SpikeProcess{Name: "Steal",
+			Kernel: true, CPU: kernel.steal, Command: "time the host gave to other machines"}}
+	}
+
 	list := make([]*group, 0, len(groups))
+	sum := 0.0
 	for _, g := range groups {
 		list = append(list, g)
+		sum += g.CPU
+	}
+
+	// The process table and /proc/stat are read a moment apart, so what the
+	// lines found can come to a little more than the figure; they are scaled
+	// to it rather than adding up to more than the whole.
+	if sum > cpu && sum > 0 {
+		scale := cpu / sum
+		for _, g := range list {
+			g.CPU *= scale
+			g.Finished *= scale
+		}
+		sum = cpu
 	}
 
 	sort.Slice(list, func(i, j int) bool {
@@ -251,22 +294,91 @@ func spikeOf(before, after map[int]procTicks, elapsed time.Duration, cores int, 
 		return list[i].Name < list[j].Name
 	})
 
+	rest := max(0, cpu-sum)
 	if len(list) > spikeTop {
+		for _, g := range list[spikeTop:] {
+			rest += g.CPU
+		}
 		list = list[:spikeTop]
 	}
 
-	for _, g := range list {
-		g.CPU = round(min(100, g.CPU))
+	kept := make([]*group, 0, len(list)+1)
+	kept = append(kept, list...)
+	if rest > 0 {
+		kept = append(kept, &group{SpikeProcess: SpikeProcess{Name: "Other", Other: true, CPU: rest}})
+	}
+
+	// Each line to the tenth, the leftover tenths going to the lines that
+	// lost most to rounding, so the shown lines add up to the shown figure.
+	values := make([]float64, len(kept))
+	for i, g := range kept {
+		values[i] = g.CPU
+	}
+	tenths := roundToTotal(values, spike.CPU)
+
+	for i, g := range kept {
+		if tenths[i] == 0 {
+			continue
+		}
+
+		g.CPU = float64(tenths[i]) / 10
 		g.Finished = round(min(g.CPU, g.Finished))
 		// The command line only for the few kept: a file read each.
-		g.Command = command(g.busiestPID, g.Name)
+		if !g.Kernel && !g.Other {
+			g.Command = command(g.busiestPID, g.Name)
+		}
 		if g.Site {
 			g.Programs = programList(g.programs, g.programCPU)
 		}
 		spike.Top = append(spike.Top, g.SpikeProcess)
 	}
 
+	// Other is last whatever its size: it is what is left, not a program.
+	sort.SliceStable(spike.Top, func(i, j int) bool {
+		return !spike.Top[i].Other && spike.Top[j].Other
+	})
+
 	return spike
+}
+
+// roundToTotal rounds values to tenths that add up to total, itself in
+// tenths: each is rounded down, and the tenths still missing go to those
+// with the largest remainders.
+func roundToTotal(values []float64, total float64) []int {
+	out := make([]int, len(values))
+	if len(values) == 0 {
+		return out
+	}
+
+	want := int(total*10 + 0.5)
+	have := 0
+	order := make([]int, len(values))
+
+	for i, value := range values {
+		out[i] = int(value * 10)
+		have += out[i]
+		order[i] = i
+	}
+
+	sort.SliceStable(order, func(a, b int) bool {
+		ra := values[order[a]]*10 - float64(out[order[a]])
+		rb := values[order[b]]*10 - float64(out[order[b]])
+		return ra > rb
+	})
+
+	for i := 0; have < want; i = (i + 1) % len(order) {
+		out[order[i]]++
+		have++
+	}
+
+	for i := len(order) - 1; have > want; i = (i - 1 + len(order)) % len(order) {
+		if out[order[i]] > 0 {
+			out[order[i]]--
+			have--
+		}
+	}
+
+	return out
 }
 
 // memoryOf is what was holding memory in a reading of the process table, on

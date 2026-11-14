@@ -245,31 +245,52 @@ const breakdownLines = computed(() => {
     const s = hover.value?.point.s;
     if (!s?.top) return [];
 
-    return s.top.map((item) =>
-        props.kind === 'cpu'
-            ? {
-                  name: item.name,
-                  site: !!item.site,
-                  title: item.command,
-                  detail: item.site
-                      ? item.programs
-                      : item.finished >= 1 && item.finished >= item.cpu / 2
-                        ? 'incl. programs it ran'
-                        : '',
-                  count: !item.site && item.processes > 1 ? item.processes : 0,
-                  percent: item.cpu,
-                  bytes: null,
-              }
-            : {
-                  name: item.name,
-                  site: !!item.site,
-                  title: item.name,
-                  detail: item.detail ?? '',
-                  count: 0,
-                  percent: item.percent,
-                  bytes: item.bytes,
-              },
-    );
+    if (props.kind !== 'cpu') {
+        return s.top.map((item) => ({
+            name: item.name,
+            site: !!item.site,
+            title: item.name,
+            detail: item.detail ?? '',
+            count: 0,
+            percent: item.percent,
+            bytes: item.bytes,
+        }));
+    }
+
+    const lines = s.top.map((item) => ({
+        name: item.name,
+        site: !!item.site,
+        title: item.command,
+        detail: item.site
+            ? item.programs
+            : item.kernel
+              ? item.command
+              : item.other
+                ? 'smaller programs and time between readings'
+                : item.finished >= 1 && item.finished >= item.cpu / 2
+                  ? 'incl. programs it ran'
+                  : '',
+        count: !item.site && item.processes > 1 ? item.processes : 0,
+        percent: item.cpu,
+        bytes: null,
+    }));
+
+    // The lines add up to the second's figure. Minutes recorded before they
+    // did are given the rest as "Other", so they add up too.
+    const tenths = Math.round(s.cpu * 10) - lines.reduce((sum, line) => sum + Math.round(line.percent * 10), 0);
+    if (tenths > 0 && !s.top.some((item) => item.other)) {
+        lines.push({
+            name: 'Other',
+            site: false,
+            title: '',
+            detail: 'not broken down when this was recorded',
+            count: 0,
+            percent: tenths / 10,
+            bytes: null,
+        });
+    }
+
+    return lines;
 });
 
 // A point with no breakdown says why, rather than looking like the hover is
@@ -287,9 +308,11 @@ const emptyBreakdown = computed(() =>
 
 // A quiet machine's lines are fractions of a percent; they keep a decimal
 // so they are not all "0%".
+// The CPU breakdown always keeps its decimal, so its lines visibly add up
+// to the figure above them.
 const percent = (value) => {
     if (value === null || value === undefined) return '—';
-    return value >= 10 ? `${value.toFixed(0)}%` : `${value.toFixed(1)}%`;
+    return value >= 10 && props.kind !== 'cpu' ? `${value.toFixed(0)}%` : `${value.toFixed(1)}%`;
 };
 
 const size = (value) => {

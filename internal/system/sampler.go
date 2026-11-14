@@ -29,6 +29,7 @@ type Sampler struct {
 	// was busy in it. Only the recorder's goroutine touches these.
 	procs   map[int]procTicks
 	procsAt time.Time
+	times   cpuTimes // /proc/stat read beside the table
 	cores   int
 
 	mu     sync.Mutex
@@ -110,9 +111,19 @@ func (s *Sampler) watchProcesses(cpu float64) {
 		return
 	}
 
+	times, timesOK := readCPUTimes()
 	current := readProcTicks()
-	previous, elapsed := s.procs, now.Sub(s.procsAt)
-	s.procs, s.procsAt = current, now
+	previous, elapsed, previousTimes := s.procs, now.Sub(s.procsAt), s.times
+	s.procs, s.procsAt, s.times = current, now, times
+
+	// What the kernel spent on interrupts and what the host kept back, over
+	// the same second as the table: time no process is charged for.
+	var kernel kernelTime
+	if timesOK && times.total() > previousTimes.total() {
+		span := float64(times.total() - previousTimes.total())
+		kernel.interrupts = float64(delta(previousTimes.interrupts(), times.interrupts())) / span * 100
+		kernel.steal = float64(delta(previousTimes.steal(), times.steal())) / span * 100
+	}
 
 	shares := s.watchSites(now, current)
 
@@ -132,7 +143,7 @@ func (s *Sampler) watchProcesses(cpu float64) {
 		s.cores = cores()
 	}
 
-	spike := spikeOf(previous, current, elapsed, s.cores, cpu, now, commandLine,
+	spike := spikeOf(previous, current, elapsed, s.cores, cpu, kernel, now, commandLine,
 		func(pid int) []siteShare { return shares[pid] })
 
 	s.mu.Lock()

@@ -254,41 +254,12 @@ func readUptime(metrics *Metrics) {
 // Read is the CPU used since this meter's previous reading, so the first
 // call has nothing to compare against and returns -1.
 func (m *CPUMeter) Read() float64 {
-	contents, err := os.ReadFile("/proc/stat")
-	if err != nil {
+	fields, ok := readCPUTimes()
+	if !ok {
 		return -1
 	}
 
-	line, _, _ := strings.Cut(string(contents), "\n")
-
-	fields := strings.Fields(line)
-	if len(fields) < 5 || fields[0] != "cpu" {
-		return -1
-	}
-
-	var total, idle uint64
-
-	// The same sum htop makes: user nice system idle iowait irq softirq steal.
-	// guest and guest_nice (fields 8 and 9) are already counted inside user
-	// and nice, so adding them again would inflate the total and read low.
-	// Idle is idle plus iowait; steal counts as busy, since the guest asked
-	// for that time and did not get it.
-	for i, field := range fields[1:] {
-		if i > 7 {
-			break
-		}
-
-		value, err := strconv.ParseUint(field, 10, 64)
-		if err != nil {
-			continue
-		}
-
-		total += value
-
-		if i == 3 || i == 4 {
-			idle += value
-		}
-	}
+	total, idle := fields.total(), fields.idle()
 
 	m.Lock()
 	defer m.Unlock()
@@ -323,6 +294,57 @@ func (m *CPUMeter) Read() float64 {
 	m.last = percent
 
 	return percent
+}
+
+// cpuTimes is the machine's line of /proc/stat: user nice system idle iowait
+// irq softirq steal, in clock ticks since boot.
+type cpuTimes [8]uint64
+
+// The same sum htop makes: user nice system idle iowait irq softirq steal.
+// guest and guest_nice (fields 8 and 9) are already counted inside user and
+// nice, so adding them again would inflate the total and read low.
+func (c cpuTimes) total() uint64 {
+	var sum uint64
+	for _, value := range c {
+		sum += value
+	}
+	return sum
+}
+
+// Idle is idle plus iowait; steal counts as busy, since the guest asked for
+// that time and did not get it.
+func (c cpuTimes) idle() uint64 { return c[3] + c[4] }
+
+func (c cpuTimes) interrupts() uint64 { return c[5] + c[6] }
+
+func (c cpuTimes) steal() uint64 { return c[7] }
+
+func readCPUTimes() (cpuTimes, bool) {
+	var times cpuTimes
+
+	contents, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return times, false
+	}
+
+	line, _, _ := strings.Cut(string(contents), "\n")
+
+	fields := strings.Fields(line)
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return times, false
+	}
+
+	for i, field := range fields[1:] {
+		if i >= len(times) {
+			break
+		}
+
+		if value, err := strconv.ParseUint(field, 10, 64); err == nil {
+			times[i] = value
+		}
+	}
+
+	return times, true
 }
 
 // ------------------------------------------------------------- host info
