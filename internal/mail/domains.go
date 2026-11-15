@@ -131,7 +131,7 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 	}
 
 	if !s.IsConfigured() {
-		message := "The mail server is not installed yet — install it from the Apps page."
+		message := "The mail server is not installed yet — install it from the Services page."
 		s.Store.SetEmailDomainStatus(domainID, "failed", message)
 
 		return errors.New(message)
@@ -513,7 +513,7 @@ func (s *Service) serveMailHost(ctx context.Context, domainID int64) func(*tasks
 			}
 		} else {
 			log.WriteString("Roundcube is not installed, so " + host + " answers with a note " +
-				"rather than a webmail. Install it from Apps and set this domain up again.\n")
+				"rather than a webmail. Install it from Services and set this domain up again.\n")
 		}
 
 		available := "/etc/nginx/sites-available/webmail-" + domain.Domain
@@ -564,7 +564,7 @@ func (s *Service) secureMailHost(ctx context.Context, domainID int64) func(*task
 			s.webmailSmokeTest(runner, host)
 
 			return "Certbot is not installed, so " + host + " stays on the self-signed " +
-				"certificate. Install Certbot from Apps and set this domain up again.", nil
+				"certificate. Install Certbot from Services and set this domain up again.", nil
 		}
 
 		// The A record was published a moment ago and Let's Encrypt is about to

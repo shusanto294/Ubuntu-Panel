@@ -32,7 +32,7 @@ func main() {
 	configPath := flag.String("config", "", "path to panel.conf (default /etc/ubuntu-panel/panel.conf)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	installApps := flag.String("install-apps", "",
-		"install the server's apps and exit: all | core | none (default: PANEL_INSTALL_APPS)")
+		"install the server's services and exit: all | core | none (default: PANEL_INSTALL_APPS)")
 	upgradeApps := flag.Bool("upgrade-apps", false,
 		"update the apps already on this machine and exit")
 	watchCWDs := flag.Bool("watch-cwds", false,

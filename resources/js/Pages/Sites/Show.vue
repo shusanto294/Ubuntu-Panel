@@ -18,6 +18,8 @@ const props = defineProps({
     logs: Array,
     activeTask: Object,
     latestTask: Object,
+    // The services being installed for this site before it is deployed.
+    installing: { type: Array, default: () => [] },
     certbot: Boolean,
     resolution: Object,
     phpDirectives: { type: Array, default: () => [] },
@@ -825,7 +827,7 @@ const startPolling = () => {
     timer = setInterval(
         () =>
             router.reload({
-                only: ['site', 'logs', 'activeTask', 'latestTask', 'backups', 'backup'],
+                only: ['site', 'logs', 'activeTask', 'latestTask', 'installing', 'backups', 'backup'],
                 preserveScroll: true,
             }),
         3000,
@@ -844,7 +846,7 @@ const stopPolling = () => {
 // the redirect, a certificate issued on a retry.
 const refetch = () =>
     router.reload({
-        only: ['site', 'logs', 'activeTask', 'latestTask', 'backups', 'backup'],
+        only: ['site', 'logs', 'activeTask', 'latestTask', 'installing', 'backups', 'backup'],
         preserveScroll: true,
         preserveState: true,
     });
@@ -1067,7 +1069,20 @@ const destroy = async () => {
         </template>
 
         <div
-            v-if="busy && !activeTask && !latestTask"
+            v-if="busy && installing.length"
+            class="mb-8 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-5 py-4 text-sm text-brand-900"
+        >
+            <span class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand-500" />
+            <span>
+                Installing {{ installing.join(', ') }} on this server first — a
+                {{ site.type_label }} site needs {{ installing.length === 1 ? 'it' : 'them' }}.
+                The deployment starts by itself when {{ installing.length === 1 ? 'it is' : 'they are' }}
+                ready; on a small server this takes a few minutes.
+                <Link :href="route('services.index')" class="font-medium underline">Watch on Services</Link>
+            </span>
+        </div>
+        <div
+            v-else-if="busy && !activeTask && !latestTask"
             class="mb-8 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-5 py-4 text-sm text-brand-900"
         >
             <span class="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
@@ -1270,7 +1285,7 @@ const destroy = async () => {
                     CDN answered the challenge itself. Fix that and Redeploy.
                 </template>
                 <template v-else>
-                    Install Certbot from Apps, make sure {{ site.domain }} resolves
+                    Install Certbot from Services, make sure {{ site.domain }} resolves
                     here, then Redeploy.
                 </template>
             </p>
@@ -1832,7 +1847,7 @@ const destroy = async () => {
                 class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
             >
                 Certbot is not installed, so no certificate can be issued.
-                Install it from Apps first.
+                Install it from Services first.
             </p>
 
             <button
@@ -1976,7 +1991,7 @@ const destroy = async () => {
                                     class="mt-2 block text-xs font-medium text-amber-700"
                                 >
                                     Redis is not installed on this machine.
-                                    Install it from the Apps page first.
+                                    Install it from the Services page first.
                                 </span>
                                 <span
                                     v-else

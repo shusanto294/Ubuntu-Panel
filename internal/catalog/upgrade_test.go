@@ -1,12 +1,10 @@
 package catalog
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
-	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // installed marks an app as present without touching the machine.
@@ -101,61 +99,27 @@ func TestUpgradablePackagesCoversEveryPHPOnTheMachine(t *testing.T) {
 	}
 }
 
-// The newest PHP the panel knows about is installed, and becomes what new
-// sites are built against. Only that: the sites already on the machine keep
-// the version they were built for, because a site that works on 8.3 is not
-// something to move while nobody is watching.
-func TestUpgradeInstallsTheNewestPHPAndMakesItTheDefault(t *testing.T) {
+// An update makes the newest PHP the default for new sites and installs
+// nothing: the first site made on it installs it.
+func TestUpgradeOffersTheNewestPHPWithoutInstallingIt(t *testing.T) {
 	service := testService(t)
 	service.Store.SetSetting("php_version", "8.1")
 
-	list := &tasks.List{}
-	service.newestPHPSteps(context.Background(), list, []string{"php"}, []string{"8.1"})
+	service.offerNewestPHP([]string{"php", "nginx"})
 
-	newest := NewestPHP()
-	text := stepText(list)
-
-	if !strings.Contains(text, "php"+newest+"-fpm") {
-		t.Errorf("PHP %s is never installed:\n%s", newest, text)
-	}
-
-	steps := list.Steps()
-	last := steps[len(steps)-1]
-
-	if !strings.Contains(last.Name, "default for new sites") {
-		t.Errorf("the last step is %q, not the one that moves the default", last.Name)
-	}
-
-	// Optional: PHP that did not come up should not fail the whole update, and
-	// the default has to stay where it was when that happens.
-	if !last.Optional {
-		t.Error("moving the default is not optional, so a PHP that failed to install would " +
-			"take the rest of the update down with it")
+	if got := service.Store.PHPVersion(); got != NewestPHP() {
+		t.Errorf("default PHP = %s, want %s", got, NewestPHP())
 	}
 }
 
-// Already on the newest, so there is nothing to install and nothing to move —
-// the apt step above has it at its latest patch.
-func TestUpgradeAddsNoPHPWhenTheNewestIsAlreadyHere(t *testing.T) {
+// A machine without PHP is not told it has a default for it.
+func TestUpgradeLeavesThePHPDefaultWithoutPHP(t *testing.T) {
 	service := testService(t)
+	service.Store.SetSetting("php_version", "8.1")
 
-	list := &tasks.List{}
-	service.newestPHPSteps(context.Background(), list, []string{"php"}, []string{NewestPHP()})
+	service.offerNewestPHP([]string{"nginx"})
 
-	if list.Len() != 0 {
-		t.Errorf("expected no steps, got:\n%s", stepText(list))
-	}
-}
-
-// A machine without PHP is not given one. The update brings what is here up to
-// date; it does not decide the server should run PHP now.
-func TestUpgradeAddsNoPHPWhenPHPIsNotInstalled(t *testing.T) {
-	service := testService(t)
-
-	list := &tasks.List{}
-	service.newestPHPSteps(context.Background(), list, []string{"nginx"}, nil)
-
-	if list.Len() != 0 {
-		t.Errorf("expected no steps, got:\n%s", stepText(list))
+	if got := service.Store.PHPVersion(); got != "8.1" {
+		t.Errorf("default PHP = %s, want 8.1", got)
 	}
 }

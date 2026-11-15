@@ -24,7 +24,7 @@ func (a *App) mcpUninstallApp() *mcp.Tool {
 	return &mcp.Tool{
 		Name:        "uninstall_app",
 		Capability:  capApps,
-		Title:       "Uninstall an app",
+		Title:       "Uninstall a service",
 		Destructive: true,
 		Description: "Remove one of the apps from list_apps. The panel refuses where something " +
 			"it hosts still needs it — a PHP site and PHP, a database and its engine — and says " +
@@ -72,9 +72,9 @@ func (a *App) mcpRetryApp() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "retry_app",
 		Capability: capApps,
-		Title:      "Install an app again",
-		Description: "Run one app's install again from the start, whether or not the panel " +
-			"believes it is already there. This is what an app sitting at `failed` needs once the " +
+		Title:      "Install a service again",
+		Description: "Run one service's install again from the start, whether or not the panel " +
+			"believes it is already there. This is what a service sitting at `failed` needs once the " +
 			"reason it failed has been dealt with — no disk, no network, a mirror that was down.",
 		Properties: map[string]mcp.Property{
 			"key": {Description: "The app key, from list_apps."},
@@ -114,7 +114,7 @@ func (a *App) mcpDetectApps() *mcp.Tool {
 			"panel's own record. This is what clears a `failed` left behind by a half-finished " +
 			"install on a server that is plainly running the thing.",
 		Properties: map[string]mcp.Property{
-			"keys": {Type: "array", Description: "Only these apps. All of them when left out."},
+			"keys": {Type: "array", Description: "Only these services. All of them when left out."},
 		},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			a.Catalog.Detect(args.List("keys"))

@@ -111,7 +111,7 @@ func (s *Store) LatestTaskByAction(ctx context.Context, kind, action string, run
 }
 
 // LatestTaskByActions is the same for a page that drives more than one action —
-// the Apps page installs and uninstalls, and wants either.
+// the Services page installs and uninstalls, and wants either.
 func (s *Store) LatestTaskByActions(ctx context.Context, kind string, actions []string, runningOnly bool) int64 {
 	if len(actions) == 0 {
 		return s.LatestTaskID(ctx, kind, runningOnly)
@@ -140,7 +140,7 @@ func (s *Store) LatestTaskByActions(ctx context.Context, kind string, actions []
 // it.
 //
 // A console that disappears the instant the last step lands takes the result
-// with it, and one that never disappears is furniture: the Apps page was
+// with it, and one that never disappears is furniture: the Services page was
 // opening with a nineteen-hour-old "completed 4 steps" card above the
 // catalogue, on every visit, for ever.
 const RecentTaskWindow = 10 * time.Minute
@@ -149,7 +149,7 @@ const RecentTaskWindow = 10 * time.Minute
 // or the one that finished within the window. Zero when there is neither.
 //
 // Actions narrow it to the page's own work — several unrelated things share
-// the `provision` type, and the Apps page has no business showing the console
+// the `provision` type, and the Services page has no business showing the console
 // of a panel domain change made from Settings.
 func (s *Store) RecentTaskID(ctx context.Context, kind string, actions []string, within time.Duration) int64 {
 	query := `SELECT id FROM activity_logs WHERE type = ?`

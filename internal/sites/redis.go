@@ -74,7 +74,7 @@ func (s *Service) EnableRedisCache(ctx context.Context, site *store.Site) error 
 
 	if !redisInstalled() {
 		return errors.New("Redis is not installed on this machine — install it from the " +
-			"Apps page first, then turn this on")
+			"Services page first, then turn this on")
 	}
 
 	if !proc.Ok("sudo systemctl is-active --quiet redis-server") &&

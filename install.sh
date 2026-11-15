@@ -35,10 +35,10 @@
 #   PANEL_SKIP_APT=0         skip the apt dependency step
 #   PANEL_INSTALL_APPS=none  what the installer puts on the machine before it
 #                            starts the panel: none | core | all. With none,
-#                            an app is installed when a site needs it
+#                            a service is installed when a site needs it
 #   PANEL_UPDATE_APPS=1      on an update, ask apt for the newest of everything
-#                            the panel installed, and add the newest PHP it
-#                            knows about. 0 leaves the machine as it is
+#                            the panel installed. Nothing new is added.
+#                            0 leaves the machine as it is
 #   PANEL_FROM_SOURCE=0      1 forces a source build even inside a release
 #   NO_COLOR=1               plain output
 #
@@ -63,7 +63,7 @@ PANEL_PUBLIC_PORT="${PANEL_PUBLIC_PORT:-8443}"
 # Which PHP-FPM socket the phpMyAdmin location in the vhost below talks to.
 # The panel's own default, because PHP is not on the machine yet when this
 # runs — and the panel rewrites the vhost with the real version the moment
-# phpMyAdmin is installed from Apps.
+# phpMyAdmin is installed from Services.
 PANEL_PHP_VERSION="${PANEL_PHP_VERSION:-8.3}"
 PANEL_SWAP="${PANEL_SWAP:-1}"
 PANEL_SKIP_APT="${PANEL_SKIP_APT:-0}"
@@ -1004,11 +1004,11 @@ else
 fi
 
 # What a first start puts on the machine by itself. `none`, the default, is
-# nothing: the site form, the Databases page and the Email page each install
-# the apps they need the first time they need them, so a server only ever has
-# what it uses. `core` is only what a site cannot run without; `all` is every
-# app on the Apps page. It happens once, on a panel that has never installed
-# an app.
+# nothing: creating a site installs what its type needs (a WordPress site:
+# PHP, MariaDB and WP-CLI), and the Databases and Email pages install their
+# engine the first time they need it, so a server only ever has what it uses.
+# `core` is only what a site cannot run without; `all` is every service on the
+# Services page. It happens once, on a panel that has never installed one.
 conf_ensure PANEL_INSTALL_APPS  "${PANEL_INSTALL_APPS:-none}"
 
 conf_ensure PANEL_REPOSITORY    "https://github.com/shusanto294/Ubuntu-Panel"
@@ -1281,9 +1281,9 @@ fi
 # ====================================================== 12. start the panel
 
 if [ "$MODE" = update ]; then
-    step "Updating the server's apps"
+    step "Updating the server's services"
 else
-    step "Installing the server's apps"
+    step "Installing the server's services"
 fi
 
 # nginx, PHP-FPM, MariaDB, Node.js and the rest, now — before the service is
@@ -1292,12 +1292,12 @@ fi
 # The panel used to queue this on its first start, which meant it answered in
 # five seconds and then spent the next ten minutes installing underneath
 # whoever was signing in: every page qualified by "installing…", and a site
-# created in that window refused for a missing app that was already on its way.
+# created in that window refused for a missing service that was already on its way.
 # Waiting here costs the same minutes once, in the place where waiting for an
 # installer is what you are already doing.
 #
 # The binary does the work through its own catalogue — same steps, same task
-# row, same console on the Apps page afterwards — and runs as the panel's user,
+# row, same console on the Services page afterwards — and runs as the panel's user,
 # so nothing it writes is owned by root.
 
 APPS_CHOICE="$(conf_value PANEL_INSTALL_APPS)"
@@ -1306,7 +1306,7 @@ APPS_CHOICE="${APPS_CHOICE:-none}"
 if [ "$MODE" = update ] && [ "$PANEL_SKIP_APT" = "1" ]; then
     same "PANEL_SKIP_APT=1 — the apps on this machine are left as they are."
 elif [ "$MODE" = update ] && [ "$PANEL_UPDATE_APPS" = "0" ]; then
-    same "PANEL_UPDATE_APPS=0 — the apps on this machine are left as they are."
+    same "PANEL_UPDATE_APPS=0 — the services on this machine are left as they are."
 elif [ "$MODE" = update ]; then
     # An update used to stop here, which over a year of updates is a server
     # still running the PHP, MariaDB and nginx it was installed with — security
@@ -1314,10 +1314,10 @@ elif [ "$MODE" = update ]; then
     # newest of them again.
     #
     # Only what is already here, and only the panel's own packages: `apt-get
-    # upgrade` on somebody's server is a larger promise than this makes. The one
-    # thing it adds is the newest PHP the panel knows about, which becomes the
-    # default for new sites — every site already here keeps the version it was
-    # built against, and its own PHP tab is where that moves.
+    # upgrade` on somebody's server is a larger promise than this makes. Nothing
+    # new is installed. The newest PHP becomes the default for new sites and is
+    # installed by the first of them — every site already here keeps the
+    # version it was built against, and its own PHP tab is where that moves.
     detail "Asking apt for the newest of everything the panel installed. On a small"
     detail "VPS this is a minute or two. Every step is also in $INSTALL_LOG."
 
@@ -1325,13 +1325,13 @@ elif [ "$MODE" = update ]; then
 
     if sudo -u "$PANEL_USER" "$PANEL_ROOT/bin/ubuntu-panel" \
             --config "$CONFIG_FILE" --upgrade-apps 2>&1 | tee -a "$INSTALL_LOG"; then
-        ok "The server's apps are up to date"
+        ok "The server's services are up to date"
     else
         warn "Some of it did not update. The panel is fine and starts anyway —"
-        warn "the Apps page has the console, and a Retry beside each app."
+        warn "the Services page has the console, and a Retry beside each service."
     fi
 elif [ "$APPS_CHOICE" = none ]; then
-    same "No apps installed up front — each one is installed when a site, database or mail domain needs it."
+    same "No services installed up front — each one is installed when a site, database or mail domain needs it."
 elif [ "$PANEL_SKIP_APT" = "1" ]; then
     same "PANEL_SKIP_APT=1 — skipping."
 else
@@ -1345,7 +1345,7 @@ else
         ok "The machine has what a server needs"
     else
         warn "Some of it did not install. The panel is fine and starts anyway —"
-        warn "the Apps page has the console for each, and a Retry beside it."
+        warn "the Services page has the console for each, and a Retry beside it."
     fi
 fi
 
@@ -1494,17 +1494,17 @@ if [ "$MODE" = install ]; then
 
     case "${APPS_CHOICE:-all}" in
         none)
-            printf '    %-13s nothing installed — pick what you need on the Apps page\n' "Apps"
+            printf '    %-13s nothing installed — each is installed when a site needs it\n' "Services"
             ;;
         *)
             printf '    %-13s %s — installed already; nothing is still landing\n' \
-                "Apps" "${APPS_CHOICE:-all}"
+                "Services" "${APPS_CHOICE:-all}"
             ;;
     esac
 elif [ "$PANEL_SKIP_APT" != "1" ] && [ "$PANEL_UPDATE_APPS" != "0" ]; then
-    printf '    %-13s brought up to date too, and the newest PHP is now the default for\n' "Apps"
-    printf '    %-13s new sites. Every site already here keeps the PHP it was built\n' ""
-    printf '    %-13s against — its own PHP tab moves it\n' ""
+    printf '    %-13s brought up to date; nothing new installed. New sites default to\n' "Services"
+    printf '    %-13s the newest PHP, installed by the first of them — every site\n' ""
+    printf '    %-13s already here keeps its own\n' ""
 fi
 
 printf '\n'

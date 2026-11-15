@@ -71,7 +71,7 @@ func (a *App) mcpNameserverStatus() *mcp.Tool {
 func nameserverNextStep(status nameserver.Status) string {
 	switch {
 	case !status.Installed:
-		return "Install the `dns` app, which puts BIND on this machine."
+		return "Install the `dns` service, which puts BIND on this machine."
 
 	case !status.Settings.Configured():
 		return "Set the nameserver hostnames with set_nameserver_hostnames — two names " +
@@ -153,7 +153,7 @@ func (a *App) mcpSetNameserverHostnames() *mcp.Tool {
 			if err := nameserver.Apply(ctx, a.Store); err != nil {
 				if errors.Is(err, nameserver.ErrNotInstalled) {
 					result["note"] = "Saved. The DNS server is not installed yet; " +
-						"install the `dns` app and the zones are written then."
+						"install the `dns` service and the zones are written then."
 
 					return result, nil
 				}

@@ -158,7 +158,7 @@ func (a *App) emailStoreDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !sess.HasErrors() && !a.Mail.IsConfigured() {
-		sess.Error("domain", "The mail server is not installed yet — install it from the Apps page.")
+		sess.Error("domain", "The mail server is not installed yet — install it from the Services page.")
 	}
 
 	if sess.HasErrors() {
@@ -239,7 +239,7 @@ func (a *App) emailRepair(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 
 	if !a.Store.ServiceInstalled("mail") {
-		a.failBack(w, r, "The mail server is not installed yet — install it from Apps first.")
+		a.failBack(w, r, "The mail server is not installed yet — install it from Services first.")
 		return
 	}
 
@@ -254,7 +254,7 @@ func (a *App) emailTest(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 
 	if !a.Store.ServiceInstalled("mail") {
-		a.failBack(w, r, "The mail server is not installed yet — install it from Apps first.")
+		a.failBack(w, r, "The mail server is not installed yet — install it from Services first.")
 		return
 	}
 

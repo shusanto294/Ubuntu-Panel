@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
 
 // UpgradeInstalled brings what is already on this machine up to date, as one
-// task, and puts the newest PHP the panel knows about on a machine that does
-// not have it yet.
+// task. It adds nothing: a service, or a PHP version, is installed when a site
+// needs it.
 //
 // This is what a panel update runs after it has swapped the binary. Updating
 // the panel used to mean updating only the panel: a server installed a year
@@ -24,11 +24,12 @@ import (
 // again. The panel is the thing that put them there, so the panel is the thing
 // that keeps them current.
 //
-// What it does *not* do is move a site. The newest PHP is installed and
-// becomes the default for sites made from now on; every site already here
-// keeps the version it was built against, because a site that works on 8.3 is
-// not something to silently put on 8.5 while nobody is watching. Each site's
-// PHP tab moves that one, when whoever owns it decides to.
+// What it does *not* do is move a site. The newest PHP becomes the default
+// for sites made from now on, installed by the first of them; every site
+// already here keeps the version it was built against, because a site that
+// works on 8.3 is not something to silently put on 8.5 while nobody is
+// watching. Each site's PHP tab moves that one, when whoever owns it decides
+// to.
 //
 // Only what is installed, and only the panel's own packages: `apt-get
 // upgrade` on somebody's server is a much larger promise than this panel is in
@@ -56,7 +57,7 @@ func (s *Service) UpgradeInstalled(ctx context.Context, userID int64) error {
 	}
 
 	taskID, err := s.Store.CreateTask(ctx, "provision", "services.upgrade", userID, 0,
-		"Updating the server's apps")
+		"Updating the server's services")
 	if err != nil {
 		return err
 	}
@@ -89,8 +90,6 @@ func (s *Service) UpgradeInstalled(ctx context.Context, userID int64) error {
 			"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade "+packages)
 	}
 
-	s.newestPHPSteps(ctx, list, installed, running)
-
 	for _, key := range installed {
 		s.upgradeSteps(list, key)
 	}
@@ -100,7 +99,9 @@ func (s *Service) UpgradeInstalled(ctx context.Context, userID int64) error {
 
 	ok := tasks.New(s.Store, taskID).Run(list)
 
-	// The versions on the Apps page are read from the machine, so they are
+	s.offerNewestPHP(installed)
+
+	// The versions on the Services page are read from the machine, so they are
 	// only right once something has looked again.
 	s.Detect(nil)
 
@@ -115,7 +116,7 @@ func (s *Service) UpgradeInstalled(ctx context.Context, userID int64) error {
 // apt.
 //
 // PHP is the exception: its packages are named per version, and a machine can
-// have several — the one the Apps page installed, the newest a previous update
+// have several — the one the Services page installed, the newest a previous update
 // added, and whatever a site was moved to. Every one of them is upgraded,
 // because every one of them is serving something.
 func (s *Service) upgradablePackages(installed, running []string) string {
@@ -154,52 +155,14 @@ func (s *Service) upgradablePackages(installed, running []string) string {
 	return strings.Join(names, " ")
 }
 
-// newestPHPSteps installs the newest PHP the panel knows about, when PHP is on
-// this machine and that version is not.
-//
-// The packages, the extensions and a tuned PHP-FPM — the same recipe the Apps
-// page runs — and then the default for new sites, which is the only thing
-// about an existing server this changes.
-func (s *Service) newestPHPSteps(ctx context.Context, list *tasks.List,
-	installed, running []string) {
-	php := false
-
-	for _, key := range installed {
-		if key == "php" {
-			php = true
-		}
+// offerNewestPHP makes the newest PHP the panel knows about the default for
+// new sites, on a machine that runs PHP. It installs nothing: the first site
+// made on it installs it as it deploys, so an update never puts a PHP on the
+// server that nothing uses. The sites already here keep theirs.
+func (s *Service) offerNewestPHP(installed []string) {
+	if newest := NewestPHP(); newest != "" && slices.Contains(installed, "php") {
+		s.Store.SetSetting("php_version", newest)
 	}
-
-	newest := NewestPHP()
-
-	if !php || newest == "" {
-		return
-	}
-
-	for _, version := range running {
-		if version == newest {
-			// Already here. The apt step above has it at its latest patch.
-			return
-		}
-	}
-
-	previous := s.Store.PHPVersion()
-
-	PHPVersionSteps(list, newest, "php")
-
-	list.AddFn(fmt.Sprintf("Make PHP %s the default for new sites", newest),
-		func(runner *tasks.Runner) (string, error) {
-			if !proc.Ok("test -S /run/php/php" + newest + "-fpm.sock") {
-				return "", fmt.Errorf("PHP %s did not come up, so the default stays at PHP %s",
-					newest, previous)
-			}
-
-			s.Store.SetSetting("php_version", newest)
-
-			return fmt.Sprintf("New sites get PHP %s. The %d site(s) already here keep the "+
-				"version they were built against — the PHP tab on each one moves it.",
-				newest, s.Store.SiteCount(ctx)), nil
-		}).Optional().Group("php")
 }
 
 // upgradeSteps are the updates that do not go through apt, for the apps whose
@@ -207,7 +170,7 @@ func (s *Service) newestPHPSteps(ctx context.Context, list *tasks.List,
 //
 // phpMyAdmin and Roundcube are not here: the panel installs a pinned tarball of
 // each, so "update" would mean re-downloading the same version. They move when
-// the panel's own pin does, which is a release of the panel and an Apps page
+// the panel's own pin does, which is a release of the panel and an Services page
 // reinstall.
 func (s *Service) upgradeSteps(list *tasks.List, key string) {
 	switch key {

@@ -205,8 +205,8 @@ func (a *App) BootstrapApps(ctx context.Context) {
 
 	a.Store.SetSetting(bootstrapSetting, "1")
 
-	a.Log.Info("installing the apps a server needs", "count", queued, "selection", choice,
-		"watch", "the Apps page, or journalctl -u ubuntu-panel -f")
+	a.Log.Info("installing the services a server needs", "count", queued, "selection", choice,
+		"watch", "the Services page, or journalctl -u ubuntu-panel -f")
 }
 
 // EnsureNginxHelpers keeps the shared nginx configuration in step with the
@@ -262,7 +262,7 @@ func (a *App) EnsureNginxHelpers() {
 // it — every page qualified by "installing…", and a site created in that window
 // refused for a missing app that was on its way.
 //
-// Same catalogue, same steps, same task row, so the Apps page afterwards shows
+// Same catalogue, same steps, same task row, so the Services page afterwards shows
 // exactly what happened and the console is there to read. The difference is
 // only who waits: the installer, once, instead of the operator, every time.
 //
@@ -284,7 +284,7 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 	}
 
 	if choice == "none" {
-		progress("Nothing to install: the panel is configured to install no apps.")
+		progress("Nothing to install: the panel is configured to install no services.")
 
 		return nil
 	}
@@ -296,7 +296,7 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 	// installer.
 	if a.Store.SettingBool(bootstrapSetting, false) || len(a.Store.InstalledServiceKeys(ctx)) > 0 {
 		a.Store.SetSetting(bootstrapSetting, "1")
-		progress("This machine already has apps on it; leaving them as they are.")
+		progress("This machine already has services on it; leaving them as they are.")
 
 		return nil
 	}
@@ -331,7 +331,7 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 		labels = append(labels, catalog.Label(key))
 	}
 
-	progress(fmt.Sprintf("Installing %d apps: %s", queued, strings.Join(labels, ", ")))
+	progress(fmt.Sprintf("Installing %d services: %s", queued, strings.Join(labels, ", ")))
 
 	done := make(chan error, 1)
 
@@ -369,7 +369,7 @@ func (a *App) InstallAppsNow(ctx context.Context, choice string, progress func(s
 // sites. Every site already here keeps the version it was built against; its
 // own PHP tab is where that moves.
 //
-// Same catalogue, same steps, same task row, so the Apps page afterwards has
+// Same catalogue, same steps, same task row, so the Services page afterwards has
 // the console to read. progress is given a line per step, because this runs on
 // somebody's terminal and ten silent minutes reads as a hang.
 func (a *App) UpgradeAppsNow(ctx context.Context, progress func(string)) error {
@@ -392,12 +392,12 @@ func (a *App) UpgradeAppsNow(ctx context.Context, progress func(string)) error {
 		// Nothing was installed through the panel, so there is nothing of the
 		// panel's to update. A machine like that is one somebody set up by
 		// hand, and apt on it is theirs.
-		progress("No apps installed by the panel; nothing to update.")
+		progress("No services installed by the panel; nothing to update.")
 
 		return nil
 	}
 
-	progress("Bringing the installed apps up to date. This asks apt for the newest")
+	progress("Bringing the installed services up to date. This asks apt for the newest")
 	progress("of everything the panel put on this machine, and installs the newest")
 	progress("PHP it knows about if the machine does not have it yet.")
 
@@ -428,7 +428,7 @@ func (a *App) UpgradeAppsNow(ctx context.Context, progress func(string)) error {
 }
 
 // mirrorSteps prints the steps that have finished since the last look. The task
-// row is the same one the Apps page reads, so this is a view of it rather than a
+// row is the same one the Services page reads, so this is a view of it rather than a
 // second account of what happened.
 func (a *App) mirrorSteps(ctx context.Context, seen map[string]bool, progress func(string)) {
 	a.mirrorAction(ctx, "services.install", seen, progress)
@@ -501,7 +501,7 @@ func (a *App) reportApps(ctx context.Context, progress func(string)) {
 	}
 
 	if len(failed) > 0 {
-		progress(fmt.Sprintf("Did not install: %s — the Apps page has the console, "+
+		progress(fmt.Sprintf("Did not install: %s — the Services page has the console, "+
 			"and a Retry button beside each", strings.Join(failed, ", ")))
 	}
 }

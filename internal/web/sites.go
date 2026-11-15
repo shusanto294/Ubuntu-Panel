@@ -106,36 +106,18 @@ func (a *App) sitesCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// missingRequirement is what this machine is missing for a site type.
-func (a *App) missingRequirement(kind string) string {
-	meta := config.FindSiteType(kind)
-	if meta == nil {
-		return "That is not a site type the panel can deploy."
-	}
+// missingServices are the services a site of this type needs that this
+// machine does not have yet, by name: creating one installs them first.
+func (a *App) missingServices(kind string) []string {
+	names := []string{}
 
-	if meta.Proxied && !a.Store.ServiceInstalled("node") {
-		return "Node.js is not installed. Install it from the Apps page first."
-	}
-
-	if kind == "wordpress" {
-		if !a.Store.ServiceInstalled("mysql") {
-			return "WordPress needs MariaDB. Install it from the Apps page first."
-		}
-
-		if !a.Store.ServiceInstalled("wpcli") {
-			return "WP-CLI is not installed. Install it from the Apps page first."
+	for _, key := range catalog.WithDependencies(siteServices(kind, true)) {
+		if !a.Store.ServiceInstalled(key) {
+			names = append(names, label(key))
 		}
 	}
 
-	if meta.Database && !a.Store.ServiceInstalled("mysql") {
-		return meta.Label + " needs MariaDB for its database. Install it from the Apps page first."
-	}
-
-	if meta.Runtime == "php" && !a.Store.ServiceInstalled("php") {
-		return meta.Label + " needs PHP. Install it from the Apps page first."
-	}
-
-	return ""
+	return names
 }
 
 func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
@@ -293,6 +275,7 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 		"site":              site.Summary(true),
 		"logs":              logs,
 		"activeTask":        a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, true), 0),
+		"installing":        a.installingFor(r.Context(), site),
 		"latestTask":        a.Store.TaskConsole(r.Context(), a.Store.LatestTaskForSite(r.Context(), id, false), 0),
 	}
 
@@ -723,9 +706,9 @@ func (a *App) movePHPVersion(ctx context.Context, siteID int64, version string) 
 	list := &tasks.List{}
 
 	if !sites.PHPVersionReady(version) {
-		// Ungrouped: the group is what ties a step to an app on the Apps page,
+		// Ungrouped: the group is what ties a step to an app on the Services page,
 		// and this is a site's task. The steps themselves are the same recipe
-		// the Apps page runs for the default version.
+		// the Services page runs for the default version.
 		catalog.PHPVersionSteps(list, version, "")
 	}
 

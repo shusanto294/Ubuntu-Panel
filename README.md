@@ -3,7 +3,7 @@
 A server control panel: one static binary with the frontend inside it, nothing
 to install on the machine it runs on, and a SQLite file for state.
 
-Sites, databases, email, DNS, apps and logs, on one machine, from a browser.
+Sites, databases, email, DNS, services and logs, on one machine, from a browser.
 It is written in Go, and it is the panel that replaced an earlier C one: the
 frontend came across unchanged — the same Vue pages, the same Inertia protocol,
 the same route names — and the database schema is the same, so the same
@@ -35,14 +35,15 @@ picks a different one, Settings → Panel port moves it later, and either way th
 installer opens it in ufw — a firewall at your host, a security group or a
 network rule, has to allow it there as well.
 
-The installer does not put apps on the machine up front. Each one is installed
-the first time something needs it: creating a WordPress site installs PHP,
-MariaDB and WP-CLI from the site form, a Node.js site installs Node, the Email
-page installs the mail server — so a server only ever has what it uses, and the
-install itself takes a minute or two. Set `PANEL_INSTALL_APPS=core` to install
-what a site cannot run without before the first sign-in, or `all` for every app
-on the Apps page. Either happens once, on a machine the panel has never
-installed an app on, so removing one afterwards is a decision the panel keeps.
+The installer does not put services on the machine up front, and an update
+adds none. Each one is installed the first time something needs it: creating a
+WordPress site installs PHP, MariaDB and WP-CLI before it deploys, a Node.js
+site installs Node, the Email page installs the mail server — so a server only
+ever has what it uses, and the install itself takes a minute or two. Set
+`PANEL_INSTALL_APPS=core` to install what a site cannot run without before the
+first sign-in, or `all` for every service on the Services page. Either happens
+once, on a machine the panel has never installed a service on, so removing one
+afterwards is a decision the panel keeps.
 
 Options are environment variables, or flags after `bash -s --`:
 
@@ -84,10 +85,10 @@ and restarts it, so a bad update is a no-op rather than an outage.
 
 It also updates the machine, not only the panel: apt is asked for the newest of
 everything the panel installed — PHP, MariaDB, nginx, Node, Redis, the mail
-server — and the newest PHP the panel knows about is installed if it is not
-there yet, becoming the default for new sites. Only the panel's own packages,
-because `apt-get upgrade` on somebody's server is a larger promise than this
-makes; and only the default moves, because a site that works on PHP 8.3 is not
+server. Nothing new is installed: the newest PHP the panel knows about becomes
+the default for new sites, and the first of them installs it. Only the panel's
+own packages, because `apt-get upgrade` on somebody's server is a larger
+promise than this makes; and only the default moves, because a site that works on PHP 8.3 is not
 something to put on 8.5 while nobody is watching. Each site's PHP tab moves
 that one. `PANEL_UPDATE_APPS=0` leaves the machine exactly as it was.
 
@@ -103,9 +104,9 @@ doing it.
 Everything the C panel does, from the same pages:
 
 - **Dashboard** — CPU, memory, disk and load from `/proc`, live and as history
-- **Apps** — install and remove nginx, PHP-FPM, MariaDB, MongoDB, Redis, Node,
+- **Services** — install and remove nginx, PHP-FPM, MariaDB, MongoDB, Redis, Node,
   Composer, WP-CLI, PM2, phpMyAdmin, Certbot, and a Postfix/Dovecot/OpenDKIM
-  mail server with Roundcube. A bulk install puts every app's packages into one
+  mail server with Roundcube. A bulk install puts every service's packages into one
   apt transaction, because dpkg takes an exclusive lock
 - **Sites** — WordPress, Laravel, PHP, Node.js, Next.js, Nuxt and static, with
   git deployment from public or private repositories — a generated deploy key or
@@ -290,7 +291,7 @@ every schedule and webhook a second time.
 ## Hosting DNS on this machine
 
 The panel can be the nameserver itself rather than a client of one. Install the
-**DNS server** app and the machine runs BIND, authoritative for the zones in the
+**DNS server** service and the machine runs BIND, authoritative for the zones in the
 panel's own tables and recursive for nobody — an open resolver on a public
 address is found within days and used to reflect traffic at somebody else, so
 `recursion no` is not negotiable and is written before the service is started.
@@ -298,7 +299,7 @@ address is found within days and used to reflect traffic at somebody else, so
 Four of the five steps are in the panel, on **DNS → This server**. The one that
 is not is the one everything depends on.
 
-1. **Install the DNS server** from the Apps page. Port 53 is opened on TCP *and*
+1. **Install the DNS server** from the Services page. Port 53 is opened on TCP *and*
    UDP: a query goes over UDP, but an answer too large for one datagram goes
    over TCP, so a firewall that opens only UDP gives you a nameserver that works
    until an answer grows. If your host has its own firewall in front of the
@@ -440,7 +441,7 @@ taking precedence. Same file and same keys the C panel used.
 | `PANEL_PUBLIC` | `$PANEL_ROOT/public` (only with `PANEL_DEBUG`) |
 | `PANEL_APP_KEY` | — (written by the installer; encrypts every stored credential) |
 | `PANEL_WORKERS` | `2` (`1` on a machine under 1.5 GB) |
-| `PANEL_INSTALL_APPS` | `none` — what the installer puts on the machine before starting the panel: `none` (each app when it is first needed), `core` or `all` |
+| `PANEL_INSTALL_APPS` | `none` — what the installer puts on the machine before starting the panel: `none` (each service when it is first needed), `core` or `all` |
 | `PANEL_REPOSITORY` | `https://github.com/shusanto294/Ubuntu-Panel` |
 | `PANEL_UPDATE_BRANCH` | `main` |
 | `PANEL_DEBUG` | unset |
@@ -493,7 +494,7 @@ Anything that takes longer than a request is a row in `jobs`, picked up by a
 worker. A worker runs a **task**: a named list of steps whose console the page
 polls while it happens. A step is either a list of shell commands or a
 function, and steps can be grouped — when a grouped step fails, the rest of
-that group is abandoned and everything else carries on, so installing nine apps
+that group is abandoned and everything else carries on, so installing nine services
 does not stop at the first one that will not configure.
 
 A job left running when the panel stopped goes back on the queue at startup;

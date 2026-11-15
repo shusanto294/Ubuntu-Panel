@@ -423,7 +423,7 @@ func (s *Service) Queue(keys []string, force bool) int {
 	return queued
 }
 
-// Summary is the row shape the Apps page renders.
+// Summary is the row shape the Services page renders.
 func (s *Service) Summary(ctx context.Context) []map[string]any {
 	rows, err := s.Store.Services(ctx)
 	if err != nil {

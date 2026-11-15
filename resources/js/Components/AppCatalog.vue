@@ -257,7 +257,7 @@ const toggle = (key) => {
                     <input
                         v-model="search"
                         type="search"
-                        placeholder="Search apps — try “cache”, “backup”, “docker”"
+                        placeholder="Search services — try “cache”, “backup”, “docker”"
                         class="w-full rounded-xl border-0 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-800 ring-1 ring-inset ring-slate-200 placeholder:text-slate-400 focus:bg-white focus:ring-2 focus:ring-brand-500"
                     />
                 </div>
@@ -432,7 +432,7 @@ const toggle = (key) => {
                                 v-if="service.removable"
                                 @click="uninstall(service)"
                                 :disabled="busy || !!service.remove_blocked_by"
-                                :title="service.remove_blocked_by || 'Remove this app'"
+                                :title="service.remove_blocked_by || 'Remove this service'"
                                 class="text-xs font-medium text-rose-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
                             >
                                 Remove

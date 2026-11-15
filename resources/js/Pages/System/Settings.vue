@@ -205,7 +205,7 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     CDN that terminates TLS, neither notices.
                     <template v-if="!panel.certbot">
                         Certbot is not installed, so none was requested. Install it
-                        from Apps, then set the hostname again.
+                        from Services, then set the hostname again.
                     </template>
                     <template v-else>
                         Check the log for why, make sure the hostname resolves to
@@ -220,7 +220,7 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                     class="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600"
                 >
                     Certbot is not installed, so a hostname gets a self-signed
-                    certificate rather than a trusted one. Install Certbot from Apps
+                    certificate rather than a trusted one. Install Certbot from Services
                     first if you want HTTPS without a browser warning.
                 </div>
 

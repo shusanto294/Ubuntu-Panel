@@ -57,7 +57,7 @@ var panelGuide = []guideArea{
 			{
 				Task: "Put a new site on this server",
 				Steps: []string{
-					"list_site_types — check the type's `ready`; if false, install_apps what it names and wait.",
+					"list_site_types — `installs_first` names what this machine lacks for the type; create_site installs it before deploying, so there is nothing to do first.",
 					"create_site with the type and the domain, and nothing else unless the person asked for it.",
 					"Read the answer's `dns`. `managed: false` means no connected credential holds that " +
 						"zone, so the panel published no record — the site will build and still show " +
@@ -406,16 +406,16 @@ var panelGuide = []guideArea{
 	},
 	{
 		Key:  "apps",
-		Page: "Apps",
+		Page: "Services",
 		What: "What the panel installs on the machine: nginx, PHP, MariaDB, MongoDB, Node.js, " +
 			"Redis, Certbot, WP-CLI, Composer, phpMyAdmin, the mail server, Roundcube.",
 		Tools: []string{"list_apps", "install_apps", "uninstall_app", "retry_app", "detect_apps"},
 		Recipes: []guideRecipe{
 			{
-				Task: "A site type or a feature says something is missing",
+				Task: "A feature says a service is missing",
 				Steps: []string{
 					"install_apps with the keys it named — asynchronous, so list_apps says when they are done.",
-					"An app stuck at failed: retry_app. An app the panel wrongly believes is missing: detect_apps.",
+					"A service stuck at failed: retry_app. A service the panel wrongly believes is missing: detect_apps.",
 				},
 			},
 		},

@@ -4,7 +4,7 @@
  *
  * Sites, Databases and Email all have the same problem: the form is in front
  * of you and the app behind it is not on the machine. Sending someone to the
- * Apps page, finding the right entry, installing it and navigating back is
+ * Services page, finding the right entry, installing it and navigating back is
  * four steps to answer a question the page already knew the answer to.
  *
  * Renders nothing at all when everything it needs is present, so it can be

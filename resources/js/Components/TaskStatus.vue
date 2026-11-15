@@ -9,7 +9,7 @@ import { formatRelative } from '@/time';
  *
  * The pages that start work used to each carry a full console: a black
  * terminal panel, a step list and a scrolling wall of apt output, on the
- * Dashboard, on Apps, on Settings, on both site pages and both mail pages. It
+ * Dashboard, on Services, on Settings, on both site pages and both mail pages. It
  * is the right thing to look at when something has gone wrong and the wrong
  * thing to have on screen the rest of the time, which is most of the time.
  *

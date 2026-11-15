@@ -66,6 +66,12 @@ func (a *App) registerJobs() {
 			return err
 		}
 
+		// What the site's type needs, installed first: nothing is put on a
+		// server before a site asks for it.
+		if err := a.awaitSiteServices(ctx, job, payload.Site); err != nil {
+			return err
+		}
+
 		return a.withSiteUnlocked(ctx, payload.Site, true, func() error { return a.Sites.Deploy(ctx, payload.Site) })
 	})
 

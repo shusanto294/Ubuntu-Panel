@@ -498,7 +498,7 @@ func (s *Service) InstallQueued(ctx context.Context, userID int64) error {
 	for _, key := range queued {
 		if !s.Store.ServiceInstalled(key) {
 			s.Store.SetServiceStatus(key, store.ServiceFailed, "",
-				"The install finished but the app was not detected afterwards.")
+				"The install finished but the service was not detected afterwards.")
 		}
 	}
 
@@ -578,7 +578,7 @@ func (s *Service) resourcesHolding(ctx context.Context, key string) string {
 
 // UninstallBlockers is why each app cannot be removed right now, keyed by app.
 //
-// The Apps page renders one row per catalogue entry, and each row wants to know
+// The Services page renders one row per catalogue entry, and each row wants to know
 // whether its Remove button is live. This reads the installed set once and does
 // the rest in memory.
 func (s *Service) UninstallBlockers(ctx context.Context) map[string]string {
@@ -642,7 +642,7 @@ func (s *Service) UninstallBlockers(ctx context.Context) map[string]string {
 func (s *Service) UninstallBlocker(ctx context.Context, key string) string {
 	entry := Find(key)
 	if entry == nil {
-		return "Unknown app."
+		return "Unknown service."
 	}
 
 	if entry.Removable && !s.Store.ServiceInstalled(key) {
@@ -675,7 +675,7 @@ func (s *Service) removeSteps(list *tasks.List, key string) {
 func (s *Service) Uninstall(ctx context.Context, key string, userID int64) error {
 	entry := Find(key)
 	if entry == nil {
-		return errors.New("unknown app")
+		return errors.New("unknown service")
 	}
 
 	// Re-checked here and not only in the handler: this runs on a worker some
@@ -725,7 +725,7 @@ func (s *Service) Uninstall(ctx context.Context, key string, userID int64) error
 
 	if s.Store.ServiceInstalled(key) {
 		s.Store.SetServiceStatus(key, store.ServiceInstalled, "",
-			"The removal ran but the app is still detected on the machine.")
+			"The removal ran but the service is still detected on the machine.")
 
 		return errors.New("the app is still installed")
 	}

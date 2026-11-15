@@ -5,7 +5,6 @@ import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import TextInput from '@/Components/TextInput.vue';
 import Checkbox from '@/Components/Checkbox.vue';
-import RequiredApps from '@/Components/RequiredApps.vue';
 import AppIcon from '@/Components/AppIcon.vue';
 import { Head, Link, useForm } from '@inertiajs/vue3';
 
@@ -137,12 +136,13 @@ const needed = computed(() => {
     return keys;
 });
 
-// Still missing, so the submit button knows to stay down.
-const requirement = computed(() =>
-    needed.value.some(
-        (key) =>
-            props.requirements.find((app) => app.key === key)?.status !== 'installed',
-    ),
+// Not on the machine yet. Creating the site installs them before it deploys,
+// so they are only said, not asked for.
+const toInstall = computed(() =>
+    needed.value
+        .map((key) => props.requirements.find((app) => app.key === key))
+        .filter((app) => app && app.status !== 'installed')
+        .map((app) => app.label),
 );
 
 // The DNS record points here unless told otherwise.
@@ -222,11 +222,14 @@ const submit = () => form.post(route('sites.store'));
 
                 <div class="mt-4 grid gap-6 sm:grid-cols-2">
                     <div class="sm:col-span-2">
-                        <RequiredApps
-                            :apps="requirements"
-                            :need="needed"
-                            note="A site of this type needs these. Install them here and the form unlocks itself."
-                        />
+                        <p
+                            v-if="toInstall.length"
+                            class="rounded-xl bg-brand-50 px-4 py-3 text-sm text-brand-900 ring-1 ring-brand-100"
+                        >
+                            This server does not have {{ toInstall.join(', ') }} yet. Creating the site
+                            installs {{ toInstall.length === 1 ? 'it' : 'them' }} first — only what a
+                            {{ typeConfig?.label ?? 'site' }} site needs — then deploys it.
+                        </p>
                     </div>
 
                     <div>
@@ -615,7 +618,7 @@ const submit = () => form.post(route('sites.store'));
 
             <div class="flex items-center gap-3">
                 <button
-                    :disabled="form.processing || requirement"
+                    :disabled="form.processing"
                     class="rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                     Create site

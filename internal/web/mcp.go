@@ -186,7 +186,7 @@ var mcpCapabilities = []struct {
 	{Key: capDNS, Label: "DNS records",
 		Help: "Connect DNS providers, and read and write the records in their zones — including " +
 			"records for domains this panel does not host."},
-	{Key: capApps, Label: "Install apps",
+	{Key: capApps, Label: "Install services",
 		Help: "Install what the machine is missing — PHP, MariaDB, Node.js, Redis and the rest — " +
 			"and uninstall what it no longer needs."},
 	{Key: capSystem, Label: "Server settings",
@@ -592,7 +592,7 @@ func (a *App) mcpServerStatus() *mcp.Tool {
 		Title:      "Server status",
 		ReadOnly:   true,
 		Description: "What this machine is and how it is doing: hostname, public IP, operating " +
-			"system, installed apps, CPU, memory and disk. Read this before promising that a " +
+			"system, installed services, CPU, memory and disk. Read this before promising that a " +
 			"domain can point here, or that a site type can be hosted.",
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			return map[string]any{
@@ -613,9 +613,9 @@ func (a *App) mcpListSiteTypes() *mcp.Tool {
 		Title:      "List site types",
 		ReadOnly:   true,
 		Description: "The kinds of site this panel deploys — WordPress, Laravel, Next.js, Node.js, " +
-			"plain PHP, static HTML and the managed applications — and, for each, whether this " +
-			"machine has what it needs right now. A type whose `ready` is false names the apps " +
-			"install_apps has to put on the machine first.",
+			"plain PHP, static HTML and the managed applications — and, for each, which services " +
+			"it needs that this machine does not have yet. Those are installed by create_site " +
+			"itself, before the deployment — nothing has to be installed first.",
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
 			// Asked of the machine rather than of the rows: a stale `failed`
 			// from a half-finished install would report a type as impossible on
@@ -625,32 +625,31 @@ func (a *App) mcpListSiteTypes() *mcp.Tool {
 			types := make([]map[string]any, 0, len(config.SiteTypes))
 
 			for _, kind := range config.SiteTypes {
-				problem := a.missingRequirement(kind.Key)
+				installs := a.missingServices(kind.Key)
 
 				types = append(types, map[string]any{
-					"key":           kind.Key,
-					"label":         kind.Label,
-					"description":   kind.Description,
-					"runtime":       kind.Runtime,
-					"web_directory": kind.WebDirectory,
-					"database":      kind.Database,
-					"proxied":       kind.Proxied,
-					"managed":       kind.Managed,
-					"build_command": kind.Build,
-					"start_command": kind.Start,
-					"ready":         problem == "",
-					"blocked_by":    nullable(problem),
+					"key":            kind.Key,
+					"label":          kind.Label,
+					"description":    kind.Description,
+					"runtime":        kind.Runtime,
+					"web_directory":  kind.WebDirectory,
+					"database":       kind.Database,
+					"proxied":        kind.Proxied,
+					"managed":        kind.Managed,
+					"build_command":  kind.Build,
+					"start_command":  kind.Start,
+					"installs_first": installs,
 				})
 			}
 
 			return map[string]any{
-				"types":            types,
-				"php_versions":     config.PHPVersions,
-				"default_php":      a.Store.PHPVersion(),
-				"default_node":     a.Store.NodeVersion(),
-				"installed_apps":   a.Store.InstalledServiceKeys(ctx),
-				"public_ip":        system.PublicIP(),
-				"dns_record_types": config.SiteDNSTypes,
+				"types":              types,
+				"php_versions":       config.PHPVersions,
+				"default_php":        a.Store.PHPVersion(),
+				"default_node":       a.Store.NodeVersion(),
+				"installed_services": a.Store.InstalledServiceKeys(ctx),
+				"public_ip":          system.PublicIP(),
+				"dns_record_types":   config.SiteDNSTypes,
 			}, nil
 		},
 	}
@@ -1477,7 +1476,7 @@ func (a *App) mcpListApps() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "list_apps",
 		Capability: capSitesRead,
-		Title:      "List the server's apps",
+		Title:      "List the server's services",
 		ReadOnly:   true,
 		Description: "What the panel can install on this machine — nginx, PHP, MariaDB, Node.js, " +
 			"Redis, Certbot and the rest — and the state each is in.",
@@ -1493,14 +1492,15 @@ func (a *App) mcpInstallApps() *mcp.Tool {
 	return &mcp.Tool{
 		Name:       "install_apps",
 		Capability: capApps,
-		Title:      "Install apps",
-		Description: "Install one or more of the apps from list_apps. This is what a site type " +
-			"whose `ready` is false needs first. Asynchronous: the installs run on the queue, and " +
-			"list_apps says when they are done.",
+		Title:      "Install services",
+		Description: "Install one or more of the services from list_apps. A site does not need " +
+			"this — create_site installs what its type needs — but a database engine, Redis or " +
+			"the mail server asked for on its own does. Asynchronous: the installs run on the " +
+			"queue, and list_apps says when they are done.",
 		Properties: map[string]mcp.Property{
 			"keys": {Type: "array", Description: "The app keys to install, from list_apps."},
 			"force": {Type: "boolean", Default: false,
-				Description: "Install again even where the panel believes the app is already there."},
+				Description: "Install again even where the panel believes the service is already there."},
 		},
 		Required: []string{"keys"},
 		Run: func(ctx context.Context, args mcp.Args) (any, error) {
@@ -1526,7 +1526,7 @@ func (a *App) mcpInstallApps() *mcp.Tool {
 			}
 
 			if len(keys) == 0 {
-				return nil, errors.New("name at least one app to install")
+				return nil, errors.New("name at least one service to install")
 			}
 
 			queued := a.Catalog.Queue(keys, args.Bool("force", false))

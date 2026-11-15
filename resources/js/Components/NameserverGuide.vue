@@ -200,7 +200,7 @@ const steps = computed(() => [
                         <Link
                             :href="route('services.index')"
                             class="text-brand-600 hover:underline"
-                            >Apps page</Link
+                            >Services page</Link
                         >. The panel configures it as an authoritative server for
                         your zones and nothing else — recursion off, so this machine
                         cannot be used to reflect an attack at somebody — and opens
@@ -213,7 +213,7 @@ const steps = computed(() => [
                         Installed and running.
                     </p>
                     <p v-else-if="installed" class="mt-2 text-sm text-amber-700">
-                        Installed, but not running. The Apps page has its log.
+                        Installed, but not running. The Services page has its log.
                     </p>
                     <p v-else class="mt-2 text-sm text-amber-700">
                         Not installed yet. Everything below can be set up first; the

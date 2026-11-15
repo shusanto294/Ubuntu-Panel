@@ -117,14 +117,8 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 		return nil, problem("domain", "A site for this domain already exists.")
 	}
 
-	// Asked of the machine rather than the row: a stale `failed` from a
-	// half-finished install would refuse a site this server can host perfectly
-	// well.
-	a.Catalog.Detect([]string{"node", "mysql", "wpcli", "php"})
-
-	if missing := a.missingRequirement(kind); missing != "" {
-		return nil, problem("type", missing)
-	}
+	// What the type needs and the machine does not have is not a reason to
+	// refuse: the deployment installs it first (site_services.go).
 
 	manageDNS, dnsAccountID, err := a.resolveDNS(ctx, user, domain, in)
 	if err != nil {

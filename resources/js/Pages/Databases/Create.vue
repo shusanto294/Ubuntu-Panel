@@ -45,7 +45,7 @@ const submit = () => form.post(route('databases.store'));
             :apps="requirements"
             :need="['mysql']"
             class="mb-6 max-w-2xl"
-            note="A database needs an engine to live in. MariaDB is the one WordPress and most Laravel sites expect; PostgreSQL and MongoDB are on the Apps page if you would rather."
+            note="A database needs an engine to live in. MariaDB is the one WordPress and most Laravel sites expect; PostgreSQL and MongoDB are on the Services page if you would rather."
         />
 
         <form

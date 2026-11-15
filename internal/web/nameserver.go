@@ -171,7 +171,7 @@ func (a *App) nameserverSettings(w http.ResponseWriter, r *http.Request) {
 	// every zone's apex NS records, so changing them changes every file.
 	if err := nameserver.Apply(r.Context(), a.Store); err != nil {
 		if errors.Is(err, nameserver.ErrNotInstalled) {
-			a.okBack(w, r, "Saved. Install the DNS server from the Apps page and the "+
+			a.okBack(w, r, "Saved. Install the DNS server from the Services page and the "+
 				"zones are written as soon as it is there.")
 
 			return
@@ -250,7 +250,7 @@ func (a *App) nameserverZoneStore(w http.ResponseWriter, r *http.Request) {
 	// has to be told about one it has never heard of.
 	if err := nameserver.Apply(r.Context(), a.Store); err != nil {
 		if errors.Is(err, nameserver.ErrNotInstalled) {
-			a.okBack(w, r, name+" added. Install the DNS server from the Apps page and "+
+			a.okBack(w, r, name+" added. Install the DNS server from the Services page and "+
 				"this machine starts answering for it.")
 
 			return
@@ -321,7 +321,7 @@ func (a *App) nameserverResync(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, nameserver.ErrNotInstalled):
 			a.failBack(w, r, "The DNS server is not installed on this machine. "+
-				"Install it from the Apps page.")
+				"Install it from the Services page.")
 
 		case errors.Is(err, nameserver.ErrNotConfigured):
 			a.failBack(w, r, "Set the nameserver hostnames first.")
@@ -480,7 +480,7 @@ const dnsOfferedSetting = "dns_server_offered"
 // EnsureDNSServer installs the DNS server on a machine set up before it was a
 // default, the way a fresh install now gets it.
 //
-// Once. Somebody who removes it from Apps has decided they want their records
+// Once. Somebody who removes it from Services has decided they want their records
 // somewhere else, and a restart is not a reason to put it back. If another
 // install is already queued or running, it waits for the next start rather
 // than squeezing in beside it.

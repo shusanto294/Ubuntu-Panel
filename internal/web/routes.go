@@ -73,18 +73,17 @@ func (a *App) routes() *router {
 	// Apps.
 	//
 	// The route *names* stay `services.*`: they are what the Vue pages call
-	// route() with, and renaming them buys a different string for the same
-	// endpoint. The URL and the label are what anybody actually sees, and those
-	// say apps.
-	rt.get("/apps", "services.index", authenticated, a.apps)
-	rt.post("/apps/detect", "services.detect", authenticated, a.servicesDetect)
-	rt.post("/apps/install", "services.install-many", authenticated, a.servicesInstallMany)
-	rt.post("/apps/{service}/install", "services.install", authenticated, a.servicesInstallOne)
-	rt.post("/apps/{service}/retry", "services.retry", authenticated, a.servicesRetry)
-	rt.post("/apps/{service}/uninstall", "services.uninstall", authenticated, a.servicesUninstall)
+	// route() with.
+	rt.get("/services", "services.index", authenticated, a.servicesIndex)
+	rt.post("/services/detect", "services.detect", authenticated, a.servicesDetect)
+	rt.post("/services/install", "services.install-many", authenticated, a.servicesInstallMany)
+	rt.post("/services/{service}/install", "services.install", authenticated, a.servicesInstallOne)
+	rt.post("/services/{service}/retry", "services.retry", authenticated, a.servicesRetry)
+	rt.post("/services/{service}/uninstall", "services.uninstall", authenticated, a.servicesUninstall)
 
-	// The old path, so a bookmark or an open tab does not 404.
-	rt.get("/services", "services.index-legacy", authenticated, a.apps)
+	// The page was called Apps for a while, so a bookmark or an open tab
+	// there does not 404.
+	rt.get("/apps", "services.index-legacy", authenticated, a.servicesIndex)
 
 	// Logs. Every queued job writes a task, and this is where they are read —
 	// the pages that start the work show a line of progress and link here

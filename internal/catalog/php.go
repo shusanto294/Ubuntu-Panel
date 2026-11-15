@@ -14,7 +14,7 @@ import (
 // It used to live inside the `php` cases of preSteps, packagesFor and
 // configureSteps, reading the panel's default version out of the settings
 // table — which was the whole of it while a machine had exactly one PHP. It
-// has more than one now: the Apps page installs the default, a panel update
+// has more than one now: the Services page installs the default, a panel update
 // adds the newest the panel knows about, and a site's PHP tab can be pointed
 // at any version on the box. All three want the same packages, the same
 // extensions and the same tuning, so the recipe takes the version as an
@@ -160,7 +160,7 @@ func phpTune(list *tasks.List, version, group string) {
 // source, the packages, the extensions that may be missing, and a tuned
 // PHP-FPM listening on /run/php/php<version>-fpm.sock.
 //
-// Used for a version that is not the one the Apps page installed — the newest
+// Used for a version that is not the one the Services page installed — the newest
 // one a panel update adds, and the one a site's PHP tab asks to be moved to.
 // The apt install is its own step here rather than part of the shared
 // transaction InstallQueued builds, because there is nothing to share it with.

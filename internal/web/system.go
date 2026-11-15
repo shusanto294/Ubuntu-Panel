@@ -127,11 +127,11 @@ func (a *App) firstActiveTask(r *http.Request, kinds ...string) map[string]any {
 // carries the panel's own domain change, which belongs to Settings.
 var appTaskActions = []string{"services.install", "services.uninstall"}
 
-// apps is the Apps page.
-func (a *App) apps(w http.ResponseWriter, r *http.Request) {
+// servicesIndex is the Services page.
+func (a *App) servicesIndex(w http.ResponseWriter, r *http.Request) {
 	a.Catalog.SyncRows()
 
-	a.Render.Render(w, r, "System/Apps", inertia.Props{
+	a.Render.Render(w, r, "System/Services", inertia.Props{
 		"system":   a.systemSummary(r.Context()),
 		"services": a.Catalog.Summary(r.Context()),
 		"activeTask": a.Store.TaskConsole(r.Context(),
@@ -183,7 +183,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		"smtp":          a.smtpProps(),
 		"panelUsers":    a.panelUsers(r.Context()),
 		"backupStorage": a.backupStorageProps(),
-		// Narrowed to this action so an app install running on the Apps page
+		// Narrowed to this action so an app install running on the Services page
 		// does not appear here.
 		"activeTask": a.Store.TaskConsole(r.Context(),
 			a.Store.LatestTaskByAction(r.Context(), "provision", "panel.domain", true), 0),
@@ -364,7 +364,7 @@ func (a *App) servicesInstallOne(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("service")
 
 	if !catalog.Exists(key) {
-		a.notFoundError(w, r, "No such app.")
+		a.notFoundError(w, r, "No such service.")
 		return
 	}
 
@@ -377,7 +377,7 @@ func (a *App) servicesInstallOne(w http.ResponseWriter, r *http.Request) {
 
 	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
 
-	inertia.Back(w, r, "/apps")
+	inertia.Back(w, r, "/services")
 }
 
 func (a *App) servicesInstallMany(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +414,7 @@ func (a *App) servicesInstallMany(w http.ResponseWriter, r *http.Request) {
 
 	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
 
-	inertia.Back(w, r, "/apps")
+	inertia.Back(w, r, "/services")
 }
 
 func (a *App) servicesRetry(w http.ResponseWriter, r *http.Request) {
@@ -422,14 +422,14 @@ func (a *App) servicesRetry(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("service")
 
 	if !catalog.Exists(key) {
-		a.notFoundError(w, r, "No such app.")
+		a.notFoundError(w, r, "No such service.")
 		return
 	}
 
 	a.Catalog.Queue([]string{key}, true)
 	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
 
-	inertia.Back(w, r, "/apps")
+	inertia.Back(w, r, "/services")
 }
 
 func (a *App) servicesUninstall(w http.ResponseWriter, r *http.Request) {
@@ -437,7 +437,7 @@ func (a *App) servicesUninstall(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("service")
 
 	if !catalog.Exists(key) {
-		a.notFoundError(w, r, "No such app.")
+		a.notFoundError(w, r, "No such service.")
 		return
 	}
 
@@ -448,7 +448,7 @@ func (a *App) servicesUninstall(w http.ResponseWriter, r *http.Request) {
 
 	a.Queue.Push(queue.ServicesUninstall, map[string]any{"key": key, "user": user.ID})
 
-	inertia.Back(w, r, "/apps")
+	inertia.Back(w, r, "/services")
 }
 
 // ------------------------------------------------------------- panel port
@@ -659,7 +659,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		if !secure {
 			a.Store.ForgetSetting("panel_domain_tls")
 
-			advice := "Install Certbot from Apps"
+			advice := "Install Certbot from Services"
 			if certbot {
 				advice = "Make sure the hostname resolves to this server and that ports 80 " +
 					"and 443 reach it"

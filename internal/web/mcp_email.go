@@ -347,7 +347,7 @@ func (a *App) mcpRetryEmailDomain() *mcp.Tool {
 		Capability: capEmail,
 		Title:      "Set a mail domain up again",
 		Description: "Run a mail domain's setup from the start. This is what fixes a domain whose " +
-			"first attempt failed — a missing app, DNS that had not propagated, a certificate that " +
+			"first attempt failed — a missing service, DNS that had not propagated, a certificate that " +
 			"could not be issued — once the reason has been dealt with.",
 		Properties: map[string]mcp.Property{
 			"domain": {Description: "The domain's id, or the domain itself."},

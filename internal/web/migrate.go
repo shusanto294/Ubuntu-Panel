@@ -682,7 +682,7 @@ func (a *App) refuseMigration(ctx context.Context, m *store.Migration, hello *mi
 	}
 
 	if m.Kind == "mail" && !hello.MailConfigured {
-		return "The new server has no mail server set up. Install Mail on its Apps page first."
+		return "The new server has no mail server set up. Install Mail on its Services page first."
 	}
 
 	if site == nil {
@@ -690,16 +690,16 @@ func (a *App) refuseMigration(ctx context.Context, m *store.Migration, hello *mi
 	}
 
 	if !hello.Services["nginx"] {
-		return "The new server has no nginx. Install it on its Apps page first."
+		return "The new server has no nginx. Install it on its Services page first."
 	}
 
 	if database, _, _ := a.Sites.MigrationDatabase(ctx, site); database != nil && !hello.Services[database.Engine] {
-		return fmt.Sprintf("%s's database is %s, which the new server does not have. Install it on its Apps page first.",
+		return fmt.Sprintf("%s's database is %s, which the new server does not have. Install it on its Services page first.",
 			site.Domain, config.EngineLabel(database.Engine))
 	}
 
 	if site.IsProxied() && !hello.Services["node"] {
-		return "The new server has no Node.js. Install it on its Apps page first."
+		return "The new server has no Node.js. Install it on its Services page first."
 	}
 
 	if hello.SitesRoot != "" && !strings.HasPrefix(site.RootPath, strings.TrimRight(hello.SitesRoot, "/")+"/") {
@@ -1002,13 +1002,13 @@ func (a *App) receiveSite(ctx context.Context, owner, accountID int64, incoming 
 	}
 
 	if !a.Store.ServiceInstalled("nginx") {
-		return 0, errors.New("this server has no nginx; install it on the Apps page first")
+		return 0, errors.New("this server has no nginx; install it on the Services page first")
 	}
 
 	databaseID := int64(0)
 	if db := incoming.Database; db != nil {
 		if !a.Store.ServiceInstalled(db.Engine) {
-			return 0, fmt.Errorf("%s is not installed here; install it on the Apps page first", config.EngineLabel(db.Engine))
+			return 0, fmt.Errorf("%s is not installed here; install it on the Services page first", config.EngineLabel(db.Engine))
 		}
 		if a.Store.DatabaseExists(ctx, db.Engine, db.Name) {
 			return 0, fmt.Errorf("this server already has a database called %s", db.Name)
@@ -1088,7 +1088,7 @@ func (a *App) receiveMail(ctx context.Context, owner, accountID int64, incoming 
 		return 0, errors.New("that is not a domain")
 	}
 	if !a.Mail.IsConfigured() {
-		return 0, errors.New("this server has no mail server set up; install Mail on the Apps page first")
+		return 0, errors.New("this server has no mail server set up; install Mail on the Services page first")
 	}
 	if _, err := a.Store.FindEmailDomainByName(ctx, name); err == nil {
 		return 0, errors.New("this server already has the mail domain " + name)

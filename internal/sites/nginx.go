@@ -44,7 +44,7 @@ const (
 // Emitted whether or not phpMyAdmin is installed. A location pointing at a
 // directory that is not there is a 404, which is what it should be; making the
 // block conditional would mean the panel had to rewrite its own vhost the
-// moment somebody installed the app from Apps.
+// moment somebody installed the app from Services.
 //
 // Nothing here references $panel_https, deliberately. That map lives in a
 // conf.d file the panel writes when it configures nginx, and this block also

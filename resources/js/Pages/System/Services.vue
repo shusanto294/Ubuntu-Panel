@@ -27,12 +27,12 @@ useLiveRefresh(busy, ['system', 'services', 'activeTask', 'latestTask']);
 </script>
 
 <template>
-    <Head title="Apps" />
+    <Head title="Services" />
 
     <AuthenticatedLayout>
         <template #header>
             <div>
-                <h2 class="text-xl font-semibold text-slate-900">Apps</h2>
+                <h2 class="text-xl font-semibold text-slate-900">Services</h2>
                 <p class="text-sm text-slate-500">
                     {{ system.services_installed_count }} of
                     {{ services.length }} installed on {{ system.hostname }}

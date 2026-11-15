@@ -152,7 +152,7 @@ func (s *Store) SetServiceStatus(key, status, version, lastError string) {
 		key, status, version, nullText(lastError), installedAt)
 }
 
-// SetServiceTask links the row to the task installing it, so the Apps page can
+// SetServiceTask links the row to the task installing it, so the Services page can
 // show the console.
 func (s *Store) SetServiceTask(key string, taskID int64) {
 	s.db.Exec(`UPDATE services SET task_id = ?, updated_at = datetime('now') WHERE key = ?`,
@@ -202,7 +202,7 @@ func (s *Store) QueuedServices(ctx context.Context) []string {
 }
 
 // ServicesPending reports whether anything is queued or installing, which is
-// what keeps the Apps page refreshing itself.
+// what keeps the Services page refreshing itself.
 func (s *Store) ServicesPending() bool {
 	var one int
 

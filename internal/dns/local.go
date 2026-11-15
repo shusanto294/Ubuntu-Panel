@@ -53,7 +53,7 @@ func (c *Client) localVerify() (string, error) {
 
 	if !nameserver.Installed() {
 		return "", errors.New("the DNS server is not installed on this machine yet — " +
-			"install it from the Apps page.")
+			"install it from the Services page.")
 	}
 
 	if !nameserver.Running() {

@@ -183,7 +183,7 @@ func (s *Service) ensurePHPRuntime(ctx context.Context, siteID int64) func(*task
 			"PHP %s could not be installed, so nothing would serve this site — "+
 				"nginx would answer every request with a 502.\n"+
 				"PHP-FPM sockets on this machine: %s.\n"+
-				"Pick one of those for the site, or install PHP %s from the Apps page.",
+				"Pick one of those for the site, or install PHP %s from the Services page.",
 			site.PHPVersion, present, site.PHPVersion)
 	}
 }
