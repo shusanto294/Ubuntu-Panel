@@ -224,7 +224,7 @@ func run(configPath string) error {
 	defer stopBackground()
 
 	go prune(background, app.Sessions, db, log)
-	go sample(background, db)
+	go sample(background, db, app.Watched)
 
 	// Deployments and installs run here, and anything left running when the
 	// panel stopped goes back on the queue.
@@ -263,8 +263,10 @@ func run(configPath string) error {
 // sample records one metrics reading a minute for the dashboard graphs, and
 // prunes what has aged out of the longest window. CPU and memory are watched
 // every second in between, so the minute is recorded as its average and its
-// peak rather than as whatever the last instant of it happened to be.
-func sample(ctx context.Context, db *store.Store) {
+// peak rather than as whatever the last instant of it happened to be. What
+// was using them is worked out only while watched says somebody is using the
+// panel.
+func sample(ctx context.Context, db *store.Store, watched func() bool) {
 	sites := func() []system.SiteRoot {
 		list, err := db.Sites(ctx)
 		if err != nil {
@@ -279,12 +281,12 @@ func sample(ctx context.Context, db *store.Store) {
 		return roots
 	}
 
-	watcher := system.Sampler{Sites: sites}
+	watcher := system.Sampler{Sites: sites, Watched: watched}
 
 	// The disk is measured by walking every file of every site, which is
 	// real work on a full disk — so not at start, which is busy enough on its
-	// own, and then every six hours: disk use moves slowly, and a walk an hour
-	// was a spike an hour. Skipped when the last one is recent enough, so a
+	// own, and then once a day: disk use moves slowly, and every walk is a
+	// spike of disk reads the sites share. Skipped when the last one is recent enough, so a
 	// panel restarted three times in an afternoon walks the disk once.
 	disk := make(chan *system.Usage, 1)
 	go func() {
@@ -366,7 +368,7 @@ func sample(ctx context.Context, db *store.Store) {
 }
 
 // diskEvery is how often the disk breakdown is measured.
-const diskEvery = 6 * time.Hour
+const diskEvery = 24 * time.Hour
 
 // asJSON is a breakdown as the samples table keeps it, or empty when there
 // is none.

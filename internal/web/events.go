@@ -36,14 +36,14 @@ const (
 	// collectFirstBytes is how far back a file seen for the first time is read.
 	collectFirstBytes = 2 << 20
 
-	// collectMaxBytes is the most read from one file in one minute; a file
-	// growing faster than this is caught up over the following minutes.
+	// collectMaxBytes is the most read from one file in one copy; a file
+	// growing faster than this is caught up over the following copies.
 	collectMaxBytes = 16 << 20
 
-	// collectMaxEvents is the most kept from one file in one minute. A log
-	// spewing the same line ten thousand times a minute is one thing
-	// happening, not ten thousand.
-	collectMaxEvents = 2000
+	// collectMaxEvents is the most kept from one file in one copy — a few
+	// minutes of it. A log spewing the same line fifty thousand times in
+	// that is one thing happening, not fifty thousand.
+	collectMaxEvents = 10000
 )
 
 var collecting sync.Mutex
@@ -51,6 +51,21 @@ var collecting sync.Mutex
 // collectFiles are the logs the collector reads: the Server logs list, by the
 // source each is filed under. The firewall's log is left out — it is a line
 // per refused packet, which on a public address is most of the internet.
+// collectedAt is when the last copy started, in Unix seconds.
+var collectedAt atomic.Int64
+
+// freshLogs copies what the logs gained since the last copy, when that was
+// more than a few seconds ago: the page that shows them is opened between
+// the clock's copies, and asking it to wait for the next would show it
+// minutes behind the files.
+func (a *App) freshLogs(ctx context.Context) {
+	if time.Since(time.Unix(collectedAt.Load(), 0)) < 15*time.Second {
+		return
+	}
+
+	a.collectServerLogs(ctx)
+}
+
 func (a *App) collectFiles(ctx context.Context) []serverlog.File {
 	files := []serverlog.File{}
 
@@ -94,13 +109,15 @@ func (a *App) collectFiles(ctx context.Context) []serverlog.File {
 	return files
 }
 
-// collectServerLogs is the minute's copy. One at a time: a slow minute is not
-// overtaken by the next.
+// collectServerLogs is the clock's copy, every few minutes. One at a time: a
+// slow copy is not overtaken by the next.
 func (a *App) collectServerLogs(ctx context.Context) {
 	if !collecting.TryLock() {
 		return
 	}
 	defer collecting.Unlock()
+
+	collectedAt.Store(time.Now().Unix())
 
 	defer func() {
 		if problem := recover(); problem != nil {
@@ -447,7 +464,7 @@ func (a *App) logEvents(file serverlog.File, contents []byte, skipFirst bool, tr
 	if dropped > 0 {
 		events = append(events, store.ServerEvent{
 			CreatedAt: read[0].At, Source: file.Source, Site: file.Site, Level: serverlog.LevelWarning,
-			Message: fmt.Sprintf("%d more lines from %s in the same minute were not kept — %s logged "+
+			Message: fmt.Sprintf("%d more lines from %s in the same few minutes were not kept — %s logged "+
 				"faster than anybody reads; the file itself has them all.", dropped, file.Path, file.Path),
 		})
 	}

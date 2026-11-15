@@ -19,6 +19,14 @@ type Sampler struct {
 	// every process under its program's name.
 	Sites func() []SiteRoot
 
+	// Watched reports whether anybody is using the panel. Who used the CPU
+	// and memory is a process table read every second and a root helper
+	// looking at every process ten times a second — work a server should not
+	// do for a graph nobody is looking at — so when it says no, only the CPU
+	// and memory figures are read and the minute has no breakdown. Nil is
+	// always.
+	Watched func() bool
+
 	sites    siteIndex
 	sitesAt  time.Time
 	cwds     cwdFeed
@@ -64,7 +72,12 @@ type Window struct {
 // Tick takes one reading.
 func (s *Sampler) Tick() {
 	cpu := s.cpu.Read()
-	s.watchProcesses(cpu)
+
+	if s.Watched == nil || s.Watched() {
+		s.watchProcesses(cpu)
+	} else {
+		s.unwatch()
+	}
 
 	var memory Metrics
 	readMemory(&memory)
@@ -148,6 +161,23 @@ func (s *Sampler) watchProcesses(cpu float64) {
 
 	s.mu.Lock()
 	s.spike = &spike
+	s.mu.Unlock()
+}
+
+// unwatch lets go of the breakdown: the helper stops, and the table is
+// forgotten so the next reading starts a fresh second rather than charging
+// the whole time since to whatever ran in it.
+func (s *Sampler) unwatch() {
+	s.cwds.stop()
+
+	if s.procs == nil {
+		return
+	}
+
+	s.procs, s.procsAt, s.times, s.lastSite = nil, time.Time{}, cpuTimes{}, nil
+
+	s.mu.Lock()
+	s.spike = nil
 	s.mu.Unlock()
 }
 

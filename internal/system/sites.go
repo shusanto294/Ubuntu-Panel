@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -171,6 +172,23 @@ type cwdFeed struct {
 	latest  map[int]map[string]int
 	running bool
 	tried   time.Time
+	cmd     *exec.Cmd
+	stdout  io.Closer
+}
+
+// stop ends the helper, if it is running: sudo passes the signal on, and
+// should it not, the helper's next write finds nobody reading and it returns.
+func (f *cwdFeed) stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if !f.running || f.cmd == nil || f.cmd.Process == nil {
+		return
+	}
+
+	f.cmd.Process.Signal(syscall.SIGTERM)
+	f.stdout.Close()
+	f.cmd, f.stdout, f.tried = nil, nil, time.Time{}
 }
 
 // start runs the helper if it is not running, at most once a minute — a
@@ -210,7 +228,7 @@ func (f *cwdFeed) start() {
 		return
 	}
 
-	f.running = true
+	f.running, f.cmd, f.stdout = true, cmd, stdout
 
 	go func() {
 		f.read(stdout)

@@ -112,7 +112,16 @@ type Queue struct {
 
 	stop   context.CancelFunc
 	waited sync.WaitGroup
+
+	// wakes holds one bell per worker, rung by Push: an idle panel's workers
+	// sleep rather than ask the database every second whether there is work.
+	wakesMu sync.Mutex
+	wakes   []chan struct{}
 }
+
+// idlePoll is how often a sleeping worker looks anyway: for a retry left
+// waiting by a panel that has since restarted, whose own bell went with it.
+const idlePoll = 5 * time.Minute
 
 // New prepares a queue. Nothing runs until Start.
 func New(st *store.Store, log *slog.Logger, workers int) *Queue {
@@ -152,6 +161,8 @@ func (q *Queue) Push(kind string, payload any) (int64, error) {
 	}
 
 	q.log.Info("queued", "kind", kind, "job", id)
+
+	q.ring()
 
 	return id, nil
 }
@@ -212,19 +223,55 @@ func (q *Queue) Stop() {
 	q.waited.Wait()
 }
 
+// ring wakes every worker; each takes what its lane runs, if anything.
+func (q *Queue) ring() {
+	q.wakesMu.Lock()
+	defer q.wakesMu.Unlock()
+
+	for _, wake := range q.wakes {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (q *Queue) bell() chan struct{} {
+	q.wakesMu.Lock()
+	defer q.wakesMu.Unlock()
+
+	wake := make(chan struct{}, 1)
+	q.wakes = append(q.wakes, wake)
+
+	return wake
+}
+
 func (q *Queue) run(ctx context.Context, worker int, quick bool) {
-	// Poll rather than notify: the work arrives every few minutes at most, and
-	// a second of latency on a deployment that takes two is not worth a
-	// wake-up channel that has to survive a restart.
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	// Woken by Push rather than polling every second: an idle panel's workers
+	// cost nothing. The slow poll is for retries, whose time comes with no
+	// push, and for whatever was queued before the panel started — the first
+	// look is straight away.
+	wake := q.bell()
+	wake <- struct{}{}
+
+	idle := time.NewTimer(idlePoll)
+	defer idle.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-wake:
+		case <-idle.C:
 		}
+
+		if !idle.Stop() {
+			select {
+			case <-idle.C:
+			default:
+			}
+		}
+		idle.Reset(idlePoll)
 
 		for {
 			// The quick lane takes only its kinds; the others take everything
@@ -274,6 +321,10 @@ func (q *Queue) execute(ctx context.Context, worker int, job *store.Job) {
 		if errors.As(err, &retry) {
 			log.Warn("will retry", "error", retry.Reason, "after", retry.After)
 			q.store.RetryJob(job.ID, retry.After, retry.Reason.Error())
+
+			// A moment past its time, so the row is claimable when the bell
+			// rings.
+			time.AfterFunc(retry.After+100*time.Millisecond, q.ring)
 
 			return
 		}

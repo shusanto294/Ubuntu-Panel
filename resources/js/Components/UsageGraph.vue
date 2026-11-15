@@ -294,12 +294,13 @@ const breakdownLines = computed(() => {
 });
 
 // A point with no breakdown says why, rather than looking like the hover is
-// broken: the disk is measured hourly and the first one takes a few minutes,
-// and minutes from before an update never had one.
+// broken: the disk is measured daily and the first one takes a few minutes,
+// and what used the CPU and memory is only worked out while the panel is in
+// use, so the server spends an unattended night on its sites.
 const missingBreakdown = computed(() =>
     props.kind === 'disk'
-        ? 'What is using the disk is measured a few minutes after the panel starts, then every six hours. It shows here once it has been.'
-        : 'No breakdown was recorded for this time.',
+        ? 'What is using the disk is measured a few minutes after the panel starts, then once a day. It shows here once it has been.'
+        : 'What was using it is only recorded while somebody is using the panel, so it costs the server nothing the rest of the time.',
 );
 
 const emptyBreakdown = computed(() =>

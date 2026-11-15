@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
@@ -47,6 +49,21 @@ type App struct {
 
 	assets fs.FS
 	router *router
+
+	// viewedAt is when a signed-in person last asked the panel for anything,
+	// in Unix seconds. See Watched.
+	viewedAt atomic.Int64
+}
+
+// watchFor is how long after the last request the panel counts as in use.
+const watchFor = 10 * time.Minute
+
+// Watched reports whether somebody has used the panel in the last few
+// minutes. Work that is only for showing — like the per-process breakdown
+// of the usage graphs — runs while it is true and not otherwise, so an
+// unattended server spends its CPU on its sites.
+func (a *App) Watched() bool {
+	return time.Since(time.Unix(a.viewedAt.Load(), 0)) < watchFor
 }
 
 // New wires the application together. assets is the filesystem holding the

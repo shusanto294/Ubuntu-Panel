@@ -53,6 +53,7 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 
 	switch view {
 	case "server":
+		a.freshLogs(r.Context())
 		extras = append(extras, a.logsEventsProps(r.Context(), flat, "server"))
 
 		// The boxes above the list read the access logs, which is the slow
@@ -64,6 +65,8 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	case "panel":
+		// SSH sign-ins come out of auth.log's copy.
+		a.freshLogs(r.Context())
 		extras = append(extras, a.logsEventsProps(r.Context(), flat, "panel"))
 	case "files":
 		page, _ := strconv.Atoi(query.Get("page"))

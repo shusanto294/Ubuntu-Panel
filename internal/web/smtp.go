@@ -223,13 +223,19 @@ func (a *App) securityAlerts(w http.ResponseWriter, r *http.Request) {
 	a.securityBack(w, r, "Alert settings saved.", false)
 }
 
-// runSecurityAlerts is the clock behind the alerts: every minute it looks at
-// what happened since it last looked and emails what the operator asked to
-// hear about.
+// runSecurityAlerts is the clock behind the alerts: every few minutes it
+// looks at what happened since it last looked and emails what the operator
+// asked to hear about.
 //
 // It always moves its cursors forward, alerting or not. Switching an alert on
 // is then about what happens from that moment, rather than a mailbox full of
 // last month.
+//
+// The minute itself only re-locks the sites whose unlock ran out, which is a
+// settings read when none is unlocked. The copy of the logs and the alerts
+// built from it are every collectEvery: work for the panel's own pages, which
+// the Logs page asks for fresh when it is opened, and an alert a few minutes
+// late says the same thing.
 func (a *App) runSecurityAlerts(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -247,12 +253,17 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 
 		minutes++
 
-		// The minute's jobs, spread across it rather than started together,
-		// so the sites never share a moment of the CPU with all of them at
-		// once. None of them bans, scans traffic or reloads nginx.
+		a.checkLocks(ctx)
+
+		if minutes%collectEveryMinutes != 0 {
+			continue
+		}
+
+		// Spread across a minute rather than started together, so the sites
+		// never share a moment of the CPU with all of them at once. None of
+		// them bans, scans traffic or reloads nginx.
 		jobs := []func(){
 			func() { a.recordSSHEvents(ctx) },
-			func() { a.checkLocks(ctx) },
 			func() {
 				// Every ten minutes: a domain allowed to reach a database may
 				// have moved to another address.
@@ -269,6 +280,10 @@ func (a *App) runSecurityAlerts(ctx context.Context) {
 		}
 	}
 }
+
+// collectEveryMinutes is how often the server's logs are copied and the
+// alerts looked at, when nobody opens the Logs page sooner.
+const collectEveryMinutes = 5
 
 // spread runs jobs one after another, starting each a share of within apart,
 // and reports false if ctx ended first. A job that runs long only delays the
