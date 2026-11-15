@@ -16,67 +16,38 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
-// logsIndex is the Logs page, in three views:
+// logsIndex is the Logs page: what the server is doing. The traffic over a
+// window — its totals, the sites it went to and the pages most asked for
+// (traffic.go) — and below it every entry the machine's own programs logged:
+// nginx, PHP, the databases, fail2ban, sudo, the kernel, mail and each site
+// (events.go).
 //
-//   - server, the default: what the server is doing — the traffic and CPU
-//     summary (traffic.go) — and below it every entry the machine's own
-//     programs logged: nginx, PHP, the databases, fail2ban, sudo, the kernel,
-//     mail and each site (events.go);
-//   - panel: what the panel ran, sign-ins to it, and SSH;
-//   - files: the log files themselves, a page at a time.
+// Only the server's: the panel's own history is on each site and task, and
+// sign-ins on the Security page.
 func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-
-	view := query.Get("view")
-	switch view {
-	case "server", "panel", "files":
-	case "activity":
-		// The old addresses of the panel's own history.
-		view = "panel"
-	default:
-		view = "server"
-	}
-
-	props := inertia.Props{
-		"view":             view,
-		"retention":        a.logRetentionDays(),
-		"retentionOptions": logRetentionOptions,
-		"clearSources":     a.clearSources(),
-	}
 
 	flat := map[string]string{}
 	for key := range query {
 		flat[key] = query.Get(key)
 	}
 
-	var extras []map[string]any
+	a.freshLogs(r.Context())
 
-	switch view {
-	case "server":
-		a.freshLogs(r.Context())
-		extras = append(extras, a.logsEventsProps(r.Context(), flat, "server"))
-
-		// The boxes above the list read the access logs, which is the slow
-		// part of the page: never on the first paint, only when the page asks
-		// once it is up.
-		if inertia.Asked(r, "Logs/Index", "stats") {
-			extras = append(extras, map[string]any{
-				"stats": a.trafficStats(r.Context(), query.Get("range"), session.ClientIP(r)),
-			})
-		}
-	case "panel":
-		// SSH sign-ins come out of auth.log's copy.
-		a.freshLogs(r.Context())
-		extras = append(extras, a.logsEventsProps(r.Context(), flat, "panel"))
-	case "files":
-		page, _ := strconv.Atoi(query.Get("page"))
-		extras = append(extras, a.logsFilesProps(r.Context(), query.Get("source"), page, query.Get("q")))
+	props := inertia.Props{
+		"retention":        a.logRetentionDays(),
+		"retentionOptions": logRetentionOptions,
+		"clearSources":     a.clearSources(),
 	}
 
-	for _, extra := range extras {
-		for key, value := range extra {
-			props[key] = value
-		}
+	for key, value := range a.logsEventsProps(r.Context(), flat, "server") {
+		props[key] = value
+	}
+
+	// The traffic reads the access logs, which is the slow part of the page:
+	// never on the first paint, only when the page asks once it is up.
+	if inertia.Asked(r, "Logs/Index", "stats") {
+		props["stats"] = a.trafficStats(r.Context(), query.Get("range"), session.ClientIP(r))
 	}
 
 	a.Render.Render(w, r, "Logs/Index", props)
@@ -297,43 +268,4 @@ func (a *App) logsClear(w http.ResponseWriter, r *http.Request) {
 	default:
 		a.okBack(w, r, fmt.Sprintf("Cleared %d log entries.", removed))
 	}
-}
-
-// logsFilesClear empties one log file, or every one the Log files view lists.
-func (a *App) logsFilesClear(w http.ResponseWriter, r *http.Request) {
-	input, err := a.input(r)
-	if err != nil {
-		a.badRequest(w, r, err)
-		return
-	}
-
-	key := input["source"]
-	emptied := 0
-
-	for _, log := range a.serverLogs(r.Context()) {
-		if key != "all" && log.Key != key {
-			continue
-		}
-
-		if err := clearLogFile(log.Path); err != nil {
-			a.failBack(w, r, err.Error())
-			return
-		}
-
-		emptied++
-	}
-
-	if emptied == 0 {
-		a.failBack(w, r, "Choose a log file to clear.")
-		return
-	}
-
-	a.Log.Info("log files emptied", "which", key, "files", emptied)
-
-	if emptied == 1 {
-		a.okBack(w, r, "The log file was emptied.")
-		return
-	}
-
-	a.okBack(w, r, fmt.Sprintf("Emptied %d log files.", emptied))
 }

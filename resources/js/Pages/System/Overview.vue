@@ -231,12 +231,6 @@ useLiveRefresh(busy, [
                     class="flex items-center justify-between border-b border-slate-200 px-5 py-4"
                 >
                     <h3 class="font-semibold text-slate-800">Recent activity</h3>
-                    <Link
-                        :href="`${route('logs.index')}?view=events&source=panel`"
-                        class="text-xs font-medium text-brand-600 hover:underline"
-                    >
-                        All logs
-                    </Link>
                 </div>
                 <ul class="divide-y divide-slate-100 text-sm">
                     <li v-for="log in recentActivity" :key="log.id">

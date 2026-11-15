@@ -64,6 +64,7 @@ const series = computed(() => {
     const out = props.points.map((p) => ({
         t: p.t,
         s: p.s ?? null,
+        pending: !!p.pending,
         v:
             p.v === null || p.v === undefined
                 ? null
@@ -514,7 +515,11 @@ const tone = computed(() => {
                     v-else
                     class="mt-1.5 w-[200px] border-t border-white/15 pt-1.5 text-left text-[10px] whitespace-normal text-slate-400"
                 >
-                    {{ missingBreakdown }}
+                    {{
+                        hover.point.pending
+                            ? 'Drawn from the live readings. What was using it shows once the panel has recorded this minute.'
+                            : missingBreakdown
+                    }}
                 </p>
             </div>
 

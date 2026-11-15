@@ -134,6 +134,9 @@ var staticExtensions = map[string]bool{
 	".pdf": true, ".zip": true, ".gz": true, ".txt": true, ".xml": false,
 }
 
+// maxPages is how many pages a report lists.
+const maxPages = 100
+
 // Static reports whether a path is a file nginx hands out by itself, without
 // waking PHP or the application behind the site.
 func Static(p string) bool {
@@ -643,7 +646,12 @@ type Report struct {
 	TopIPs   []IPStat       `json:"top_ips"`
 	Paths    []PathStat     `json:"paths"`
 	Threats  []ThreatStat   `json:"threats"`
-	Agents   []AgentStat    `json:"agents"`
+
+	// Pages are the most requested of the paths a visitor would open: not
+	// the stylesheets, scripts and images a page pulls in, not an attack's
+	// probes, and not addresses that only ever failed.
+	Pages  []PathStat  `json:"pages"`
+	Agents []AgentStat `json:"agents"`
 }
 
 type SiteStat struct {
@@ -772,7 +780,7 @@ func (a *Analyzer) Report() Report {
 		Requests: a.total, Dynamic: a.dynamic, Static: a.static, Bytes: a.bytes,
 		IPs: len(a.ips), Scanned: a.scanned, Skipped: a.skipped,
 		Statuses: a.statuses, Timeline: a.timeline,
-		Sites: []SiteStat{}, TopIPs: []IPStat{}, Paths: []PathStat{},
+		Sites: []SiteStat{}, TopIPs: []IPStat{}, Paths: []PathStat{}, Pages: []PathStat{},
 		Threats: []ThreatStat{}, Agents: []AgentStat{},
 	}
 
@@ -827,6 +835,18 @@ func (a *Analyzer) Report() Report {
 		}
 		return report.Paths[i].Site+report.Paths[i].Path < report.Paths[j].Site+report.Paths[j].Path
 	})
+
+	// From every path, before the cap below: on a busy site the top two
+	// hundred can be all images.
+	for _, p := range report.Paths {
+		if len(report.Pages) == maxPages {
+			break
+		}
+		if p.Threat == "" && !Static(p.Path) && p.NotFound+p.Errors < p.Requests {
+			report.Pages = append(report.Pages, p)
+		}
+	}
+
 	if len(report.Paths) > 200 {
 		report.Paths = report.Paths[:200]
 	}

@@ -367,93 +367,7 @@ func (a *App) serverLogs(ctx context.Context) []serverLog {
 // serverLogPerPage is how many lines a page of a log file is.
 const serverLogPerPage = 20
 
-// readServerLog is one page of a file, counted from its end — page 1 is the
-// newest lines — or of the lines matching a search, a fixed string,
-// case-insensitive. It returns the page and how many lines there are in all.
-func readServerLog(path string, page int, search string) (string, int) {
-	quoted := proc.Quote(path)
-	upTo := page * serverLogPerPage
-
-	count := fmt.Sprintf("sudo wc -l < %s 2>/dev/null", quoted)
-	read := fmt.Sprintf("sudo tail -n %d %s 2>/dev/null | head -n %d", upTo, quoted, serverLogPerPage)
-
-	if search != "" {
-		match := "sudo grep -F -i -a -- " + proc.Quote(search) + " " + quoted + " 2>/dev/null"
-		count = match + " | wc -l"
-		read = fmt.Sprintf("%s | tail -n %d | head -n %d", match, upTo, serverLogPerPage)
-	}
-
-	total, _ := strconv.Atoi(strings.TrimSpace(proc.Run(count, time.Minute).Output))
-
-	// The last page is short: tail asked for more than there are, and head
-	// must only take what lies past the pages after it.
-	if total > 0 && upTo > total {
-		take := total - (page-1)*serverLogPerPage
-		if take <= 0 {
-			return "", total
-		}
-		read = strings.Replace(read, fmt.Sprintf("head -n %d", serverLogPerPage), fmt.Sprintf("head -n %d", take), 1)
-	}
-
-	return strings.TrimRight(proc.Run(read, time.Minute).Output, "\n"), total
-}
-
 // ------------------------------------------------------------------ props
-
-// logsFilesProps are the Log files view's: the list of files, and a page of
-// the one chosen.
-func (a *App) logsFilesProps(ctx context.Context, source string, page int, search string) map[string]any {
-	if page < 1 {
-		page = 1
-	}
-
-	search = strings.TrimSpace(search)
-	if len(search) > 200 {
-		search = search[:200]
-	}
-
-	logs := a.serverLogs(ctx)
-
-	var chosen *serverLog
-	for i := range logs {
-		if logs[i].Key == source {
-			chosen = &logs[i]
-		}
-	}
-	if chosen == nil && len(logs) > 0 {
-		chosen = &logs[0]
-	}
-
-	props := map[string]any{
-		"serverLogs": logs,
-		"search":     search,
-		"serverLog":  nil,
-	}
-
-	if chosen != nil {
-		contents, total := readServerLog(chosen.Path, page, search)
-
-		pages := max(1, (total+serverLogPerPage-1)/serverLogPerPage)
-		if page > pages {
-			page = pages
-			contents, total = readServerLog(chosen.Path, page, search)
-		}
-
-		props["serverLog"] = map[string]any{
-			"key":      chosen.Key,
-			"label":    chosen.Label,
-			"group":    chosen.Group,
-			"path":     chosen.Path,
-			"size":     chosen.Size,
-			"contents": contents,
-		}
-		props["filePagination"] = map[string]any{
-			"page": page, "pages": pages, "total": total, "per_page": serverLogPerPage,
-		}
-	}
-
-	return props
-}
 
 // ------------------------------------------------------------ stats pages
 
@@ -476,8 +390,56 @@ func (a *App) trafficStats(ctx context.Context, windowKey, viewer string) map[st
 		}
 	}
 
+	// Each site's address, so a page in the list is a link to it.
+	base := map[string]string{}
+	if sites, err := a.Store.Sites(ctx); err == nil {
+		for _, site := range sites {
+			scheme := "http://"
+			if site.SSL {
+				scheme = "https://"
+			}
+			base[site.Domain] = scheme + site.Domain
+		}
+	}
+
+	sites := []map[string]any{}
+	for _, site := range report.Sites {
+		if site.Requests == 0 {
+			continue
+		}
+		sites = append(sites, map[string]any{
+			"domain":        site.Domain,
+			"url":           base[site.Domain],
+			"requests":      site.Requests,
+			"ips":           site.IPs,
+			"client_errors": site.NotFound,
+			"server_errors": site.Errors,
+		})
+	}
+
+	// The server's IP and hostnames no site has are scanners, not pages.
+	pages := []map[string]any{}
+	for _, page := range report.Pages {
+		if page.Site == unmatchedSite {
+			continue
+		}
+		url := ""
+		if base[page.Site] != "" {
+			url = base[page.Site] + page.Path
+		}
+		pages = append(pages, map[string]any{
+			"site":     page.Site,
+			"path":     page.Path,
+			"url":      url,
+			"requests": page.Requests,
+			"ips":      page.IPs,
+		})
+	}
+
 	return map[string]any{
 		"window":        window.key,
+		"sites":         sites,
+		"pages":         pages,
 		"requests":      report.Requests,
 		"bytes":         report.Bytes,
 		"dynamic":       report.Dynamic,

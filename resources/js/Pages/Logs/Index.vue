@@ -2,18 +2,17 @@
 import { computed, onMounted, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Events from '@/Components/Logs/Events.vue';
-import ServerLogs from '@/Components/Logs/ServerLogs.vue';
+import SiteTraffic from '@/Components/Logs/SiteTraffic.vue';
 import StatTiles from '@/Components/Logs/StatTiles.vue';
 import { confirmDanger } from '@/dialog';
-import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm } from '@inertiajs/vue3';
 
 /*
- * The Logs page: what the server is doing and what its programs logged (the
- * default), what the panel itself did, and the log files themselves. The
- * tabs sit in the top bar, so the logs get the whole page.
+ * The Logs page: what the server is doing. The traffic's totals, the sites it
+ * went to and the pages most visited, then everything the server's programs
+ * logged.
  */
 const props = defineProps({
-    view: { type: String, default: 'server' },
     retention: { type: Number, default: 90 },
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
     clearSources: { type: Array, default: () => [] },
@@ -29,19 +28,7 @@ const props = defineProps({
     ranges: { type: Array, default: () => [] },
     sources: { type: Array, default: () => [] },
     sites: { type: Array, default: () => [] },
-
-    // Log files.
-    serverLogs: { type: Array, default: () => [] },
-    serverLog: { type: Object, default: null },
-    filePagination: { type: Object, default: () => ({ page: 1, pages: 1, total: 0, per_page: 20 }) },
-    search: { type: String, default: '' },
 });
-
-const VIEWS = [
-    { key: 'server', label: 'Server logs', href: () => route('logs.index') },
-    { key: 'panel', label: 'Panel logs', href: () => `${route('logs.index')}?view=panel` },
-    { key: 'files', label: 'Log files', href: () => `${route('logs.index')}?view=files` },
-];
 
 // ---------------------------------------------------------------- clearing
 
@@ -74,7 +61,7 @@ const clearLogs = async () => {
 // The boxes read the access logs, which is the slow part: the page shows the
 // list first and asks for them after.
 onMounted(() => {
-    if (props.view === 'server' && !props.stats) {
+    if (!props.stats) {
         router.reload({ only: ['stats'], preserveScroll: true, preserveState: true });
     }
 });
@@ -86,24 +73,9 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
     <Head title="Logs" />
 
     <AuthenticatedLayout>
-        <!-- The tabs and Clear logs live in the top bar: no title, more room. -->
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <nav class="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap rounded-xl bg-slate-100 p-1" aria-label="Logs">
-                    <Link
-                        v-for="v in VIEWS"
-                        :key="v.key"
-                        :href="v.href()"
-                        class="rounded-lg px-4 py-2 text-sm font-medium transition"
-                        :class="
-                            view === v.key
-                                ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-900/5'
-                                : 'text-slate-600 hover:text-slate-900'
-                        "
-                    >
-                        {{ v.label }}
-                    </Link>
-                </nav>
+                <h2 class="text-xl font-semibold text-slate-800">Server logs</h2>
                 <button
                     type="button"
                     class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
@@ -120,7 +92,7 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
                 <h3 class="font-semibold text-slate-900">Clear logs now</h3>
                 <p class="mt-1 text-sm text-slate-500">
                     Deleted from the panel's database, which is then compacted so the space is given back.
-                    Tasks still running are kept. Single log files can also be emptied from the Log files tab.
+                    Tasks still running are kept.
                 </p>
                 <div class="mt-4 grid gap-3 sm:grid-cols-2">
                     <label class="block text-sm">
@@ -187,29 +159,10 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
             </div>
         </div>
 
-        <template v-if="view === 'panel'">
-            <Events
-                view="panel"
-                :events="events"
-                :filters="filters"
-                :pagination="pagination"
-                :counts="counts"
-                :ranges="ranges"
-                :sources="sources"
-                :sites="sites"
-            />
-        </template>
-
-        <ServerLogs
-            v-else-if="view === 'files'"
-            :server-logs="serverLogs"
-            :server-log="serverLog"
-            :pagination="filePagination"
-            :search="search"
-        />
-
-        <div v-else class="space-y-6">
+        <div class="space-y-6">
             <StatTiles :stats="stats" :window="filters.range ?? '1h'" />
+
+            <SiteTraffic :stats="stats" />
 
             <section>
                 <Events

@@ -30,6 +30,48 @@ const range = ref(props.history?.range ?? '1h');
 const series = ref(props.history);
 const loadingHistory = ref(false);
 
+// The readings since the newest recorded point, folded into the range's
+// buckets, so the line grows every second the page is open rather than once a
+// minute when the history is asked for again — and never stops short of the
+// live number when a background tab's timers were slowed. Recorded points
+// replace these as they arrive.
+const tail = ref([]); // [{ t, cpu: {sum, n, max}, memory: {...}, disk: {...} }]
+const TAIL_KEYS = { cpu: (m) => m?.cpu?.usage, memory: (m) => m?.memory?.percent, disk: (m) => m?.disk?.percent };
+
+const lastRecorded = () => {
+    const points = series.value?.points ?? [];
+    return points.length ? points[points.length - 1].t : 0;
+};
+
+const fold = (reading) => {
+    if (!reading) return;
+
+    const bucket = series.value?.bucket_seconds ?? 60;
+    const t = Math.floor(Date.now() / 1000 / bucket) * bucket;
+    const recorded = lastRecorded();
+
+    const kept = tail.value.filter((point) => point.t > recorded);
+    let point = kept[kept.length - 1];
+
+    if (!point || point.t !== t) {
+        point = { t };
+        kept.push(point);
+    }
+
+    for (const [key, read] of Object.entries(TAIL_KEYS)) {
+        const value = read(reading);
+        if (value === null || value === undefined) continue;
+
+        const into = (point[key] ??= { sum: 0, n: 0, max: 0 });
+        into.sum += value;
+        into.n++;
+        into.max = Math.max(into.max, value);
+    }
+
+    // Bounded however long the history goes unanswered.
+    tail.value = kept.slice(-240);
+};
+
 let liveTimer = null;
 let historyTimer = null;
 let unsubscribe = null;
@@ -53,6 +95,7 @@ const readLive = async () => {
     try {
         const { data } = await window.axios.get(route('system.metrics'));
         metrics.value = data.metrics;
+        fold(data.metrics);
         failed.value = false;
     } catch (e) {
         failed.value = true;
@@ -74,6 +117,9 @@ const readHistory = async ({ quiet = false } = {}) => {
         // The user may have moved on while this was in flight.
         if (data.history.range === range.value) {
             series.value = data.history;
+
+            const recorded = lastRecorded();
+            tail.value = tail.value.filter((point) => point.t > recorded);
         }
     } catch (e) {
         // Leave the last good series on screen rather than blanking the graphs.
@@ -92,6 +138,8 @@ const scheduleHistory = () => {
 };
 
 watch(range, () => {
+    // Folded into the last range's buckets, which are not this one's.
+    tail.value = [];
     readHistory();
     scheduleHistory();
 });
@@ -120,8 +168,11 @@ watch(
 onMounted(() => {
     unsubscribe = subscribe('metrics', (reading) => {
         metrics.value = reading;
+        fold(reading);
         failed.value = false;
     });
+
+    document.addEventListener('visibilitychange', onVisible);
 
     // The page arrived with a reading; the socket sends the next within a
     // second. Asking again now would only measure the page being served.
@@ -134,7 +185,14 @@ onMounted(() => {
     scheduleHistory();
 });
 
+// A tab coming back asks for the history straight away: its timers were
+// slowed while it was hidden, and what it shows may be minutes old.
+const onVisible = () => {
+    if (!document.hidden) readHistory({ quiet: true });
+};
+
 onBeforeUnmount(() => {
+    document.removeEventListener('visibilitychange', onVisible);
     unsubscribe?.();
     stopPolling();
     if (historyTimer) clearInterval(historyTimer);
@@ -164,14 +222,28 @@ const duration = (seconds) => {
 
 // `p` is the highest second inside the point, where the server has one — the
 // line is the average, which on its own smooths a spike away.
-const points = (key) =>
-    (series.value?.points ?? []).map((point) => ({
+const points = (key) => {
+    const recorded = (series.value?.points ?? []).map((point) => ({
         t: point.t,
         v: point[key],
         p: point[`${key}_peak`] ?? null,
         // What was behind the point — the sites and programs using it.
         s: point[`${key}_spike`] ?? null,
     }));
+
+    const last = recorded.length ? recorded[recorded.length - 1].t : 0;
+
+    // The minutes since, from the readings this page has been sent: average
+    // and peak, like a recorded point, but not yet with a breakdown.
+    for (const point of tail.value) {
+        const reading = point[key];
+        if (point.t <= last || !reading?.n) continue;
+
+        recorded.push({ t: point.t, v: reading.sum / reading.n, p: reading.max, s: null, pending: true });
+    }
+
+    return recorded;
+};
 
 const bucketSeconds = computed(() => series.value?.bucket_seconds ?? 60);
 

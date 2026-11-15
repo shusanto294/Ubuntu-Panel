@@ -291,3 +291,36 @@ func TestMissingScript(t *testing.T) {
 		t.Errorf("asking for the WordPress installer is an attack, got %q", got)
 	}
 }
+
+// The pages are what visitors opened: the files a page pulls in, an attack's
+// probes and addresses that only ever failed are left out.
+func TestReportPagesAreWhatVisitorsOpened(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	a := New(now.Add(-15*time.Minute), now, 15)
+
+	browser := "Mozilla/5.0 (Windows NT 10.0) Chrome/130"
+
+	for i := 0; i < 20; i++ {
+		at := now.Add(-time.Duration(i) * 20 * time.Second)
+		ip := fmt.Sprintf("198.51.100.%d", i)
+		a.Line("blog.example", line(ip, at, "GET", "/post/?ref=x", 200, browser))
+		a.Line("blog.example", line(ip, at, "GET", "/wp-content/logo.png", 200, browser))
+		a.Line("blog.example", line(ip, at, "GET", "/.env", 404, "curl/8"))
+		a.Line("blog.example", line(ip, at, "GET", "/gone/", 404, browser))
+	}
+	for i := 0; i < 5; i++ {
+		a.Line("shop.example", line("192.0.2.1", now.Add(-time.Minute), "GET", "/", 200, browser))
+	}
+
+	pages := a.Report().Pages
+
+	if len(pages) != 2 {
+		t.Fatalf("pages = %+v, want /post/ and /", pages)
+	}
+	if pages[0].Site != "blog.example" || pages[0].Path != "/post/" || pages[0].Requests != 20 || pages[0].IPs != 20 {
+		t.Fatalf("first page = %+v", pages[0])
+	}
+	if pages[1].Site != "shop.example" || pages[1].Path != "/" || pages[1].Requests != 5 {
+		t.Fatalf("second page = %+v", pages[1])
+	}
+}

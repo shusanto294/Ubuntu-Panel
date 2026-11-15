@@ -406,7 +406,7 @@ func (a *App) sshAlerts(ctx context.Context) []alert {
 	for _, event := range a.Store.SSHEventsBetween(ctx, security.EventAccepted, checked, copied, 50) {
 		when := time.Unix(event.CreatedAt, 0)
 
-		alerts = append(alerts, newAlert("ssh_login", levelWarning, "/logs?view=panel&source=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
+		alerts = append(alerts, newAlert("ssh_login", levelWarning, "/security?tab=ssh", fmt.Sprintf("SSH login as %s from %s\n\n"+
 			"User: %s\nAddress: %s\nMethod: %s\nTime: %s\n\n"+
 			"If this was not you, change the account's password or keys on Security → SSH, "+
 			"and turn SSH passwords off.", event.User, event.IP, event.User, event.IP,
