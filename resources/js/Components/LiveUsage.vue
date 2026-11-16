@@ -227,19 +227,17 @@ const points = (key) => {
         t: point.t,
         v: point[key],
         p: point[`${key}_peak`] ?? null,
-        // What was behind the point — the sites and programs using it.
-        s: point[`${key}_spike`] ?? null,
     }));
 
     const last = recorded.length ? recorded[recorded.length - 1].t : 0;
 
     // The minutes since, from the readings this page has been sent: average
-    // and peak, like a recorded point, but not yet with a breakdown.
+    // and peak, like a recorded point.
     for (const point of tail.value) {
         const reading = point[key];
         if (point.t <= last || !reading?.n) continue;
 
-        recorded.push({ t: point.t, v: reading.sum / reading.n, p: reading.max, s: null, pending: true });
+        recorded.push({ t: point.t, v: reading.sum / reading.n, p: reading.max });
     }
 
     return recorded;
@@ -307,7 +305,6 @@ const loadTone = computed(() => {
         <div class="grid gap-4 lg:grid-cols-3">
             <UsageGraph
                 label="CPU"
-                kind="cpu"
                 color="#4f46e5"
                 :points="points('cpu')"
                 :current="metrics?.cpu?.usage ?? null"
@@ -317,7 +314,6 @@ const loadTone = computed(() => {
             />
             <UsageGraph
                 label="Memory"
-                kind="memory"
                 color="#0d9488"
                 :points="points('memory')"
                 :current="metrics?.memory?.percent ?? null"
@@ -331,7 +327,6 @@ const loadTone = computed(() => {
             />
             <UsageGraph
                 label="Disk"
-                kind="disk"
                 color="#ea580c"
                 :points="points('disk')"
                 :current="metrics?.disk?.percent ?? null"

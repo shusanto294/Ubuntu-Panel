@@ -12,13 +12,8 @@ const props = defineProps({
     label: { type: String, required: true },
     // Hue for this metric, held across every range so the card keeps its identity.
     color: { type: String, default: '#4f46e5' },
-    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null, s?: breakdown | null }],
-    // oldest first. `s` is what was behind the point — the sites and programs:
-    //   cpu:          { at, cpu, top: [{ name, site, programs, command, processes, cpu, finished }] }
-    //   memory, disk: { at, top: [{ name, site, detail, bytes, percent }] }
+    // [{ t: unix seconds, v: 0–100 | null, p?: peak 0–100 | null }], oldest first.
     points: { type: Array, default: () => [] },
-    // Which of those shapes `s` is, and how the tooltip words it.
-    kind: { type: String, default: 'cpu' },
     // The live reading, which is fresher than the newest recorded point.
     current: { type: [Number, null], default: null },
     // Context under the number, e.g. "3.1 GB of 7.8 GB".
@@ -63,8 +58,6 @@ const plot = computed(() => ({
 const series = computed(() => {
     const out = props.points.map((p) => ({
         t: p.t,
-        s: p.s ?? null,
-        pending: !!p.pending,
         v:
             p.v === null || p.v === undefined
                 ? null
@@ -74,11 +67,9 @@ const series = computed(() => {
     }));
 
     // The live reading is the line's last point, so the line ends where the
-    // number above it is now. It carries the newest breakdown there is, which
-    // says the time it is from.
+    // number above it is now.
     if (props.current !== null && props.current !== undefined) {
-        const latest = [...out].reverse().find((p) => p.s)?.s ?? null;
-        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, s: latest, live: true });
+        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, live: true });
     }
 
     return out;
@@ -222,122 +213,13 @@ const hoverTime = computed(() =>
         : '',
 );
 
-// What the breakdown is of, and when it was taken.
-const breakdownHeading = computed(() => {
-    const s = hover.value?.point.s;
-    if (!s) return '';
-
-    const at = new Date(s.at * 1000);
-
-    if (props.kind === 'disk') {
-        return `Measured ${at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
-    }
-
-    const time = at.toLocaleTimeString(undefined, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: props.kind === 'cpu' ? '2-digit' : undefined,
-    });
-
-    return props.kind === 'cpu' ? `Busiest second, ${time}` : `In use at ${time}`;
-});
-
-const breakdownLines = computed(() => {
-    const s = hover.value?.point.s;
-    if (!s?.top) return [];
-
-    if (props.kind !== 'cpu') {
-        return s.top.map((item) => ({
-            name: item.name,
-            site: !!item.site,
-            title: item.name,
-            detail: item.detail ?? '',
-            count: 0,
-            percent: item.percent,
-            bytes: item.bytes,
-        }));
-    }
-
-    const lines = s.top.map((item) => ({
-        name: item.name,
-        site: !!item.site,
-        title: item.command,
-        detail: item.site
-            ? item.programs
-            : item.kernel
-              ? item.command
-              : item.other
-                ? 'smaller programs and time between readings'
-                : item.finished >= 1 && item.finished >= item.cpu / 2
-                  ? 'incl. programs it ran'
-                  : '',
-        count: !item.site && item.processes > 1 ? item.processes : 0,
-        percent: item.cpu,
-        bytes: null,
-    }));
-
-    // The lines add up to the second's figure. Minutes recorded before they
-    // did are given the rest as "Other", so they add up too.
-    const tenths = Math.round(s.cpu * 10) - lines.reduce((sum, line) => sum + Math.round(line.percent * 10), 0);
-    if (tenths > 0 && !s.top.some((item) => item.other)) {
-        lines.push({
-            name: 'Other',
-            site: false,
-            title: '',
-            detail: 'not broken down when this was recorded',
-            count: 0,
-            percent: tenths / 10,
-            bytes: null,
-        });
-    }
-
-    return lines;
-});
-
-// A point with no breakdown says why, rather than looking like the hover is
-// broken: the disk is measured daily and the first one takes a few minutes,
-// and what used the CPU and memory is only worked out while the panel is in
-// use, so the server spends an unattended night on its sites.
-const missingBreakdown = computed(() =>
-    props.kind === 'disk'
-        ? 'What is using the disk is measured a few minutes after the panel starts, then once a day. It shows here once it has been.'
-        : 'What was using it is only recorded while somebody is using the panel, so it costs the server nothing the rest of the time.',
-);
-
-const emptyBreakdown = computed(() =>
-    props.kind === 'cpu' ? 'Nothing was using the CPU.' : 'Nothing to show.',
-);
-
-// A quiet machine's lines are fractions of a percent; they keep a decimal
-// so they are not all "0%".
-// The CPU breakdown always keeps its decimal, so its lines visibly add up
-// to the figure above them.
-const percent = (value) => {
-    if (value === null || value === undefined) return '—';
-    return value >= 10 && props.kind !== 'cpu' ? `${value.toFixed(0)}%` : `${value.toFixed(1)}%`;
-};
-
-const size = (value) => {
-    if (!value && value !== 0) return '';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let n = Number(value);
-    let i = 0;
-    while (n >= 1024 && i < units.length - 1) {
-        n /= 1024;
-        i++;
-    }
-    return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
-};
-
 // Keep the tooltip inside the card rather than letting it run off the edge.
-// One with processes in it is wider and taller: it sits below a high point
-// and above a low one, so it never covers the line it is about.
+// It sits below a high point and above a low one, so it never covers the line
+// it is about.
 const tooltipStyle = computed(() => {
     if (!hover.value) return {};
 
-    // Every tooltip now carries a breakdown or a line saying why there is
-    // none, so every one is placed like a tall one.
-    const half = hover.value.point.s ? 135 : 110;
+    const half = 50;
     const clamped = Math.max(half, Math.min(width.value - half, hover.value.x));
 
     return hover.value.y < HEIGHT / 2
@@ -467,60 +349,6 @@ const tone = computed(() => {
             >
                 <span class="font-semibold tabular-nums">{{ hover.point.v.toFixed(1) }}%</span>
                 <span class="block text-[10px] text-slate-300">{{ hover.point.live ? 'now' : hoverTime }}</span>
-
-                <div
-                    v-if="hover.point.s"
-                    class="mt-1.5 w-[250px] border-t border-white/15 pt-1.5 text-left whitespace-normal"
-                >
-                    <p class="text-[10px] text-slate-300">
-                        {{ breakdownHeading
-                        }}<template v-if="kind === 'cpu'"
-                            >:
-                            <span class="font-semibold text-white tabular-nums">{{
-                                percent(hover.point.s.cpu)
-                            }}</span></template
-                        >
-                    </p>
-                    <ul v-if="breakdownLines.length" class="mt-1 space-y-0.5">
-                        <li
-                            v-for="line in breakdownLines"
-                            :key="(line.site ? 'site:' : '') + line.name"
-                            class="flex items-baseline justify-between gap-2"
-                        >
-                            <span class="min-w-0" :title="line.title">
-                                <span class="flex items-baseline gap-1">
-                                    <span
-                                        v-if="line.site"
-                                        class="shrink-0 rounded bg-indigo-400/25 px-1 text-[9px] font-medium uppercase tracking-wide text-indigo-200"
-                                        >site</span
-                                    >
-                                    <span class="min-w-0 truncate">{{ line.name }}</span>
-                                    <span v-if="line.count" class="shrink-0 text-slate-400">×{{ line.count }}</span>
-                                </span>
-                                <span v-if="line.detail" class="block truncate text-[10px] text-slate-400">
-                                    {{ line.detail }}
-                                </span>
-                            </span>
-                            <span class="shrink-0 text-right tabular-nums">
-                                <span v-if="line.bytes !== null" class="mr-1 text-[10px] text-slate-400">{{
-                                    size(line.bytes)
-                                }}</span>
-                                <span class="font-semibold">{{ percent(line.percent) }}</span>
-                            </span>
-                        </li>
-                    </ul>
-                    <p v-else class="mt-1 text-[10px] text-slate-400">{{ emptyBreakdown }}</p>
-                </div>
-                <p
-                    v-else
-                    class="mt-1.5 w-[200px] border-t border-white/15 pt-1.5 text-left text-[10px] whitespace-normal text-slate-400"
-                >
-                    {{
-                        hover.point.pending
-                            ? 'Drawn from the live readings. What was using it shows once the panel has recorded this minute.'
-                            : missingBreakdown
-                    }}
-                </p>
             </div>
 
             <div

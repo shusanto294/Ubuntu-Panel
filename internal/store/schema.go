@@ -506,16 +506,12 @@ var migrations = []string{
 	// nothing. Every account made before there was a choice is an admin.
 	`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
 
-	// The minute's busiest second and the processes that were using it, as
-	// JSON: what a spike on the graph was. (Once only written from 50% CPU
-	// up; every minute has one now.)
-	`ALTER TABLE metric_samples ADD COLUMN cpu_spike TEXT`,
-
-	// What was holding memory at the end of the minute, and — on the
-	// minute it was measured, about once an hour — what was using the disk,
-	// both as JSON: the sites and programs behind the graphs' lines.
-	`ALTER TABLE metric_samples ADD COLUMN memory_usage TEXT`,
-	`ALTER TABLE metric_samples ADD COLUMN disk_usage TEXT`,
+	// What was using the CPU, memory and disk behind each point of the
+	// graphs, as JSON, was once kept here. It is no longer recorded, and what
+	// was is dropped with the columns.
+	`ALTER TABLE metric_samples DROP COLUMN cpu_spike`,
+	`ALTER TABLE metric_samples DROP COLUMN memory_usage`,
+	`ALTER TABLE metric_samples DROP COLUMN disk_usage`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -527,7 +523,9 @@ func (s *Store) migrate(ctx context.Context) error {
 
 	for _, statement := range migrations {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
-			if strings.Contains(err.Error(), "duplicate column name") {
+			// Already applied: the column is already there, or already gone.
+			if strings.Contains(err.Error(), "duplicate column name") ||
+				strings.Contains(err.Error(), "no such column") {
 				continue
 			}
 			return fmt.Errorf("applying migration: %w\n%s", err, statement)

@@ -50,8 +50,6 @@ func (a *App) withUser(next http.Handler) http.Handler {
 			return
 		}
 
-		a.viewedAt.Store(time.Now().Unix())
-
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
 	})
 }

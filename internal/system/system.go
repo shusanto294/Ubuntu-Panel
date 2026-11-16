@@ -315,10 +315,6 @@ func (c cpuTimes) total() uint64 {
 // that time and did not get it.
 func (c cpuTimes) idle() uint64 { return c[3] + c[4] }
 
-func (c cpuTimes) interrupts() uint64 { return c[5] + c[6] }
-
-func (c cpuTimes) steal() uint64 { return c[7] }
-
 func readCPUTimes() (cpuTimes, bool) {
 	var times cpuTimes
 
