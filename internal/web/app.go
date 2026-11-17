@@ -80,6 +80,7 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	// hands off them.
 	security.SiteHomes = app.siteHomes
 	catalog.ConfigureMail = app.Mail.Configure
+	catalog.RefreshWebmail = app.Mail.RefreshWebmail
 	catalog.ConfigurePhpMyAdmin = app.EnsurePhpMyAdminReady
 
 	// Before anything reads the default: a panel from before the default was
@@ -120,7 +121,7 @@ func (a *App) Start(ctx context.Context) {
 
 		a.EnsureNginxHelpers()
 		a.EnsureMailConfigured()
-		a.EnsureNameserverConfigured(ctx)
+		a.EnsureWebmailServed()
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLAccess(ctx)
 
@@ -136,7 +137,8 @@ func (a *App) Start(ctx context.Context) {
 		// the hardening switches that are on stay applied.
 		a.EnsureHardening(ctx)
 
-		a.EnsureDNSServer(ctx)
+		a.RetireOwnNameserver(ctx)
+		a.EnsurePagePurge(ctx)
 	}()
 
 	// Alerts: the clock that emails sign-ins, lockouts and server problems.

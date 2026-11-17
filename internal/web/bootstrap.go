@@ -57,6 +57,23 @@ func (a *App) EnsureMailConfigured() {
 		"nothing has configured it, or the panel now writes it differently")
 }
 
+// EnsureWebmailServed repairs the mail domains whose webmail still says
+// Roundcube is not installed on a machine where it is — set up before
+// Roundcube was, by a panel that never looked again.
+func (a *App) EnsureWebmailServed() {
+	if !a.Mail.WebmailNeedsRefresh() {
+		return
+	}
+
+	if _, err := a.Queue.PushID(queue.MailWebmail, "user", 0); err != nil {
+		a.Log.Error("could not queue the webmail repair", "error", err)
+
+		return
+	}
+
+	a.Log.Info("serving webmail for the mail domains set up before Roundcube was installed")
+}
+
 // EnsureSiteAliases gives the sites already on this server the www hostname a
 // site created now is given at birth.
 //
@@ -526,4 +543,37 @@ func (a *App) EnsureMySQLAccess(ctx context.Context) {
 
 	a.Store.ForgetSetting("mysql_listens_everywhere")
 	a.Store.ForgetSetting("mysql_accounts_opened")
+}
+
+// RetireOwnNameserver undoes what is left of the panel hosting DNS itself,
+// which it no longer offers.
+//
+// The "This server" DNS credential goes, and the sites and mail domains that
+// used it are no longer managed from here — their records stay wherever they
+// are being served. BIND itself is not removed: a domain whose registrar
+// still points at this machine is answered by it until that changes, and
+// pulling it out from under one is an outage nobody asked for.
+func (a *App) RetireOwnNameserver(ctx context.Context) {
+	if count := a.Store.RetireDNSProvider(ctx, "panel"); count > 0 {
+		a.Log.Info("removed this server's own DNS credential; the panel no longer hosts DNS",
+			"credentials", count)
+	}
+
+	a.Store.ForgetService("dns")
+}
+
+// EnsurePagePurge gives every WordPress site with a page cache the plugin that
+// empties it when the site's content changes. Sites cached before the panel
+// wrote it served what they had for the whole lifetime after a change.
+func (a *App) EnsurePagePurge(ctx context.Context) {
+	list, err := a.Store.Sites(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, site := range list {
+		if sites.CacheActive(site) {
+			a.Sites.SyncPagePurge(site)
+		}
+	}
 }

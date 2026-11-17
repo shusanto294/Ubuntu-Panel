@@ -16,10 +16,6 @@ import { confirmDanger } from '@/dialog';
  */
 const props = defineProps({
     accounts: { type: Array, default: () => [] },
-    nameserver: {
-        type: Object,
-        default: () => ({ installed: false, ready: false, zones: 0 }),
-    },
 });
 
 const { page, pages, total, perPage, visible: visibleAccounts } = usePagination(
@@ -76,16 +72,7 @@ const remove = async (account) => {
                                 {{ account.provider_label }}
                             </span>
                         </p>
-                        <p v-if="account.local" class="mt-0.5 text-xs text-slate-500">
-                            This machine answers for
-                            {{ nameserver.zones }}
-                            {{ nameserver.zones === 1 ? 'zone' : 'zones' }} itself
-                            <span v-if="account.sites_count">
-                                · {{ account.sites_count }} site(s)
-                            </span>
-                        </p>
                         <p
-                            v-else
                             class="mt-0.5 text-xs"
                             :class="account.verified_at ? 'text-slate-500' : 'text-amber-600'"
                         >
@@ -102,21 +89,7 @@ const remove = async (account) => {
                         </p>
                     </div>
 
-                    <!--
-                        This machine's own nameserver has no credential to check
-                        and nothing to revoke: what makes it work is a registrar
-                        pointed at this server, which is its own page.
-                    -->
-                    <div v-if="account.local" class="flex shrink-0 gap-2">
-                        <Link
-                            :href="route('dns.nameserver')"
-                            class="rounded-xl px-4 py-2 text-sm text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
-                        >
-                            Zones and setup
-                        </Link>
-                    </div>
-
-                    <div v-else class="flex shrink-0 gap-2">
+                    <div class="flex shrink-0 gap-2">
                         <SecondaryButton
                             type="button"
                             :disabled="verifying === account.id"
@@ -146,41 +119,7 @@ const remove = async (account) => {
             <Pagination v-model="page" :pages="pages" :total="total" :per-page="perPage" />
         </div>
 
-        <div class="grid gap-4 lg:grid-cols-2">
-            <!--
-                The other way round: rather than writing records at somebody
-                else's nameserver, be the nameserver. Offered beside the
-                credentials because somebody with no account at any of the
-                providers above has not run out of options.
-            -->
-            <div
-                class="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-sm ring-1 ring-slate-900/5"
-            >
-                <p class="font-medium text-slate-700">Or host the DNS here</p>
-                <p class="mt-1">
-                    This machine can be the nameserver itself, the way Namecheap
-                    and GoDaddy are: point a domain's nameservers at this server
-                    and manage its records in the panel, with no account
-                    anywhere. It needs two nameserver names registered as glue
-                    records at a registrar, which is explained step by step on
-                    its own page.
-                </p>
-                <p class="mt-3">
-                    <Link
-                        :href="route('dns.nameserver')"
-                        class="font-medium text-brand-600 hover:underline"
-                    >
-                        <template v-if="nameserver.zones">
-                            {{ nameserver.zones }} zone(s) hosted here →
-                        </template>
-                        <template v-else-if="nameserver.ready">
-                            Add a zone →
-                        </template>
-                        <template v-else> Set this server up as a nameserver → </template>
-                    </Link>
-                </p>
-            </div>
-
+        <div>
             <div class="rounded-2xl bg-slate-50 p-5 text-sm text-slate-600 ring-1 ring-slate-900/5">
                 <p class="font-medium text-slate-700">Somewhere else again?</p>
                 <p class="mt-1">

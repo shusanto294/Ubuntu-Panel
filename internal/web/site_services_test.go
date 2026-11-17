@@ -125,3 +125,26 @@ func TestAnArrivingSiteInstallsWhatItNeedsBeforeItIsBuilt(t *testing.T) {
 		t.Fatalf("the move does not say why: %q %q", m.Status, m.Message)
 	}
 }
+
+// A site that used the panel's Redis cache brings Redis with it; one that
+// did not, does not.
+func TestAnArrivingSiteOnRedisInstallsRedis(t *testing.T) {
+	ctx := context.Background()
+	app := bootstrapApp(t, "none")
+
+	cached, _ := app.Store.CreateSite(ctx, &store.Site{
+		Domain: "cached.example", Type: "wordpress", RootPath: "/tmp/cached.example", PHPVersion: "8.5",
+	})
+	app.Store.SetSiteCache(cached, "redis", "1h")
+
+	plain, _ := app.Store.CreateSite(ctx, &store.Site{
+		Domain: "plain.example", Type: "wordpress", RootPath: "/tmp/plain.example", PHPVersion: "8.5",
+	})
+
+	if needed := app.migrationServices(ctx, &store.Migration{Kind: "site", LocalID: cached}); !slices.Contains(needed, "redis") {
+		t.Errorf("a site on the Redis cache arrived without Redis: %v", needed)
+	}
+	if needed := app.migrationServices(ctx, &store.Migration{Kind: "site", LocalID: plain}); slices.Contains(needed, "redis") {
+		t.Errorf("a site without the Redis cache asked for Redis: %v", needed)
+	}
+}

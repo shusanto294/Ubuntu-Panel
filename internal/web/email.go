@@ -117,7 +117,7 @@ func (a *App) emailCreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.Render.Render(w, r, "Email/CreateDomain", inertia.Props{
-		"requirements":   a.Catalog.Requirements(r.Context(), []string{"mysql", "mail"}),
+		"requirements":   a.Catalog.Requirements(r.Context(), []string{"mysql", "mail", "roundcube"}),
 		"mailConfigured": a.Mail.IsConfigured(),
 		"dnsAccounts":    dnsAccounts,
 	})

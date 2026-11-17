@@ -124,15 +124,10 @@ Everything the C panel does, from the same pages:
 - **Databases** — MariaDB and MongoDB, with generated credentials
 - **Email** — mail domains and mailboxes in Postfix/Dovecot's SQL tables, DKIM
   keys, the SPF/DKIM/DMARC/MX records to go with them, and webmail per domain
-- **DNS** — two ways round. Either the panel writes records at somebody else's
-  nameserver — Cloudflare, DigitalOcean, Linode, Vultr, Hetzner or Porkbun,
-  with a full zone editor — or this machine *is* the nameserver: BIND serving
-  zones held in the panel's own tables, the way Namecheap and GoDaddy serve
-  theirs. Either one is a DNS provider to the rest of the panel, so a site gets
-  its records published and a mail domain gets its SPF, DKIM and DMARC written
-  whichever you picked. The nameserver page is mostly instructions, because the
-  half the panel cannot do — registering two nameserver names as glue records
-  at a registrar — is the half that decides whether any of it resolves
+- **DNS** — the panel writes records at your DNS host — Cloudflare,
+  DigitalOcean, Linode, Vultr, Hetzner or Porkbun — with a full zone editor, so
+  a site gets its records published and a mail domain gets its SPF, DKIM and
+  DMARC written without leaving the panel
 - **Logs** — every deployment and install streams its console to the page
 - **Terminal** — a real shell in the browser, on a PTY over a websocket
 
@@ -288,78 +283,6 @@ Nextcloud and n8n are refused rather than half-supported: Nextcloud records the
 absolute path of its data directory inside itself, and n8n's workflows would fire
 every schedule and webhook a second time.
 
-## Hosting DNS on this machine
-
-The panel can be the nameserver itself rather than a client of one. Install the
-**DNS server** service and the machine runs BIND, authoritative for the zones in the
-panel's own tables and recursive for nobody — an open resolver on a public
-address is found within days and used to reflect traffic at somebody else, so
-`recursion no` is not negotiable and is written before the service is started.
-
-Four of the five steps are in the panel, on **DNS → This server**. The one that
-is not is the one everything depends on.
-
-1. **Install the DNS server** from the Services page. Port 53 is opened on TCP *and*
-   UDP: a query goes over UDP, but an answer too large for one datagram goes
-   over TCP, so a firewall that opens only UDP gives you a nameserver that works
-   until an answer grows. If your host has its own firewall in front of the
-   machine, open 53 there too.
-
-2. **Name the nameservers.** Two hostnames on a domain you own and intend to
-   keep — `ns1.example.com` and `ns2.example.com` by convention. Every domain
-   hosted here is pointed at those two names, so losing that domain takes all of
-   them down. It does not have to be a domain hosted in the panel.
-
-3. **Register them as glue records at that domain's registrar.** This is the
-   step the panel cannot do, and the reason it exists is worth knowing. A
-   resolver looking up `yoursite.com` asks the `.com` registry who serves it and
-   is told `ns1.example.com` — a *name*, so it now needs that name's address.
-   If the only machine that knows the address is the one it is trying to reach,
-   it can never get started. A glue record is the registry storing the address
-   alongside the delegation, so the answer arrives in the same reply.
-
-   Every registrar calls the screen something different: glue record, host
-   record, child nameserver, private nameserver, personal DNS server, "register
-   a nameserver". Namecheap has it under *Advanced DNS → Personal DNS Server*,
-   GoDaddy under *DNS → Hostnames*, Porkbun under *Details → Glue Records*.
-   Cloudflare Registrar does not offer it at all, so name your nameservers on a
-   domain held somewhere that does.
-
-   Two nameservers on one machine means two names pointing at one address. Most
-   registries accept that; some require the two to differ and a few require
-   different networks. If yours refuses the second, give the server a second
-   address or point `ns2` at another machine — a delegation to a nameserver that
-   does not answer is worse than one that lists a single name, because resolvers
-   pick at random and the domain then works intermittently.
-
-4. **Host the nameservers' own domain here too.** The glue gets a resolver here
-   the first time; after that it asks *this* machine for the addresses of `ns1`
-   and `ns2` and believes the answer, so the machine has to have one. Add
-   `example.com` as a zone and the panel writes those A records itself. A zone
-   that delegates to names it holds no addresses for is the lame delegation
-   every DNS checker reports and some registries reject.
-
-5. **Point each domain at the nameservers.** Add the zone in the panel *first*,
-   then change the nameservers at that domain's registrar. The other order
-   points a domain at a machine that answers "no such domain", and that answer
-   gets cached. Nameserver changes propagate over hours, and the old
-   nameservers keep answering for whoever has them cached — so leave the
-   records at the old host in place until traffic has moved.
-
-The nameserver page tracks which of these is done, and asks a public resolver
-what the nameserver names and each zone's delegation actually resolve to, which
-is the only check that means anything: the panel accepting the settings says
-nothing about what a registry is handing out.
-
-After that it is a DNS provider like any other. "This server" appears wherever
-one does, so creating a site publishes its records and issues its certificate,
-a mail domain gets its MX, SPF, DKIM and DMARC written straight into the zone,
-and deleting either takes the records back out. The zones are rows in
-`dns_zones` and `dns_zone_records`; the files under `/etc/bind` are generated
-from them and validated with `named-checkzone` before anything is reloaded, so
-a record that would produce an unloadable zone is an error on the form rather
-than a change that appeared to work and did nothing.
-
 ## Why the rewrite
 
 The C panel hand-rolled its own HTTP parser, JSON encoder, session store, cookie
@@ -480,7 +403,6 @@ internal/sites        nginx vhosts, systemd units, the per-type deploy recipes,
                       backups, and the staging clone/push with its URL rewriting
 internal/databases    creating and dropping databases on the installed engines
 internal/dns          seven DNS providers behind one interface, one of them this machine
-internal/nameserver   BIND: zone files generated from the panel's own rows
 internal/mail         Postfix, Dovecot, OpenDKIM and Roundcube
 internal/system       /proc, the public IP, the panel's own hostname
 internal/terminal     the browser shell, and the live stream sharing its socket

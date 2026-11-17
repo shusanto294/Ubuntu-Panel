@@ -321,13 +321,16 @@ func (a *App) mcpSiteCache() *mcp.Tool {
 		Title:      "Read or change a site's cache",
 		Description: "A site's page cache: what it is set to now, and how to change it. `action` " +
 			"is `status` to read, `set` to change the mode, or `purge` to empty it.\n\n" +
-			"`nginx` caches whole pages in front of the site, `redis` gives WordPress an object " +
-			"cache, and `off` builds every request again.",
+			"`full` is both and is the one to pick for WordPress: nginx serves visitors whole " +
+			"pages, Redis speeds up everything it does not cache (logged-in users, the admin, " +
+			"carts), and publishing a change empties the page cache by itself. `nginx` is the " +
+			"page cache alone, `redis` the object cache alone, and `off` builds every request " +
+			"again. Redis is installed first when it is missing.",
 		Properties: map[string]mcp.Property{
 			"site": {Description: "The site's id, or its domain."},
 			"action": {Description: "What to do.", Default: "status",
 				Enum: []string{"status", "set", "purge"}},
-			"mode": {Description: "The cache to use, for `set`.", Enum: []string{"off", "nginx", "redis"}},
+			"mode": {Description: "The cache to use, for `set`.", Enum: []string{"off", "nginx", "redis", "full"}},
 			"ttl":  {Description: "How long a cached page stays fresh, for the nginx cache — like `1h`."},
 		},
 		Required: []string{"site"},
@@ -358,6 +361,17 @@ func (a *App) mcpSiteCache() *mcp.Tool {
 
 			case "set":
 				mode := args.String("mode")
+
+				if sites.CacheUsesObject(mode) && !a.Store.ServiceInstalled("redis") {
+					a.Queue.Push(queue.SiteCache, map[string]any{"site": site.ID, "mode": mode, "ttl": args.String("ttl")})
+
+					return map[string]any{
+						"site_id": site.ID,
+						"domain":  site.Domain,
+						"applied": false,
+						"next":    "Redis is being installed; the cache is applied as soon as it is ready.",
+					}, nil
+				}
 
 				if err := a.Sites.SetCache(ctx, site.ID, mode, args.String("ttl")); err != nil {
 					return nil, err

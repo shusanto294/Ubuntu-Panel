@@ -1899,21 +1899,27 @@ const destroy = async () => {
         -->
         <div v-if="!busy && tab === 'cache'" class="grid gap-6 lg:grid-cols-3">
             <div class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
-                <h3 class="font-semibold text-slate-800">Page cache</h3>
+                <h3 class="font-semibold text-slate-800">Cache</h3>
 
                 <template v-if="cache.supported || cache.redis_supported">
                     <p class="mt-2 text-sm text-slate-500">
                         Two caches, and they are not the same thing. One keeps
                         the finished page; the other keeps what the site looked
                         up while building it.
+                        <template v-if="cache.supported && cache.redis_supported">
+                            Together they are the fastest way to serve
+                            WordPress on nginx.
+                        </template>
                     </p>
 
                     <div class="mt-5 space-y-3">
                         <!--
-                            Radio buttons, not two switches. Running both means
-                            the page cache answers first and the object cache
-                            never gets asked — so the second one would be a
-                            setting that quietly did nothing.
+                            One choice rather than two switches, with "both" as
+                            its own answer: the page cache serves anonymous
+                            visitors, and the object cache is what every request
+                            it does not serve — the admin, a logged-in user, a
+                            cart, a search, the first view of a page — is built
+                            with. Both is what to want for WordPress.
 
                             What each one is, and nothing else: the lifetime is
                             one field below, because it is one field whichever
@@ -1946,6 +1952,48 @@ const destroy = async () => {
                         </label>
 
                         <label
+                            v-if="cache.supported && cache.redis_supported"
+                            class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
+                            :class="
+                                cacheMode === 'full'
+                                    ? 'border-brand-300 bg-brand-50/60'
+                                    : 'border-slate-200 hover:bg-slate-50'
+                            "
+                        >
+                            <input
+                                type="radio"
+                                value="full"
+                                v-model="cacheMode"
+                                class="mt-0.5 border-slate-300 text-brand-500 focus:ring-brand-500"
+                            />
+                            <span class="min-w-0">
+                                <span class="font-medium text-slate-800">
+                                    Page cache + object cache
+                                </span>
+                                <span
+                                    class="ms-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800"
+                                    >recommended</span
+                                >
+                                <span class="block text-xs text-slate-500">
+                                    nginx serves visitors the finished page
+                                    without asking PHP, and Redis keeps
+                                    WordPress's lookups for everything nginx
+                                    does not cache — logged-in users, the admin,
+                                    carts and checkout, searches. Publishing or
+                                    editing anything empties the page cache by
+                                    itself.
+                                </span>
+                                <span
+                                    v-if="!cache.redis_installed"
+                                    class="mt-2 block text-xs text-slate-500"
+                                >
+                                    Redis is not on this server yet; it is
+                                    installed first, then the cache is turned on.
+                                </span>
+                            </span>
+                        </label>
+
+                        <label
                             v-if="cache.supported"
                             class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
                             :class="
@@ -1969,34 +2017,34 @@ const destroy = async () => {
                                     {{ cache.proxied ? 'the application' : 'PHP' }}
                                     built and serves that copy to whoever asks
                                     next, so the second request never reaches
-                                    the site at all. The fastest of the two, and
-                                    the one with rules about who may not have it.
+                                    the site at all. Logged-in users, carts and
+                                    the admin are never served a cached page.
+                                    <template v-if="cache.redis_supported">
+                                        Publishing or editing anything
+                                        empties it by itself.
+                                    </template>
                                 </span>
                             </span>
                         </label>
 
                         <label
                             v-if="cache.redis_supported"
-                            class="flex items-start gap-3 rounded-xl border p-4 transition"
-                            :class="[
+                            class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition"
+                            :class="
                                 cacheMode === 'redis'
                                     ? 'border-brand-300 bg-brand-50/60'
-                                    : 'border-slate-200 hover:bg-slate-50',
-                                cache.redis_installed
-                                    ? 'cursor-pointer'
-                                    : 'cursor-not-allowed opacity-60',
-                            ]"
+                                    : 'border-slate-200 hover:bg-slate-50'
+                            "
                         >
                             <input
                                 type="radio"
                                 value="redis"
                                 v-model="cacheMode"
-                                :disabled="!cache.redis_installed"
                                 class="mt-0.5 border-slate-300 text-brand-500 focus:ring-brand-500"
                             />
                             <span class="min-w-0">
                                 <span class="font-medium text-slate-800">
-                                    Redis object cache
+                                    Redis object cache only
                                 </span>
                                 <span class="block text-xs text-slate-500">
                                     WordPress keeps what it looked up — options,
@@ -2008,10 +2056,10 @@ const destroy = async () => {
                                 </span>
                                 <span
                                     v-if="!cache.redis_installed"
-                                    class="mt-2 block text-xs font-medium text-amber-700"
+                                    class="mt-2 block text-xs text-slate-500"
                                 >
-                                    Redis is not installed on this machine.
-                                    Install it from the Services page first.
+                                    Redis is not on this server yet; it is
+                                    installed first, then the cache is turned on.
                                 </span>
                                 <span
                                     v-else
@@ -2066,11 +2114,20 @@ const destroy = async () => {
                             class="mt-2 text-xs text-amber-700"
                         >
                             Nothing expires this. A page stays as it was built
-                            until you press Empty the cache — right for a site
-                            that changes when you say so, and wrong for one that
-                            changes on its own. What you publish will not be on
-                            the site until the cache is emptied.
-                            <template v-if="cacheMode === 'nginx'">
+                            until the cache is emptied —
+                            <template v-if="cache.redis_supported">
+                                which WordPress does itself whenever something is
+                                published or changed, but not for a change that
+                                happens on its own, like a widget showing today's
+                                date.
+                            </template>
+                            <template v-else>
+                                right for a site that changes when you say so,
+                                and wrong for one that changes on its own. What
+                                you publish will not be on the site until you
+                                press Empty the cache.
+                            </template>
+                            <template v-if="cacheMode !== 'redis'">
                                 The 256 MB the panel allows this site is still a
                                 ceiling: past it, nginx drops the pages nobody
                                 has asked for lately.
@@ -2095,8 +2152,17 @@ const destroy = async () => {
                             How long before nginx asks the site to build the
                             page again. An expired page is still served
                             immediately and refreshed behind the visitor, so
-                            nobody waits for it — and Empty the cache is there
-                            for when you have just published something.
+                            nobody waits for it.
+                            <template v-if="cache.redis_supported">
+                                WordPress empties the cache itself when
+                                anything is published or changed, so a long
+                                lifetime is safe — and the admin bar has
+                                Purge page cache for anything it misses.
+                            </template>
+                            <template v-else>
+                                Empty the cache is there for when you have just
+                                published something.
+                            </template>
                         </p>
                     </div>
 

@@ -8,7 +8,6 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
-	"github.com/shusanto294/Ubuntu-Panel/internal/nameserver"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
@@ -31,16 +30,6 @@ func (a *App) dnsIndex(w http.ResponseWriter, r *http.Request) {
 		"accounts":    summaries,
 		"providers":   dns.Connectable(),
 		"recordTypes": config.DNSRecordTypes,
-
-		// The other way of doing this, summarised: rather than writing records
-		// at somebody else's nameserver, be the nameserver. The page offers it
-		// beside the credentials because somebody who has no account at any of
-		// the providers above has not run out of options.
-		"nameserver": map[string]any{
-			"installed": a.Store.ServiceInstalled("dns"),
-			"ready":     nameserver.CurrentSettings(a.Store).Configured(),
-			"zones":     a.Store.DNSZoneCount(r.Context()),
-		},
 	})
 }
 
@@ -65,10 +54,7 @@ func (a *App) dnsStore(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(input["api_token"])
 	secret := strings.TrimSpace(input["api_secret"])
 
-	if !dns.ProviderExists(provider) || dns.IsLocal(provider) {
-		// The local one is excluded on purpose: this machine's own nameserver
-		// is not a credential, and it is registered by setting it up rather
-		// than by pasting anything.
+	if !dns.ProviderExists(provider) {
 		sess.Error("provider", "Pick a DNS host the panel supports.")
 	}
 	if label == "" {

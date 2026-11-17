@@ -242,6 +242,19 @@ func Cacheable(site *store.Site) bool {
 	return true
 }
 
+// The cache modes a site can be in: "off"; "nginx", the page cache; "redis",
+// the object cache; and "full", both. Both is the one to want for WordPress:
+// nginx answers anonymous visitors with the finished page, and every request
+// it deliberately does not — a logged-in editor, the admin, a cart, a search,
+// the first view of a page — is built with Redis behind it instead of
+// MariaDB.
+
+// CacheUsesPage is whether a mode has nginx keep finished pages.
+func CacheUsesPage(mode string) bool { return mode == "nginx" || mode == "full" }
+
+// CacheUsesObject is whether a mode has WordPress keep its lookups in Redis.
+func CacheUsesObject(mode string) bool { return mode == "redis" || mode == "full" }
+
 // CacheActive is whether this site's vhost should carry cache directives at
 // all: asked for, and of a kind the panel will cache.
 func CacheActive(site *store.Site) bool {

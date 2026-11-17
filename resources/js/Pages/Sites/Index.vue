@@ -72,18 +72,19 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                     <tr v-for="site in visibleSites" :key="site.id">
                         <td class="break-all px-5 py-3">
                             <!--
-                                The domain goes to the site's own page, not to
-                                the site. Leaving the panel is what the Visit
-                                button on that page is for; from a list, the
-                                thing you want next is nearly always the site's
-                                settings.
+                                The domain opens the site itself, in a new tab:
+                                it is an address, and an address is clicked to
+                                see what is there. The site's settings are the
+                                Manage link at the end of the row.
                             -->
-                            <Link
-                                :href="route('sites.show', site.id)"
+                            <a
+                                :href="site.url"
+                                target="_blank"
+                                rel="noopener"
                                 class="font-medium text-slate-800 hover:text-brand-600 hover:underline"
                             >
                                 {{ site.domain }}
-                            </Link>
+                            </a>
                             <!--
                                 Marked here, not only on the site's own page. A
                                 staging copy sitting among a page of live sites
@@ -99,7 +100,16 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                                 v-if="site.aliases.length"
                                 class="text-xs text-slate-500"
                             >
-                                + {{ site.aliases.join(', ') }}
+                                +
+                                <template v-for="(alias, i) in site.aliases" :key="alias">
+                                    <a
+                                        :href="site.url.replace(site.domain, alias)"
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="hover:text-brand-600 hover:underline"
+                                        >{{ alias }}</a
+                                    ><template v-if="i < site.aliases.length - 1">, </template>
+                                </template>
                             </p>
                         </td>
                         <td class="hidden px-5 py-3 text-slate-600 md:table-cell">

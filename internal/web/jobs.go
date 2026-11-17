@@ -128,6 +128,34 @@ func (a *App) registerJobs() {
 
 	a.Queue.Handle(queue.SiteCertificateAwait, a.awaitCertificate)
 
+	a.Queue.Handle(queue.SiteCache, func(ctx context.Context, job *store.Job) error {
+		var payload struct {
+			Site int64  `json:"site"`
+			Mode string `json:"mode"`
+			TTL  string `json:"ttl"`
+		}
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		site, err := a.Store.FindSite(ctx, payload.Site)
+		if err != nil {
+			return nil
+		}
+
+		failed, err := a.awaitServices(ctx, job, []string{"redis"}, site.UserID, site.Domain)
+		if len(failed) > 0 {
+			return fmt.Errorf("%s could not be installed, so %s's cache was left as it was",
+				strings.Join(failed, " and "), site.Domain)
+		}
+		if err != nil {
+			return err
+		}
+
+		return a.Sites.SetCache(ctx, site.ID, payload.Mode, payload.TTL)
+	})
+
 	a.Queue.Handle(queue.SitePHPVersion, func(ctx context.Context, job *store.Job) error {
 		var payload sitePHPPayload
 
@@ -269,6 +297,16 @@ func (a *App) registerJobs() {
 		}
 
 		return a.Mail.Configure(ctx, payload.User)
+	})
+
+	a.Queue.Handle(queue.MailWebmail, func(ctx context.Context, job *store.Job) error {
+		var payload userPayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		return a.Mail.RefreshWebmail(ctx, payload.User)
 	})
 
 	a.Queue.Handle(queue.MailTest, func(ctx context.Context, job *store.Job) error {

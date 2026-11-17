@@ -458,15 +458,6 @@ func (a *App) buildMCP() *mcp.Server {
 		a.mcpDeleteDNSRecord(),
 		a.mcpSyncDNS(),
 
-		// The panel as the nameserver rather than as a client of one. The
-		// records in a hosted zone go through the tools above, because a
-		// hosted zone is reached through a credential like any other.
-		a.mcpNameserverStatus(),
-		a.mcpSetNameserverHostnames(),
-		a.mcpListHostedZones(),
-		a.mcpHostDNSZone(),
-		a.mcpRemoveHostedZone(),
-
 		// Apps
 		a.mcpListApps(),
 		a.mcpInstallApps(),

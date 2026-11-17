@@ -177,27 +177,9 @@ var Entries = []Entry{
 		Keywords:  "wordpress cli command line php", SizeHint: "~7 MB",
 	},
 	{
-		Key: "dns", Label: "DNS server", Group: "dns",
-		Description: "BIND, so this machine can host zones itself. Point a domain's " +
-			"nameservers here and manage its records in the panel instead of at a " +
-			"registrar or Cloudflare.",
-		// Installed by default: hosting a domain's records here is the panel's
-		// own answer to DNS, with a provider as the alternative. It answers
-		// only for the zones the panel gives it — recursion is off — so it is
-		// not a resolver anybody else can use.
-		Default: true, Requires: []string{"base"},
-		Detect: "command -v named", Version: "named -v 2>/dev/null | head -1",
-		Packages:       "bind9 bind9-utils bind9-dnsutils",
-		RemovePackages: "bind9 bind9-utils bind9-dnsutils bind9-libs",
-		Removable:      true,
-		Keywords: "dns bind named nameserver zone authoritative glue registrar " +
-			"ns1 ns2 soa",
-		SizeHint: "~15 MB",
-	},
-	{
 		Key: "mail", Label: "Mail server", Group: "mail",
 		Description: "Postfix, Dovecot and OpenDKIM with mailboxes stored in MariaDB.",
-		Default:     true, Requires: []string{"mysql"},
+		Core:        true, Default: true, Requires: []string{"mysql"},
 		// `sudo` on the second half is not decoration: the install ends by
 		// taking every other-user permission off /etc/dovecot, so the panel
 		// user cannot traverse it afterwards. Without sudo this probe says
@@ -213,7 +195,9 @@ var Entries = []Entry{
 	{
 		Key: "roundcube", Label: "Roundcube webmail", Group: "mail",
 		Description: "Webmail for every mail domain, served at mail.<domain>.",
-		Default:     true, Requires: []string{"mail", "php", "nginx", "mysql"},
+		// Required with the mail server: a mailbox nobody can open in a
+		// browser is half of what people mean by email.
+		Core: true, Default: true, Requires: []string{"mail", "php", "nginx", "mysql"},
 		Detect: "test -f /usr/share/ubuntu-panel/roundcube/index.php",
 		Version: "grep -oP \"RCMAIL_VERSION', '\\K[^']+\" " +
 			"/usr/share/ubuntu-panel/roundcube/program/include/iniset.php 2>/dev/null | head -1",

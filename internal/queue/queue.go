@@ -35,6 +35,10 @@ const (
 	// hand, an hour later, still ends on HTTPS without anybody coming back.
 	SiteCertificateAwait = "site.certificate.await"
 
+	// SiteCache applies a site's cache once what it needs is installed: the
+	// object cache asked for on a machine with no Redis yet.
+	SiteCache = "site.cache"
+
 	// SitePHPVersion moves one site to another PHP-FPM, installing that PHP
 	// first when the machine does not have it. On the queue because that
 	// install is apt, the ondrej PPA and a few minutes — far longer than a
@@ -75,8 +79,12 @@ const (
 	MailAccountCreate = "mail.account.create"
 	MailAccountDelete = "mail.account.delete"
 	MailConfigure     = "mail.configure"
-	MailTest          = "mail.test"
-	MailDomainDNS     = "mail.domain.dns"
+
+	// MailWebmail rewrites every domain's webmail vhost, after Roundcube came
+	// or went.
+	MailWebmail   = "mail.webmail"
+	MailTest      = "mail.test"
+	MailDomainDNS = "mail.domain.dns"
 
 	PanelDomain = "panel.domain"
 

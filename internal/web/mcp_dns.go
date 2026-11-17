@@ -146,12 +146,6 @@ func (a *App) mcpConnectDNSAccount() *mcp.Tool {
 
 			provider := strings.ToLower(args.String("provider"))
 
-			if dns.IsLocal(provider) {
-				return nil, errors.New("this machine's own nameserver is not connected " +
-					"with a credential — it is set up with set_nameserver_hostnames and " +
-					"host_dns_zone, and nameserver_status says what is still missing")
-			}
-
 			if !dns.ProviderExists(provider) {
 				return nil, fmt.Errorf("%q is not a DNS provider this panel supports — "+
 					"list_dns_providers has them", provider)

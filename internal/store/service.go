@@ -220,3 +220,9 @@ func (s *Store) ResetInstallingServices() {
 		        last_error = coalesce(nullif(last_error, ''), 'The panel restarted during the install.')
 		  WHERE status = 'installing'`)
 }
+
+// ForgetService drops the row of an app the catalogue no longer has, so
+// nothing that asks "is it installed" goes on answering for it.
+func (s *Store) ForgetService(key string) {
+	s.db.Exec(`DELETE FROM services WHERE key = ?`, key)
+}

@@ -551,7 +551,7 @@ func (a *App) runMigrationOut(ctx context.Context, migrationID int64, catchUpOnl
 			// on managing it. Not this panel's own nameserver: that one is
 			// here, and stays here.
 			if accountID > 0 {
-				if account, err := a.Store.FindDNSAccount(ctx, accountID, 0); err == nil && !dns.IsLocal(account.Provider) {
+				if account, err := a.Store.FindDNSAccount(ctx, accountID, 0); err == nil {
 					begin.DNSAccount = &migrate.DNSAccount{
 						Provider: account.Provider, Label: account.Label, APIToken: account.APIToken,
 						APISecret: account.APISecret, Email: account.Email, AccountID: account.AccountID,
@@ -916,7 +916,7 @@ func (a *App) migrateBegin(ctx context.Context, payload []byte) (any, error) {
 	transfer := migrate.NewTransferID()
 
 	accountID := int64(0)
-	if begin.DNSAccount != nil && dns.ProviderExists(begin.DNSAccount.Provider) && !dns.IsLocal(begin.DNSAccount.Provider) {
+	if begin.DNSAccount != nil && dns.ProviderExists(begin.DNSAccount.Provider) {
 		accountID = a.adoptDNSAccount(ctx, owner, begin.DNSAccount)
 	}
 
@@ -1358,8 +1358,10 @@ func (a *App) migrateCancel(ctx context.Context, payload []byte) (any, error) {
 // migrationServices are what a site or mail domain that arrived needs on
 // this machine before it can be built.
 func (a *App) migrationServices(ctx context.Context, m *store.Migration) []string {
+	// Webmail with the mail server: a domain moved off a server that had it
+	// should not arrive without it.
 	if m.Kind != "site" {
-		return []string{"mail"}
+		return []string{"mail", "roundcube"}
 	}
 
 	site, err := a.Store.FindSite(ctx, m.LocalID)
@@ -1376,6 +1378,11 @@ func (a *App) migrationServices(ctx context.Context, m *store.Migration) []strin
 			!slices.Contains(needed, database.Engine) {
 			needed = append(needed, database.Engine)
 		}
+	}
+
+	// The panel's Redis object cache, which the import turns back on.
+	if sites.CacheUsesObject(site.CacheMode) && sites.RedisSupported(site) {
+		needed = append(needed, "redis")
 	}
 
 	return needed

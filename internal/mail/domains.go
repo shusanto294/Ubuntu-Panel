@@ -520,9 +520,13 @@ func (s *Service) serveMailHost(ctx context.Context, domainID int64) func(*tasks
 
 		available := "/etc/nginx/sites-available/webmail-" + domain.Domain
 
-		// The plain form first: nginx will not load a vhost naming a
-		// certificate that has not been issued.
-		if err := proc.PutFile(available, webmailVhost(host, php, false, roundcube), true); err != nil {
+		// The certificate it already has, when it has one: this runs again
+		// whenever Roundcube comes or goes, and a working https must not be
+		// put back on the self-signed pair for it. Otherwise the plain form —
+		// nginx will not load a vhost naming a certificate not yet issued.
+		tls := proc.Ok("sudo test -f " + proc.Quote("/etc/letsencrypt/live/"+host+"/fullchain.pem"))
+
+		if err := proc.PutFile(available, webmailVhost(host, php, tls, roundcube), true); err != nil {
 			return "", err
 		}
 
@@ -537,6 +541,60 @@ func (s *Service) serveMailHost(ctx context.Context, domainID int64) func(*tasks
 
 		return log.String(), nil
 	}
+}
+
+// RefreshWebmail writes every mail domain's mail.<domain> vhost again from
+// what is on the machine now.
+//
+// A domain's webmail is decided when the domain is set up: with Roundcube, or
+// with a note saying there is none. Installing Roundcube afterwards — the
+// usual order on a server a mail domain was moved to — left every existing
+// domain on the note, and nothing short of setting each one up again changed
+// it. This runs when Roundcube is installed or removed, and once at startup
+// on a machine that still has the note with Roundcube present.
+func (s *Service) RefreshWebmail(ctx context.Context, userID int64) error {
+	domains, err := s.Store.EmailDomains(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(domains) == 0 {
+		return nil
+	}
+
+	taskID, err := s.Store.CreateTask(ctx, "mail", "mail.webmail", userID, 0, "Webmail for every mail domain")
+	if err != nil {
+		return err
+	}
+
+	list := &tasks.List{}
+
+	for _, domain := range domains {
+		if domain.Status == "deleting" {
+			continue
+		}
+
+		// Optional: one domain whose vhost nginx refuses is not a reason to
+		// leave the others on the note.
+		list.AddFn("Serve webmail at "+domain.WebmailHost(), s.serveMailHost(ctx, domain.ID)).Optional()
+	}
+
+	if !tasks.New(s.Store, taskID).Run(list) {
+		return errors.New("the webmail could not be set up for every domain")
+	}
+
+	return nil
+}
+
+// WebmailNeedsRefresh is whether a domain's webmail says Roundcube is missing
+// while it is installed: what an earlier panel left behind when Roundcube
+// arrived after the domain did.
+func (s *Service) WebmailNeedsRefresh() bool {
+	if !s.Store.ServiceInstalled("roundcube") {
+		return false
+	}
+
+	return proc.Ok("sudo grep -lqs 'Webmail is not installed' /etc/nginx/sites-available/webmail-*")
 }
 
 // secureMailHost gets a certificate for mail.<domain> and puts everything that

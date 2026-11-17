@@ -286,6 +286,10 @@ func (s *Service) writeVhost(ctx context.Context, siteID int64) func(*tasks.Runn
 			return "", err
 		}
 
+		// A WordPress site with a page cache empties it itself when its
+		// content changes; one without has the plugin taken out.
+		s.SyncPagePurge(site)
+
 		return "vhost written to " + available, nil
 	}
 }

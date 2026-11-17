@@ -142,6 +142,12 @@ func (s *Service) ImportMigrated(ctx context.Context, siteID, taskID int64, dire
 		fmt.Sprintf("sudo chown -R www-data:www-data %[1]s && "+
 			"sudo find %[1]s -type f -perm /6000 -exec chmod ug-s {} +", root))
 
+	// Before anything asks WordPress a question: the old server's cache is not
+	// here, and its drop-in would make the site a database error.
+	list.AddFn("Take out the old server's object cache", func(runner *tasks.Runner) (string, error) {
+		return RemoveObjectCacheDropIn(site), nil
+	}).Optional()
+
 	if site.Type == "laravel" {
 		list.Add("Let Laravel write to storage",
 			fmt.Sprintf("sudo chmod -R 775 %s/storage %s/bootstrap/cache", root, root)).Optional()
@@ -189,6 +195,35 @@ func (s *Service) ImportMigrated(ctx context.Context, siteID, taskID int64, dire
 				return fmt.Sprintf("%d cron job(s) scheduled, as they were on the old server.", len(jobs)), nil
 			}).Optional()
 		}
+	}
+
+	// The panel's own Redis cache, on again with this server's Redis. A site
+	// is better up without its cache than down with it, so a failure turns
+	// the cache off rather than failing the move.
+	if CacheUsesObject(site.CacheMode) && RedisSupported(site) {
+		list.AddFn("Turn the Redis object cache back on", func(runner *tasks.Runner) (string, error) {
+			current, err := s.Store.FindSite(ctx, site.ID)
+			if err != nil {
+				return "", errors.New("site vanished")
+			}
+
+			if err := s.EnableRedisCache(ctx, current); err != nil {
+				s.DisableRedisCache(ctx, current)
+				RemoveObjectCacheDropIn(current)
+
+				// The page cache, if it had both, is nginx's and still works.
+				fallback := "off"
+				if CacheUsesPage(current.CacheMode) {
+					fallback = "nginx"
+				}
+				s.Store.SetSiteCache(site.ID, fallback, current.CacheTTL)
+
+				return "", fmt.Errorf("%v — the site runs without an object cache; turn it on again "+
+					"from the Cache tab", err)
+			}
+
+			return "The object cache uses this server's Redis now.", nil
+		}).Optional()
 	}
 
 	list.AddFn("Check the site answers", s.checkThroughNginx(ctx, site.ID)).Optional()

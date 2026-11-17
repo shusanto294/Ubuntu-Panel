@@ -297,6 +297,11 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, mode, ttl string) 
 			return fmt.Errorf("the panel cannot wire a %s site into Redis by itself — "+
 				"the Cache tab says why", strings.ToLower(site.TypeLabel()))
 		}
+	case "full":
+		if !Cacheable(site) || !RedisSupported(site) {
+			return fmt.Errorf("the page and object cache together are for WordPress; a %s "+
+				"site can have one of them — the Cache tab says which", strings.ToLower(site.TypeLabel()))
+		}
 	default:
 		return errors.New("that is not a cache the panel offers")
 	}
@@ -321,7 +326,7 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, mode, ttl string) 
 	// Written from the stored settings, so changing the lifetime goes through
 	// the same path as turning it on — and put back the way it was if the
 	// machine will not take it.
-	if mode == "redis" {
+	if CacheUsesObject(mode) {
 		if err := s.EnableRedisCache(ctx, updated); err != nil {
 			s.Store.SetSiteCache(site.ID, previous, site.CacheTTL)
 
@@ -351,9 +356,13 @@ func (s *Service) SetCache(ctx context.Context, siteID int64, mode, ttl string) 
 
 	// Only once the rest of it stuck. A site left with the drop-in removed and
 	// the record still saying Redis would be a cache nobody could see was off.
-	if previous == "redis" && mode != "redis" {
+	if CacheUsesObject(previous) && !CacheUsesObject(mode) {
 		s.DisableRedisCache(ctx, updated)
 	}
+
+	// WordPress empties the page cache itself when its content changes, for
+	// as long as there is one.
+	s.SyncPagePurge(updated)
 
 	return nil
 }
@@ -396,8 +405,10 @@ func (s *Service) PurgeCache(ctx context.Context, siteID int64) error {
 		return errors.New("that site no longer exists")
 	}
 
-	if site.CacheMode == "redis" {
-		return s.FlushRedisCache(site)
+	if CacheUsesObject(site.CacheMode) {
+		if err := s.FlushRedisCache(site); err != nil || !CacheUsesPage(site.CacheMode) {
+			return err
+		}
 	}
 
 	directory := proc.Quote(CacheDir(site))

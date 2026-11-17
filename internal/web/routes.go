@@ -201,13 +201,13 @@ func (a *App) routes() *router {
 	rt.delete("/email/accounts/{account}", "email.accounts.destroy", authenticated,
 		a.emailDestroyAccount)
 
-	// DNS. This machine's own nameserver is what /dns opens on — the panel's
-	// answer to "where do my records live" — and a provider is the
-	// alternative, a tab along.
-	rt.get("/dns", "dns.nameserver", authenticated, a.nameserverIndex)
-
 	// DNS credentials
-	rt.get("/dns/providers", "dns.index", authenticated, a.dnsIndex)
+	rt.get("/dns", "dns.index", authenticated, a.dnsIndex)
+	// The providers list was a tab of its own while the panel could host DNS
+	// itself; old links still land.
+	rt.get("/dns/providers", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
+		inertia.Redirect(w, r, "/dns")
+	})
 	rt.get("/dns/create", "dns.create", authenticated, a.dnsCreate)
 	rt.post("/dns-accounts", "dns.store", authenticated, a.dnsStore)
 	rt.patch("/dns-accounts/{account}", "dns.update", authenticated, a.dnsUpdate)
@@ -219,17 +219,9 @@ func (a *App) routes() *router {
 	rt.delete("/dns-accounts/{account}/records", "dns.records.destroy", authenticated,
 		a.dnsDestroyRecord)
 
-	// The panel's own nameserver: the zones this machine answers for itself,
-	// and the setup that has to happen at a registrar before it answers for
-	// anything. Its page moved to /dns itself; the old address still lands.
 	rt.get("/dns/nameserver", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
 		inertia.Redirect(w, r, "/dns")
 	})
-	rt.post("/dns/nameserver", "dns.nameserver.settings", authenticated, a.nameserverSettings)
-	rt.post("/dns/nameserver/resync", "dns.nameserver.resync", authenticated, a.nameserverResync)
-	rt.post("/dns/zones", "dns.zones.store", authenticated, a.nameserverZoneStore)
-	rt.get("/dns/zones/{zone}/check", "dns.zones.check", authenticated, a.nameserverZoneCheck)
-	rt.delete("/dns/zones/{zone}", "dns.zones.destroy", authenticated, a.nameserverZoneDestroy)
 
 	// AI access: the keys an assistant signs its MCP requests with. The MCP
 	// endpoint itself is not in this table — it is routed before the session

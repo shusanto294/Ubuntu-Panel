@@ -378,7 +378,7 @@ func (s *Store) SetSitePHPSettings(id int64, encoded string) {
 func (s *Store) SetSiteCache(id int64, mode, ttl string) {
 	s.db.Exec(`UPDATE sites SET cache_mode = ?, cache_enabled = ?, cache_ttl = ?,
 	           updated_at = datetime('now') WHERE id = ?`,
-		mode, mode == "nginx", nullText(ttl), id)
+		mode, mode == "nginx" || mode == "full", nullText(ttl), id)
 }
 
 // SetSiteAliases replaces the extra hostnames a site answers on. The vhost,

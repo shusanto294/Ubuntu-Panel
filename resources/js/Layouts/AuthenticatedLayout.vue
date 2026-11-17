@@ -107,7 +107,7 @@ const sections = [
             { name: 'Security', route: 'security.index', pattern: 'security.*', icon: icons.security },
             { name: 'Migrate', route: 'migrate.index', pattern: 'migrate.*', icon: icons.migrate },
             { name: 'Services', route: 'services.index', pattern: 'services.*', icon: icons.services },
-            { name: 'DNS', route: 'dns.nameserver', pattern: 'dns.*', icon: icons.dns },
+            { name: 'DNS', route: 'dns.index', pattern: 'dns.*', icon: icons.dns },
             { name: 'Logs', route: 'logs.index', pattern: 'logs.*', icon: icons.logs },
             { name: 'Notifications', route: 'notifications.index', pattern: 'notifications.*', icon: icons.notifications },
             { name: 'AI access', route: 'ai.index', pattern: 'ai.*', icon: icons.ai },

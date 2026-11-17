@@ -415,11 +415,6 @@ func dnsAccountSummary(account *store.DNSAccount) map[string]any {
 		"supports_proxy": dns.SupportsProxy(account.Provider),
 		"verified_at":    verified,
 		"sites_count":    account.SitesCount,
-
-		// This machine's own nameserver rather than an API somewhere. It has
-		// no credential to check or revoke, so the pages that list credentials
-		// show it differently and send you to the nameserver page instead.
-		"local": dns.IsLocal(account.Provider),
 	}
 }
 
@@ -796,12 +791,28 @@ func (a *App) sitesCache(w http.ResponseWriter, r *http.Request) {
 
 	mode := input["mode"]
 
+	// Redis first, when the cache asked for needs it and the machine has none:
+	// the cache is applied by the queue once it is installed.
+	if sites.CacheUsesObject(mode) && !a.Store.ServiceInstalled("redis") {
+		a.Queue.Push(queue.SiteCache, map[string]any{"site": id, "mode": mode, "ttl": input["ttl"]})
+
+		sess.Flash("success", "Installing Redis first. The cache is turned on as soon as it is "+
+			"ready — the Services page shows the install.")
+		inertia.Back(w, r, "/sites")
+
+		return
+	}
+
 	if err := a.Sites.SetCache(r.Context(), id, mode, input["ttl"]); err != nil {
 		a.failBack(w, r, err.Error())
 		return
 	}
 
 	switch mode {
+	case "full":
+		sess.Flash("success", "Page and object cache are on. nginx serves visitors the finished "+
+			"page, WordPress uses Redis for everything else, and publishing a change empties the "+
+			"page cache by itself.")
 	case "nginx":
 		sess.Flash("success", "The page cache is on and nginx was reloaded.")
 	case "redis":

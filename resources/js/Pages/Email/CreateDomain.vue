@@ -46,9 +46,9 @@ const submit = () => form.post(route('email.domains.store'));
         <RequiredApps
             v-if="!mailConfigured"
             :apps="requirements"
-            :need="['mysql', 'mail']"
+            :need="['mysql', 'mail', 'roundcube']"
             class="mb-6 max-w-2xl"
-            note="Nothing on this page can work until Postfix and Dovecot are on the machine."
+            note="Nothing on this page can work until Postfix and Dovecot are on the machine. Roundcube comes with them, so every domain has webmail."
         />
 
         <form

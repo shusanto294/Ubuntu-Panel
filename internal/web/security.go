@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -606,7 +607,9 @@ func (a *App) neededPorts(ctx context.Context) security.Needed {
 		}
 	}
 
-	if a.Store.ServiceInstalled("dns") {
+	// The panel no longer sets up a nameserver, but one it set up before may
+	// still be answering for a domain: its port stays open while BIND is here.
+	if proc.Ok("command -v named >/dev/null 2>&1") {
 		needed.Open["53/tcp"] = "DNS"
 		needed.Open["53/udp"] = "DNS"
 	}

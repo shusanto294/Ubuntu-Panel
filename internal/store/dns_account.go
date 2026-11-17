@@ -200,3 +200,31 @@ func (s *Store) DetachSiteDNS(siteID int64) {
 func (s *Store) DetachMailDNS(domainID int64) {
 	s.db.Exec(`UPDATE email_domains SET dns_account_id = NULL, manage_dns = 0 WHERE id = ?`, domainID)
 }
+
+// RetireDNSProvider takes away every credential for a provider the panel no
+// longer offers, and unhooks what pointed at them: the sites and mail domains
+// keep their records wherever they are, and are no longer managed from here.
+// It reports how many credentials went.
+func (s *Store) RetireDNSProvider(ctx context.Context, provider string) int {
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT id FROM dns_accounts WHERE provider = ?`, provider)
+	if err != nil {
+		return 0
+	}
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		s.ClearSiteDNSAccount(id)
+		s.db.Exec(`DELETE FROM dns_accounts WHERE id = ?`, id)
+	}
+
+	return len(ids)
+}

@@ -117,6 +117,10 @@ func (s *Service) EnableRedisCache(ctx context.Context, site *store.Site) error 
 	// slower than no cache at all, and silent about it.
 	if password := s.Store.SecretSetting("redis_password"); password != "" {
 		settings = append(settings, "config set WP_REDIS_PASSWORD "+proc.Quote(password))
+	} else {
+		// A password left in wp-config.php by another server — a site that
+		// moved here — is sent to a Redis that has none, which refuses it.
+		proc.Run(wp+" config delete WP_REDIS_PASSWORD 2>/dev/null", time.Minute)
 	}
 
 	for _, setting := range settings {
@@ -167,6 +171,41 @@ func (s *Service) FlushRedisCache(site *store.Site) error {
 	}
 
 	return nil
+}
+
+// ObjectCacheDropIn is WordPress's object cache drop-in for a site: the file
+// WordPress loads before anything else, and hands every cache lookup to.
+func ObjectCacheDropIn(site *store.Site) string {
+	return strings.TrimRight(site.DocumentRoot(), "/") + "/wp-content/object-cache.php"
+}
+
+// RemoveObjectCacheDropIn takes a moved site's object cache drop-in out.
+//
+// The drop-in came with the files and still talks to the old server's cache:
+// Redis or Memcached at an address, a port and a password that mean nothing
+// here. WordPress loads it before it reads a single option, and when it
+// cannot connect the site answers "Error establishing a database connection"
+// — on a site whose database is perfectly fine. Without it WordPress keeps
+// its cache in memory for the request and reads the database, which is
+// exactly what it does on a fresh install. Not only the panel's own Redis
+// cache: one somebody installed by hand breaks the move in the same way.
+//
+// Any WordPress, whatever type the site was created as, so it goes by the
+// file rather than by the site's type.
+func RemoveObjectCacheDropIn(site *store.Site) string {
+	path := proc.Quote(ObjectCacheDropIn(site))
+
+	if !proc.Ok("sudo test -f " + path) {
+		return "There is no object cache drop-in to take out."
+	}
+
+	if !proc.Ok("sudo rm -f " + path) {
+		return "The object cache drop-in could not be removed; if the site shows a database " +
+			"error, delete wp-content/object-cache.php."
+	}
+
+	return "Took out the old server's object cache drop-in (wp-content/object-cache.php): it " +
+		"pointed at that server's cache, and WordPress reads the database without it."
 }
 
 // lastLine is the part of a command's output worth putting in front of

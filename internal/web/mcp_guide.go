@@ -356,16 +356,10 @@ var panelGuide = []guideArea{
 		Key:  "dns",
 		Page: "DNS",
 		What: "Credentials for DNS providers, and the records in the zones they hold. The panel " +
-			"publishes a site's and a mail domain's records itself; this is for everything else. " +
-			"This machine can also be the nameserver rather than a client of one — a hosted " +
-			"zone is then reached through the same credential and the same record tools as " +
-			"Cloudflare's, and the tools whose names say nameserver or hosted_zone are the " +
-			"ones for setting that up.",
+			"publishes a site's and a mail domain's records itself; this is for everything else.",
 		Tools: []string{"list_dns_accounts", "list_dns_providers", "connect_dns_account",
 			"update_dns_account", "verify_dns_account", "delete_dns_account", "list_dns_zones",
-			"list_dns_records", "set_dns_record", "delete_dns_record",
-			"nameserver_status", "set_nameserver_hostnames", "list_hosted_zones",
-			"host_dns_zone", "remove_hosted_zone"},
+			"list_dns_records", "set_dns_record", "delete_dns_record"},
 		Recipes: []guideRecipe{
 			{
 				Task: "Add a record somebody asked for — a TXT verification, a subdomain elsewhere",
@@ -374,30 +368,10 @@ var panelGuide = []guideArea{
 					"list_dns_records to read it back.",
 				},
 			},
-			{
-				Task: "Host a domain's DNS on this server instead of at a provider",
-				Steps: []string{
-					"nameserver_status. Its `next_step` is the one thing to do next, in order; the rest of this recipe is what those steps are.",
-					"The `dns` app, if it is not installed: install_apps.",
-					"set_nameserver_hostnames with two names on a domain the person owns — ns1 and ns2 by convention. Its answer carries the exact glue records to register.",
-					"Give the person those glue records and say plainly that only they can add them, at the registrar of the domain the nameserver names are on. Nothing resolves until that is done, and it is not something this panel can do or check immediately.",
-					"host_dns_zone for the domain the nameserver names are on, so the nameservers have addresses of their own.",
-					"host_dns_zone for each domain they want managed here, then tell them to change that domain's nameservers at its own registrar.",
-					"After that the zone is an ordinary provider: set_dns_record, and create_site publishes a site's records into it by itself.",
-				},
-			},
 		},
 		Warnings: []string{
 			"A site's own records belong to create_site and delete_site. Writing them here leaves " +
 				"the panel's record and the zone disagreeing.",
-			"Hosting DNS here depends on glue records registered at a registrar, which is outside " +
-				"this panel and outside your reach. Never report it as set up because the panel " +
-				"accepted the settings: nameserver_status asks the public DNS what the " +
-				"nameserver names actually resolve to, and that answer is the only one that " +
-				"counts. A registration just made can take hours to appear.",
-			"host_dns_zone before the person changes the domain's nameservers, never after. A " +
-				"domain delegated to a zone that does not exist here is answered \"no such " +
-				"domain\", and that answer is cached by every resolver that asked.",
 			"set_dns_record replaces rather than adds: the record already at that name and type, " +
 				"and any duplicates of it, are overwritten and removed. The answer's `replaced` " +
 				"says what was there. A TXT only replaces one of its own kind — SPF over SPF, " +
