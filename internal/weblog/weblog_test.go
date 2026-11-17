@@ -349,3 +349,57 @@ func TestReferrersAndCodes(t *testing.T) {
 		t.Fatalf("methods = %+v", report.Methods)
 	}
 }
+
+func TestRecentFeedAndLastSeen(t *testing.T) {
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	a := New(now.Add(-time.Hour), now.Add(time.Minute), 4)
+
+	line := func(minute int, path string, status int, agent string) string {
+		return fmt.Sprintf(`1.2.3.4 - - [04/Nov/2026:09:%02d:00 +0000] "GET %s HTTP/1.1" %d 512 "-" "%s"`,
+			minute, path, status, agent)
+	}
+
+	// One site's log, then another's: the feed is by time, not arrival.
+	a.Line("b.example", line(50, "/late", 200, "Mozilla/5.0"))
+	a.Line("a.example", line(10, "/early", 404, "Mozilla/5.0"))
+	a.Line("a.example", line(20, "/style.css", 200, "Mozilla/5.0"))
+	a.Line("a.example", line(30, "/blog/", 500, "Mozilla/5.0 (compatible; Googlebot/2.1)"))
+
+	for i := 0; i < 3*maxRecent; i++ {
+		a.Line("c.example", line(0, "/old", 200, "Mozilla/5.0"))
+	}
+
+	report := a.Report()
+
+	if len(report.Recent) != maxRecent {
+		t.Fatalf("the feed kept %d, want %d", len(report.Recent), maxRecent)
+	}
+	if report.Recent[0].Path != "/late" || report.Recent[1].Path != "/blog/" || report.Recent[2].Path != "/early" {
+		t.Fatalf("the feed is not newest first: %+v", report.Recent[:3])
+	}
+	if report.Recent[1].Bot != "Googlebot" {
+		t.Errorf("Googlebot was not named: %q", report.Recent[1].Bot)
+	}
+	for _, r := range report.Recent {
+		if r.Path == "/style.css" {
+			t.Errorf("a stylesheet is in the feed")
+		}
+	}
+
+	last := map[string]int64{}
+	for _, s := range report.Sites {
+		last[s.Domain] = s.Last
+	}
+	if want := now.Add(-30 * time.Minute).Unix(); last["a.example"] != want {
+		t.Errorf("a.example last = %d, want %d", last["a.example"], want)
+	}
+
+	clientErrors, serverErrors := 0, 0
+	for _, b := range report.Timeline {
+		clientErrors += b.ClientErrors
+		serverErrors += b.ServerErrors
+	}
+	if clientErrors != 1 || serverErrors != 1 {
+		t.Errorf("timeline errors = %d 4xx, %d 5xx", clientErrors, serverErrors)
+	}
+}

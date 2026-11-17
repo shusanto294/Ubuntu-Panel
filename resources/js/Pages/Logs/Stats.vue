@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import RecentRequests from '@/Components/Analytics/RecentRequests.vue';
 import Traffic from '@/Components/Logs/Traffic.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 
@@ -15,6 +16,8 @@ const props = defineProps({
     windows: { type: Array, default: () => ['1h', '24h', '7d', '30d'] },
     traffic: { type: Object, default: null },
     trustedIps: { type: Object, default: () => ({}) },
+    stats: { type: Object, default: null },
+    unmatched: { type: String, default: '' },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
     site: { type: String, default: '' },
@@ -22,6 +25,7 @@ const props = defineProps({
 
 // What each page shows of the traffic view, and how it narrows it.
 const LAYOUT = {
+    latest: { sections: [] },
     requests: { sections: ['timeline', 'sites', 'urls'] },
     php: { sections: ['sites', 'cpu'] },
     addresses: { sections: ['ips', 'agents'] },
@@ -31,6 +35,7 @@ const LAYOUT = {
 };
 
 const INTRO = {
+    latest: 'The newest requests for pages, newest first — up to the last two hundred. Images, scripts and stylesheets are left out.',
     requests: 'Every request the sites answered over the period: when they came, which site they went to, and what was asked for.',
     php: 'Requests that reach PHP or an app are the ones that cost CPU; static files are served by nginx for almost nothing. Beside them, what is using the CPU right now.',
     addresses: 'Who is sending the requests, busiest first, and what they say they are.',
@@ -45,6 +50,7 @@ const loading = ref(true);
 
 onMounted(() => {
     const only = ['traffic', 'trustedIps'];
+    if (props.section === 'latest') only.push('stats');
     if (props.section === 'php') only.push('processes', 'fpm');
 
     router.reload({
@@ -85,7 +91,15 @@ const errorsLink = computed(
             </Link>
         </p>
 
+        <RecentRequests
+            v-if="section === 'latest'"
+            :rows="stats?.recent ?? null"
+            :total="stats?.requests ?? 0"
+            :unmatched="unmatched"
+        />
+
         <Traffic
+            v-else
             :window="window"
             :windows="windows"
             :traffic="traffic"

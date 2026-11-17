@@ -399,6 +399,11 @@ type Analyzer struct {
 	methods   map[string]int
 	referrers map[string]int
 
+	// recent are the newest requests for pages, kept to a few hundred: the
+	// logs arrive one site after another, so it is cut back by time, not by
+	// arrival.
+	recent []Request
+
 	total, dynamic, static, bytes int
 	scanned, skipped              int
 }
@@ -409,6 +414,7 @@ type siteTotals struct {
 	threats                  int
 	ips                      map[string]bool
 	minutes                  map[int64]int
+	last                     time.Time
 }
 
 type ipTotals struct {
@@ -444,7 +450,29 @@ type Bucket struct {
 	Requests int   `json:"requests"`
 	Dynamic  int   `json:"dynamic"`
 	Threats  int   `json:"threats"`
+
+	// ClientErrors are the 4xx answers — not found, refused — and
+	// ServerErrors the 5xx.
+	ClientErrors int `json:"client_errors"`
+	ServerErrors int `json:"server_errors"`
 }
+
+// Request is one request in the latest-requests feed.
+type Request struct {
+	At     int64  `json:"at"`
+	Site   string `json:"site"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Status int    `json:"status"`
+	IP     string `json:"ip"`
+	Threat string `json:"threat,omitempty"`
+	Bot    string `json:"bot,omitempty"` // a crawler's name, when it says it is one
+
+	agent string
+}
+
+// maxRecent is how many requests the feed keeps.
+const maxRecent = 200
 
 // New is an analyzer that counts what falls between from and to, in buckets
 // slices for the timeline.
@@ -542,6 +570,21 @@ func (a *Analyzer) Add(site string, entry Entry) {
 		if threat != "" {
 			a.timeline[i].Threats++
 		}
+		switch class {
+		case 4:
+			a.timeline[i].ClientErrors++
+		case 5:
+			a.timeline[i].ServerErrors++
+		}
+	}
+
+	// The feed is what a visitor opens, and what attacks it: a page's
+	// stylesheets and images would push the pages themselves out of it.
+	if dynamic || threat != "" {
+		a.remember(Request{
+			At: entry.Time.Unix(), Site: site, Method: entry.Method, Path: entry.Path,
+			Status: entry.Status, IP: entry.IP, Threat: threat, agent: entry.UserAgent,
+		})
 	}
 
 	s := a.sites[site]
@@ -554,6 +597,9 @@ func (a *Analyzer) Add(site string, entry Entry) {
 	s.status[class]++
 	s.ips[entry.IP] = true
 	s.minutes[minute]++
+	if entry.Time.After(s.last) {
+		s.last = entry.Time
+	}
 	if dynamic {
 		s.dynamic++
 	}
@@ -639,6 +685,38 @@ func (a *Analyzer) Add(site string, entry Entry) {
 	}
 }
 
+// remember adds a request to the feed, trimming it back to the newest when it
+// has grown to twice what is kept.
+func (a *Analyzer) remember(request Request) {
+	a.recent = append(a.recent, request)
+	if len(a.recent) >= 2*maxRecent {
+		a.trimRecent()
+	}
+}
+
+func (a *Analyzer) trimRecent() {
+	sort.SliceStable(a.recent, func(i, j int) bool { return a.recent[i].At > a.recent[j].At })
+	if len(a.recent) > maxRecent {
+		a.recent = append([]Request{}, a.recent[:maxRecent]...)
+	}
+}
+
+// botName is the crawler a user agent says it is: a known one's name, or
+// "Bot" for the rest that admit to it.
+func botName(agent string) string {
+	if good := FindGoodBot(agent); good != nil {
+		return good.Name
+	}
+	if Bot(agent) {
+		return "Bot"
+	}
+	return ""
+}
+
+// maxLatestIPs is how many of the addresses seen last are listed beyond the
+// two hundred busiest.
+const maxLatestIPs = 50
+
 // maxAddresses is how many addresses are followed one by one.
 const maxAddresses = 50000
 
@@ -687,6 +765,12 @@ type Report struct {
 	Codes     []Count `json:"codes"`
 	Methods   []Count `json:"methods"`
 	Referrers []Count `json:"referrers"`
+
+	// Recent are the newest requests for pages, newest first.
+	Recent []Request `json:"recent"`
+
+	// Bots is how many requests came from something that says it is a bot.
+	Bots int `json:"bots"`
 }
 
 type SiteStat struct {
@@ -702,6 +786,7 @@ type SiteStat struct {
 	Errors     int     `json:"server_errors"`
 	Threats    int     `json:"threats"`
 	PeakMinute int     `json:"peak_per_minute"`
+	Last       int64   `json:"last"` // Unix seconds of its newest request
 }
 
 type IPStat struct {
@@ -826,7 +911,7 @@ func (a *Analyzer) Report() Report {
 			Share: percent(s.requests, a.total), PHPShare: percent(s.dynamic, a.dynamic),
 			Bytes: s.bytes, IPs: len(s.ips),
 			Success: s.status[2] + s.status[3], NotFound: s.status[4], Errors: s.status[5],
-			Threats: s.threats, PeakMinute: peak(s.minutes),
+			Threats: s.threats, PeakMinute: peak(s.minutes), Last: s.last.Unix(),
 		})
 	}
 	sort.Slice(report.Sites, func(i, j int) bool {
@@ -855,7 +940,12 @@ func (a *Analyzer) Report() Report {
 	}
 	SortIPs(report.TopIPs)
 	if len(report.TopIPs) > 200 {
+		// The busiest and the dangerous, and the addresses seen last too, so
+		// the page can list them latest first.
+		rest := append([]IPStat{}, report.TopIPs[200:]...)
 		report.TopIPs = report.TopIPs[:200]
+		sort.SliceStable(rest, func(i, j int) bool { return rest[i].Last > rest[j].Last })
+		report.TopIPs = append(report.TopIPs, rest[:min(len(rest), maxLatestIPs)]...)
 	}
 
 	for _, p := range a.paths {
@@ -896,6 +986,18 @@ func (a *Analyzer) Report() Report {
 	sort.Slice(report.Threats, func(i, j int) bool {
 		return report.Threats[i].Requests > report.Threats[j].Requests
 	})
+
+	a.trimRecent()
+	report.Recent = append([]Request{}, a.recent...)
+	for i := range report.Recent {
+		report.Recent[i].Bot = botName(report.Recent[i].agent)
+	}
+
+	for agent, count := range a.agents {
+		if Bot(agent) {
+			report.Bots += count
+		}
+	}
 
 	for _, c := range top(a.agents, 100) {
 		report.Agents = append(report.Agents, AgentStat{Agent: c.Name, Requests: c.Count, Bot: Bot(c.Name)})

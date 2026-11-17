@@ -46,3 +46,27 @@ func FromCloudflare(address string) bool {
 
 	return false
 }
+
+// RealIPPath is the nginx file that makes a site behind Cloudflare log, and
+// limit, its visitors rather than Cloudflare's proxies.
+const RealIPPath = "/etc/nginx/conf.d/panel-realip.conf"
+
+// RealIPConfig is that file: for a connection from one of Cloudflare's
+// addresses, and only those, nginx takes the visitor's own from the
+// CF-Connecting-IP header Cloudflare sets. Anybody else sending the header is
+// ignored, so it cannot be used to pose as another address.
+func RealIPConfig() string {
+	var b strings.Builder
+
+	b.WriteString("# Managed by the server panel — rewritten when Cloudflare's ranges change.\n")
+	b.WriteString("# Requests proxied by Cloudflare are logged with the visitor's address,\n")
+	b.WriteString("# not the Cloudflare server that passed them on.\n")
+
+	for _, cidr := range CloudflareRanges {
+		b.WriteString("set_real_ip_from " + cidr + ";\n")
+	}
+
+	b.WriteString("real_ip_header CF-Connecting-IP;\n")
+
+	return b.String()
+}

@@ -39,6 +39,11 @@ func (a *App) analyticsIndex(w http.ResponseWriter, r *http.Request) {
 		"site":      site,
 		"sites":     domains,
 		"unmatched": unmatchedSite,
+
+		// Blocking an address is a Cloudflare IP access rule on the sites'
+		// zones, so it is offered only where there is a Cloudflare account.
+		"edgeAccounts": a.edgeAccounts(r.Context(), userFrom(r.Context()).ID),
+		"siteDomains":  domains,
 	}
 
 	if inertia.Asked(r, "Analytics/Index", "traffic") {

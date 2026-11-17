@@ -427,6 +427,28 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 			"ips":           site.IPs,
 			"client_errors": site.NotFound,
 			"server_errors": site.Errors,
+			"last":          site.Last,
+		})
+	}
+
+	// The latest requests, each a link to what was asked for when it was a
+	// site's page. A request to the bare IP has nowhere to link to.
+	recent := make([]map[string]any, 0, len(report.Recent))
+	for _, request := range report.Recent {
+		url := ""
+		if base[request.Site] != "" && request.Method == "GET" && request.Status < 400 {
+			url = base[request.Site] + request.Path
+		}
+		recent = append(recent, map[string]any{
+			"at":     request.At,
+			"site":   request.Site,
+			"method": request.Method,
+			"path":   request.Path,
+			"status": request.Status,
+			"ip":     request.IP,
+			"threat": request.Threat,
+			"bot":    request.Bot,
+			"url":    url,
 		})
 	}
 
@@ -453,6 +475,8 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 		"window":        report.Window,
 		"sites":         sites,
 		"pages":         pages,
+		"recent":        recent,
+		"bots":          report.Bots,
 		"requests":      report.Requests,
 		"bytes":         report.Bytes,
 		"dynamic":       report.Dynamic,
@@ -468,6 +492,7 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 
 // statsSections are the pages the Logs page's boxes open.
 var statsSections = map[string]string{
+	"latest":        "Latest requests",
 	"requests":      "Requests",
 	"php":           "Requests to PHP and the apps",
 	"addresses":     "Addresses",
@@ -497,11 +522,12 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	props := inertia.Props{
-		"section": section,
-		"title":   title,
-		"window":  window.key,
-		"windows": windows,
-		"site":    site,
+		"section":   section,
+		"title":     title,
+		"window":    window.key,
+		"windows":   windows,
+		"site":      site,
+		"unmatched": unmatchedSite,
 	}
 
 	viewer := session.ClientIP(r)
@@ -511,6 +537,11 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 		report, reasons := a.markTrusted(ctx, a.siteTraffic(ctx, window, site), viewer)
 		props["traffic"] = report
 		props["trustedIps"] = reasons
+
+		// The feed with each request's address, which only the stats carry.
+		if section == "latest" {
+			props["stats"] = a.trafficStats(ctx, report)
+		}
 	}
 
 	// What the CPU is doing is the PHP page's alone: it takes a second to

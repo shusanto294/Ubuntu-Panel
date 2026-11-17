@@ -135,3 +135,17 @@ func TestAptPeriodic(t *testing.T) {
 		t.Fatal("expected it to be off")
 	}
 }
+
+func TestRealIPConfigTrustsOnlyCloudflare(t *testing.T) {
+	config := RealIPConfig()
+
+	if !strings.Contains(config, "real_ip_header CF-Connecting-IP;") {
+		t.Fatalf("no header:\n%s", config)
+	}
+	if got := strings.Count(config, "set_real_ip_from "); got != len(CloudflareRanges) {
+		t.Fatalf("%d set_real_ip_from lines, want %d", got, len(CloudflareRanges))
+	}
+	if strings.Contains(config, "0.0.0.0/0") || strings.Contains(config, "::/0") {
+		t.Fatalf("trusts every address:\n%s", config)
+	}
+}

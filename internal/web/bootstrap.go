@@ -11,6 +11,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
+	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
@@ -244,6 +245,8 @@ func (a *App) EnsureNginxHelpers() {
 	if !a.Store.ServiceInstalled("nginx") {
 		return
 	}
+
+	a.ensureRealIP()
 
 	const path = "/etc/nginx/conf.d/panel-proxy.conf"
 
@@ -575,5 +578,40 @@ func (a *App) EnsurePagePurge(ctx context.Context) {
 		if sites.CacheActive(site) {
 			a.Sites.SyncPagePurge(site)
 		}
+	}
+}
+
+// ensureRealIP writes the file that has nginx log the visitor's address for a
+// request Cloudflare proxied, rather than Cloudflare's own. Without it every
+// visitor of a proxied site is one of a few dozen Cloudflare addresses: the
+// visitor count, the addresses list and the attack detection are all wrong.
+//
+// It is a file of its own so it can be taken back on its own: a machine that
+// already names a real_ip_header somewhere else makes nginx refuse a second
+// one, and then the file is removed again rather than left to break the next
+// reload.
+func (a *App) ensureRealIP() {
+	want := security.RealIPConfig()
+
+	if current, err := proc.ReadFile(security.RealIPPath, true); err == nil && current == want {
+		return
+	}
+
+	if err := proc.PutFile(security.RealIPPath, want, true); err != nil {
+		a.Log.Warn("could not write the real visitor address configuration", "error", err)
+
+		return
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		proc.Ok("sudo rm -f " + proc.Quote(security.RealIPPath))
+		a.Log.Warn("nginx refused the real visitor address configuration; left as it was",
+			"output", check.Output)
+
+		return
+	}
+
+	if proc.Ok("sudo systemctl reload nginx") {
+		a.Log.Info("sites behind Cloudflare now log their visitors' own addresses")
 	}
 }
