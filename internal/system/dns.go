@@ -57,6 +57,12 @@ func resolve(ctx context.Context, hostname, expected string) Resolution {
 	return Resolution{Addresses: addresses}
 }
 
+// ResolveNow is one uncached question to the public resolver, for something
+// that asks again on its own schedule rather than waiting here.
+func ResolveNow(ctx context.Context, hostname, expected string) Resolution {
+	return resolve(ctx, hostname, expected)
+}
+
 // WaitForHostname waits until a hostname resolves, and reports what it resolved
 // to.
 //

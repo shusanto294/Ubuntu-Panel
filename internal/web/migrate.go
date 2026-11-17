@@ -1488,8 +1488,26 @@ func (a *App) runMigrationFinish(ctx context.Context, migrationID int64) error {
 	a.Store.SetMigrationTask(m.ID, taskID)
 
 	if m.Kind == "site" {
+		// Whether it was on HTTPS is read before finishing: a request that
+		// fails turns the flag off, so the vhost stays on HTTP.
+		wantedSSL := false
+		if site, findErr := a.Store.FindSite(ctx, m.LocalID); findErr == nil {
+			wantedSSL = site.SSL && !site.EdgeTLS()
+		}
+
 		err = a.Sites.FinishImport(ctx, m.LocalID, taskID)
 		proc.Ok("sudo rm -rf " + proc.Quote(incomingDir(m.RemoteID)))
+
+		// Not issued — almost always a DNS record that does not point here
+		// yet. It is issued on its own once it does.
+		if site, findErr := a.Store.FindSite(ctx, m.LocalID); wantedSSL && findErr == nil && !sites.HasCertificate(site) {
+			a.awaitCertificateFor(site.ID)
+
+			a.Store.SetMigrationStatus(m.ID, "done", m.Name+" has moved here. Its certificate is issued "+
+				"automatically as soon as its DNS points here; until then it is served over HTTP.")
+
+			return nil
+		}
 	} else {
 		err = a.Mail.FinishImport(ctx, m.LocalID, taskID)
 	}

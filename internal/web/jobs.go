@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
@@ -109,8 +111,22 @@ func (a *App) registerJobs() {
 			return err
 		}
 
+		// Certbot first, if it is not here: a button that only says "install
+		// certbot from Services" is a button that does not do its job.
+		if site, err := a.Store.FindSite(ctx, payload.Site); err == nil {
+			failed, err := a.awaitServices(ctx, job, []string{"nginx", "certbot"}, site.UserID, site.Domain)
+			if len(failed) > 0 {
+				return fmt.Errorf("%s could not be installed, so no certificate was requested", strings.Join(failed, " and "))
+			}
+			if err != nil {
+				return err
+			}
+		}
+
 		return a.Sites.Certificate(ctx, payload.Site)
 	})
+
+	a.Queue.Handle(queue.SiteCertificateAwait, a.awaitCertificate)
 
 	a.Queue.Handle(queue.SitePHPVersion, func(ctx context.Context, job *store.Job) error {
 		var payload sitePHPPayload

@@ -251,6 +251,11 @@ func (s *Service) FinishImport(ctx context.Context, siteID, taskID int64) error 
 	return nil
 }
 
+// HasCertificate is whether a certificate for the site is on disk.
+func HasCertificate(site *store.Site) bool {
+	return proc.Ok("sudo test -f " + proc.Quote(CertificatePath(site)+"/fullchain.pem"))
+}
+
 // InstallDeployKey puts a site's repository key from the old server in place,
 // owned and protected as GenerateDeployKey leaves a new one, so pulls keep
 // working without the key being added to the repository again.

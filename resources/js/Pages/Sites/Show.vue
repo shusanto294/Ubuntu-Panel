@@ -1865,14 +1865,13 @@ const destroy = async () => {
 
             <p
                 v-if="!certificate.certbot"
-                class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800"
+                class="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600"
             >
-                Certbot is not installed, so no certificate can be issued.
-                Install it from Services first.
+                Certbot is not on this server yet. It is installed first, then
+                the certificate is requested.
             </p>
 
             <button
-                v-else
                 @click="post('sites.certificate')"
                 class="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
             >

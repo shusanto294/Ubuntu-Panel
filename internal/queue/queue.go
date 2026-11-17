@@ -30,6 +30,11 @@ const (
 	// without rebuilding the application to get there.
 	SiteCertificate = "site.certificate"
 
+	// SiteCertificateAwait waits, cheaply, for a moved site's domain to point
+	// here and then asks for its certificate: a move whose DNS is changed by
+	// hand, an hour later, still ends on HTTPS without anybody coming back.
+	SiteCertificateAwait = "site.certificate.await"
+
 	// SitePHPVersion moves one site to another PHP-FPM, installing that PHP
 	// first when the machine does not have it. On the queue because that
 	// install is apt, the ondrej PPA and a few minutes — far longer than a

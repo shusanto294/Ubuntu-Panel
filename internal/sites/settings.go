@@ -462,8 +462,12 @@ func (s *Service) Certificate(ctx context.Context, siteID int64) error {
 		return err
 	}
 
+	// Asking for a certificate is asking for HTTPS. A site created without it,
+	// or one whose earlier request failed — which turns the flag off so the
+	// vhost stays on HTTP — is switched back on; enableHTTPS turns it off
+	// again if this one fails too.
 	if !site.SSL {
-		return errors.New("this site was created without HTTPS")
+		s.Store.SetSiteSSL(site.ID, true)
 	}
 
 	taskID, err := s.Store.CreateTask(ctx, "site", "site.certificate", site.UserID, site.ID, site.Domain)
