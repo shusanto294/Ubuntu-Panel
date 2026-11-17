@@ -222,7 +222,7 @@ func (s *Service) nameServerAfter(domain *store.EmailDomain) func(*tasks.Runner)
 
 // DeleteDomain removes the domain, its mailboxes, its DKIM key and its stored
 // mail.
-func (s *Service) DeleteDomain(ctx context.Context, domainID int64) error {
+func (s *Service) DeleteDomain(ctx context.Context, domainID int64, deleteDNS bool) error {
 	domain, err := s.Store.FindEmailDomain(ctx, domainID)
 	if err != nil {
 		return err
@@ -254,11 +254,13 @@ func (s *Service) DeleteDomain(ctx context.Context, domainID int64) error {
 			"sudo nginx -t && sudo systemctl reload nginx",
 			domain.Domain, autoconfigRoot)).Optional()
 
-	// Not gated on manage_dns: a domain whose DNS management was switched off
-	// after setup still has the records the panel published, and leaving an MX
-	// behind means mail for a domain this server no longer accepts keeps
-	// arriving at it.
-	if domain.DNSAccountID > 0 {
+	// The DNS records go only when the person removing the domain asked for
+	// it, for the same reason a deleted site's do: a domain removed here has
+	// often moved, and its MX, SPF and DKIM are what the new server's mail
+	// arrives by and is trusted by. Not gated on manage_dns when it is asked
+	// for: a domain whose DNS management was switched off after setup still
+	// has the records the panel published.
+	if deleteDNS && domain.DNSAccountID > 0 {
 		list.AddFn("Remove the mail DNS records", func(runner *tasks.Runner) (string, error) {
 			return dns.RemoveForMail(ctx, s.Store, domain)
 		}).Optional()

@@ -172,7 +172,7 @@ var mcpCapabilities = []struct {
 	{Key: capSitesWrite, Label: "Create and deploy sites",
 		Help: "Create a site from a repository or a template, deploy it again, pull it, restart it."},
 	{Key: capSitesDelete, Label: "Delete sites", Destructive: true,
-		Help: "Remove a site: its files, its database, its DNS records and its certificate."},
+		Help: "Remove a site: its files, its database and its certificate — and its DNS records, when asked to."},
 	{Key: capFilesRead, Label: "Read a site's files",
 		Help: "Open files inside a site — configuration, templates, a .env with its passwords in it."},
 	{Key: capFilesWrite, Label: "Write a site's files", Destructive: true,
@@ -913,13 +913,17 @@ func (a *App) mcpDeleteSite() *mcp.Tool {
 		Capability:  capSitesDelete,
 		Title:       "Delete a site",
 		Destructive: true,
-		Description: "Remove a site: its vhost, its service, its DNS records, its database and — " +
-			"unless told otherwise — its files. This cannot be undone, so confirm with the person " +
+		Description: "Remove a site: its vhost, its service, its database and — " +
+			"unless told otherwise — its files. Its DNS records are left in place unless delete_dns " +
+			"is set: a deleted site has often moved to another server that uses them. This cannot be undone, so confirm with the person " +
 			"asking before calling it.",
 		Properties: map[string]mcp.Property{
 			"site": {Description: "The site's id, or its domain."},
 			"delete_files": {Type: "boolean", Default: true,
 				Description: "Remove the site's directory as well as its configuration."},
+			"delete_dns": {Type: "boolean", Default: false,
+				Description: "Also remove the DNS records the panel published for it. Leave off when the " +
+					"site has moved to another server: the records are that server's now."},
 			"confirm": {Type: "boolean", Default: false,
 				Description: "The person has been told what this removes and has said yes."},
 		},
@@ -939,6 +943,7 @@ func (a *App) mcpDeleteSite() *mcp.Tool {
 			a.Queue.Push(queue.SiteDelete, map[string]any{
 				"site":  site.ID,
 				"files": args.Bool("delete_files", true),
+				"dns":   args.Bool("delete_dns", false),
 			})
 
 			return map[string]any{

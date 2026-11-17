@@ -219,7 +219,14 @@ func (a *App) emailDestroyDomain(w http.ResponseWriter, r *http.Request) {
 	// mail, and none of that is worth watching a row for.
 	a.Store.MarkEmailDomainDeleted(domain.ID)
 
-	a.Queue.PushID(queue.MailDomainDelete, "domain", domain.ID)
+	input, _ := a.input(r)
+
+	// Off unless asked: a removed domain has often moved, and its records
+	// are the new server's now.
+	a.Queue.Push(queue.MailDomainDelete, map[string]any{
+		"domain": domain.ID,
+		"dns":    boolInput(input, "delete_dns", false),
+	})
 
 	if sess := session.FromContext(r.Context()); sess != nil {
 		sess.Flash("danger", "Mail domain deleted.")

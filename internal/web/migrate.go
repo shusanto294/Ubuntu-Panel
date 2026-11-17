@@ -9,16 +9,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/migrate"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
+	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
@@ -346,6 +349,12 @@ func (a *App) registerMigrationJobs() {
 			Migration int64 `json:"migration"`
 		}
 		if err := job.Decode(&payload); err != nil {
+			return err
+		}
+
+		// What it needs, installed first — nginx, PHP, the database engine,
+		// the mail server — as a site created here would have it.
+		if err := a.awaitMigrationServices(ctx, job, payload.Migration); err != nil {
 			return err
 		}
 
@@ -681,25 +690,33 @@ func (a *App) refuseMigration(ctx context.Context, m *store.Migration, hello *mi
 		}
 	}
 
-	if m.Kind == "mail" && !hello.MailConfigured {
-		return "The new server has no mail server set up. Install Mail on its Services page first."
-	}
+	// A new server that installs what arrives needs nothing up front: the
+	// import waits for it instead. One from before that has to be asked.
+	if hello.InstallsServices {
+		if site == nil {
+			return ""
+		}
+	} else {
+		if m.Kind == "mail" && !hello.MailConfigured {
+			return "The new server has no mail server set up. Install Mail on its Services page first."
+		}
 
-	if site == nil {
-		return ""
-	}
+		if site == nil {
+			return ""
+		}
 
-	if !hello.Services["nginx"] {
-		return "The new server has no nginx. Install it on its Services page first."
-	}
+		if !hello.Services["nginx"] {
+			return "The new server has no nginx. Install it on its Services page first."
+		}
 
-	if database, _, _ := a.Sites.MigrationDatabase(ctx, site); database != nil && !hello.Services[database.Engine] {
-		return fmt.Sprintf("%s's database is %s, which the new server does not have. Install it on its Services page first.",
-			site.Domain, config.EngineLabel(database.Engine))
-	}
+		if database, _, _ := a.Sites.MigrationDatabase(ctx, site); database != nil && !hello.Services[database.Engine] {
+			return fmt.Sprintf("%s's database is %s, which the new server does not have. Install it on its Services page first.",
+				site.Domain, config.EngineLabel(database.Engine))
+		}
 
-	if site.IsProxied() && !hello.Services["node"] {
-		return "The new server has no Node.js. Install it on its Services page first."
+		if site.IsProxied() && !hello.Services["node"] {
+			return "The new server has no Node.js. Install it on its Services page first."
+		}
 	}
 
 	if hello.SitesRoot != "" && !strings.HasPrefix(site.RootPath, strings.TrimRight(hello.SitesRoot, "/")+"/") {
@@ -786,7 +803,7 @@ func (a *App) sendCatchUp(ctx context.Context, runner *tasks.Runner, client *mig
 func (a *App) removeMoved(ctx context.Context, m *store.Migration, site *store.Site, domain *store.EmailDomain) (string, error) {
 	if site != nil {
 		a.Store.DetachSiteDNS(site.ID)
-		if err := a.Sites.Destroy(ctx, site.ID, true); err != nil {
+		if err := a.Sites.Destroy(ctx, site.ID, true, false); err != nil {
 			return "", err
 		}
 		return site.Domain + " is removed from this server: its files, database, vhost and backups.", nil
@@ -794,7 +811,7 @@ func (a *App) removeMoved(ctx context.Context, m *store.Migration, site *store.S
 
 	a.Store.DetachMailDNS(domain.ID)
 	a.Store.MarkEmailDomainDeleted(domain.ID)
-	if err := a.Mail.DeleteDomain(ctx, domain.ID); err != nil {
+	if err := a.Mail.DeleteDomain(ctx, domain.ID, false); err != nil {
 		return "", err
 	}
 
@@ -865,7 +882,7 @@ func (a *App) migrateHello(ctx context.Context, _ []byte) (any, error) {
 	hello := migrate.Hello{
 		Panel: config.Name, Version: config.Version, PublicIP: system.PublicIP(),
 		Services: map[string]bool{}, MailConfigured: a.Mail.IsConfigured(), SitesRoot: a.Config.SitesRoot,
-		Sites: []string{}, MailDomains: []string{},
+		Sites: []string{}, MailDomains: []string{}, InstallsServices: true,
 	}
 
 	for _, service := range []string{"nginx", "php", "mysql", "postgres", "mongodb", "redis", "node", "mail"} {
@@ -1001,14 +1018,10 @@ func (a *App) receiveSite(ctx context.Context, owner, accountID int64, incoming 
 		return 0, errors.New("the site's settings are not ones this panel accepts")
 	}
 
-	if !a.Store.ServiceInstalled("nginx") {
-		return 0, errors.New("this server has no nginx; install it on the Services page first")
-	}
-
 	databaseID := int64(0)
 	if db := incoming.Database; db != nil {
-		if !a.Store.ServiceInstalled(db.Engine) {
-			return 0, fmt.Errorf("%s is not installed here; install it on the Services page first", config.EngineLabel(db.Engine))
+		if config.FindEngine(db.Engine) == nil {
+			return 0, fmt.Errorf("%q is not a database engine this panel runs", db.Engine)
 		}
 		if a.Store.DatabaseExists(ctx, db.Engine, db.Name) {
 			return 0, fmt.Errorf("this server already has a database called %s", db.Name)
@@ -1086,9 +1099,6 @@ func (a *App) receiveMail(ctx context.Context, owner, accountID int64, incoming 
 
 	if !validDomain(name) {
 		return 0, errors.New("that is not a domain")
-	}
-	if !a.Mail.IsConfigured() {
-		return 0, errors.New("this server has no mail server set up; install Mail on the Services page first")
 	}
 	if _, err := a.Store.FindEmailDomainByName(ctx, name); err == nil {
 		return 0, errors.New("this server already has the mail domain " + name)
@@ -1343,6 +1353,72 @@ func (a *App) migrateCancel(ctx context.Context, payload []byte) (any, error) {
 	a.Store.SetMigrationStatus(m.ID, "cancelled", "The other server stopped the move before anything was set up here.")
 
 	return nil, nil
+}
+
+// migrationServices are what a site or mail domain that arrived needs on
+// this machine before it can be built.
+func (a *App) migrationServices(ctx context.Context, m *store.Migration) []string {
+	if m.Kind != "site" {
+		return []string{"mail"}
+	}
+
+	site, err := a.Store.FindSite(ctx, m.LocalID)
+	if err != nil {
+		return nil
+	}
+
+	needed := siteServices(site.Type, site.SSL)
+
+	// The engine it came with, which is not always the one its type would
+	// have been given here.
+	if site.DatabaseID > 0 {
+		if database, err := a.Store.FindDatabase(ctx, site.DatabaseID); err == nil &&
+			!slices.Contains(needed, database.Engine) {
+			needed = append(needed, database.Engine)
+		}
+	}
+
+	return needed
+}
+
+// awaitMigrationServices is an arrival's first step: what it needs, installed.
+// Nil once it all is, a RetryLater while it is installing, and an error — on
+// the migration too — when something could not be installed.
+func (a *App) awaitMigrationServices(ctx context.Context, job *store.Job, migrationID int64) error {
+	m, err := a.Store.FindMigration(ctx, migrationID)
+	if err != nil {
+		return nil
+	}
+
+	needed := a.migrationServices(ctx, m)
+	if len(needed) == 0 {
+		return nil
+	}
+
+	failed, err := a.awaitServices(ctx, job, needed, a.ownerID(ctx), m.Name)
+
+	if len(failed) > 0 {
+		reason := fmt.Sprintf("%s could not be installed on this server, so %s was not set up. "+
+			"The Services page has the install's console and a Retry; move it again after.",
+			strings.Join(failed, " and "), m.Name)
+		a.Store.SetMigrationStatus(m.ID, "failed", reason)
+
+		return fmt.Errorf("%s", reason)
+	}
+
+	var retry *queue.RetryLater
+	if errors.As(err, &retry) {
+		labels := make([]string, 0, len(needed))
+		for _, key := range catalog.WithDependencies(needed) {
+			if !a.Store.ServiceInstalled(key) {
+				labels = append(labels, label(key))
+			}
+		}
+		a.Store.SetMigrationStatus(m.ID, "importing",
+			fmt.Sprintf("Installing %s on this server first, then setting %s up.", strings.Join(labels, ", "), m.Name))
+	}
+
+	return err
 }
 
 // runMigrationIn builds what arrived.

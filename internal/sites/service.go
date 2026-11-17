@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 	"github.com/shusanto294/Ubuntu-Panel/internal/databases"
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
@@ -156,17 +157,12 @@ func (s *Service) ensurePHPRuntime(ctx context.Context, siteID int64) func(*task
 			return fmt.Sprintf("PHP %s is listening on %s.", site.PHPVersion, socket), nil
 		}
 
-		packages := []string{"fpm", "cli", "common", "mysql", "curl", "mbstring",
-			"xml", "zip", "gd", "bcmath", "intl"}
-
-		names := make([]string, 0, len(packages))
-		for _, suffix := range packages {
-			names = append(names, "php"+site.PHPVersion+"-"+suffix)
+		// The same recipe the Services page runs: it adds ppa:ondrej/php when
+		// the distro does not ship this version, which a bare apt-get install
+		// cannot do.
+		if err := catalog.InstallPHPVersion(runner, site.PHPVersion); err != nil {
+			runner.Write("\n!! " + err.Error() + "\n")
 		}
-
-		runner.Exec("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "+strings.Join(names, " "),
-			15*time.Minute)
-		runner.Exec("sudo systemctl enable --now php"+site.PHPVersion+"-fpm", 2*time.Minute)
 
 		if proc.Ok(test) {
 			return fmt.Sprintf("PHP %s installed and listening on %s.", site.PHPVersion, socket), nil

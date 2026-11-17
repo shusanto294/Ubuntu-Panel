@@ -29,6 +29,9 @@ const field = 'mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:bor
 
 const hello = computed(() => props.peer?.hello ?? null);
 const connected = computed(() => Boolean(props.peer?.address && hello.value));
+// A new server that installs what arrives takes a mail domain with or without
+// a mail server: it installs Mail first. One from before has to have it.
+const mailReady = computed(() => Boolean(hello.value?.mail_configured || hello.value?.installs_services));
 
 // ----------------------------------------------------------------- receive
 
@@ -174,7 +177,7 @@ const catchUp = (m) => router.post(route('migrate.catch-up', m.id), {}, { preser
                             <p class="mt-1 text-emerald-800">
                                 Ubuntu Panel {{ hello.version }} · its address is
                                 <span class="font-mono">{{ hello.public_ip }}</span>
-                                <template v-if="!hello.mail_configured"> · no mail server yet</template>
+                                <template v-if="!mailReady"> · no mail server yet</template>
                             </p>
                         </div>
                         <button type="button" class="mt-3 text-sm font-medium text-slate-600 hover:underline" @click="disconnect">
@@ -343,21 +346,21 @@ const catchUp = (m) => router.post(route('migrate.catch-up', m.id), {}, { preser
                     <div class="px-4 py-4 sm:px-6">
                         <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Mail domains</p>
                         <p v-if="!mailDomains.length" class="mt-2 text-sm text-slate-500">There are no mail domains on this server.</p>
-                        <p v-else-if="!hello.mail_configured" class="mt-2 text-sm text-amber-700">
+                        <p v-else-if="!mailReady" class="mt-2 text-sm text-amber-700">
                             The other server has no mail server. Install Mail on its Services page, then connect again.
                         </p>
                         <ul class="mt-2 space-y-1">
                             <li v-for="domain in mailDomains" :key="domain.id">
                                 <label
                                     class="flex items-start gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"
-                                    :class="{ 'opacity-50': !hello.mail_configured || onPeer(hello.mail_domains, domain.domain) || busyHere('mail', domain.domain) }"
+                                    :class="{ 'opacity-50': !mailReady || onPeer(hello.mail_domains, domain.domain) || busyHere('mail', domain.domain) }"
                                 >
                                     <input
                                         v-model="pickedMail"
                                         type="checkbox"
                                         :value="domain.id"
                                         class="mt-0.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                                        :disabled="!hello.mail_configured || onPeer(hello.mail_domains, domain.domain) || busyHere('mail', domain.domain)"
+                                        :disabled="!mailReady || onPeer(hello.mail_domains, domain.domain) || busyHere('mail', domain.domain)"
                                     />
                                     <span class="min-w-0">
                                         <span class="block truncate text-sm font-medium text-slate-900">{{ domain.domain }}</span>

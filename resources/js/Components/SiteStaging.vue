@@ -87,7 +87,8 @@ const remove = async (copy) => {
     if (!go) return;
 
     router.delete(route('sites.destroy', copy.id), {
-        data: { files: true },
+        // A staging copy's records name only the copy, so they go with it.
+        data: { delete_files: true, delete_dns: true },
         preserveScroll: true,
     });
 };

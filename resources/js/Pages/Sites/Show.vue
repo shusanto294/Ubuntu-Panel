@@ -39,6 +39,9 @@ const props = defineProps({
 });
 
 const deleteFiles = ref(true);
+// Off by default: a site deleted here has often moved, and its DNS records
+// are what the new server answers on.
+const deleteDNS = ref(false);
 const showSecrets = ref(false);
 
 // Which section is on screen. General first, because the thing somebody opens
@@ -984,8 +987,8 @@ const post = (name, extra = {}) =>
 
 const destroy = async () => {
     const parts = ['its nginx vhost'];
-    if (props.site.manage_dns)
-        parts.push(`${props.site.dns_provider ?? 'DNS'} records`);
+    if (deleteDNS.value && props.site.has_dns_records)
+        parts.push(`its ${props.site.dns_provider ?? 'DNS'} records`);
     if (props.database) parts.push('the site database');
     if (props.site.is_proxied) parts.push('the systemd service');
     if (props.backups.length)
@@ -995,13 +998,17 @@ const destroy = async () => {
         `Delete ${props.site.domain}?`,
         `This removes ${parts.join(', ')}${
             deleteFiles.value ? ' and all site files' : ''
-        }.`,
+        }.${
+            props.site.has_dns_records && !deleteDNS.value
+                ? ' Its DNS records are left as they are.'
+                : ''
+        }`,
     );
 
     if (!go) return;
 
     router.delete(route('sites.destroy', props.site.id), {
-        data: { delete_files: deleteFiles.value },
+        data: { delete_files: deleteFiles.value, delete_dns: deleteDNS.value },
     });
 };
 </script>
@@ -1503,8 +1510,8 @@ const destroy = async () => {
                 <h3 class="font-semibold text-slate-800">Danger zone</h3>
                 <p class="mt-2 text-sm text-slate-500">
                     Deleting removes the vhost, the systemd service, the site
-                    database created by the panel, its DNS records and every
-                    backup taken of it.
+                    database created by the panel and every backup taken of
+                    it. Its DNS records stay unless you tick the box below.
                 </p>
                 <label class="mt-4 flex items-center gap-2 text-sm">
                     <input
@@ -1513,6 +1520,20 @@ const destroy = async () => {
                         class="rounded border-slate-300 text-brand-500 focus:ring-brand-500"
                     />
                     Also delete files in {{ site.root_path }}
+                </label>
+                <label v-if="site.has_dns_records" class="mt-2 flex items-start gap-2 text-sm">
+                    <input
+                        type="checkbox"
+                        v-model="deleteDNS"
+                        class="mt-0.5 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                    />
+                    <span>
+                        Also delete its DNS records
+                        <span class="block text-xs text-slate-500">
+                            Leave this off if the site has moved to another server — those records are what it
+                            answers on now.
+                        </span>
+                    </span>
                 </label>
                 <button
                     @click="destroy"

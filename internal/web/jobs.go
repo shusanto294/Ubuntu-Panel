@@ -15,6 +15,7 @@ func (a *App) registerJobs() {
 	type sitePayload struct {
 		Site  int64 `json:"site"`
 		Files bool  `json:"files"`
+		DNS   bool  `json:"dns"`
 	}
 
 	type sitePHPPayload struct {
@@ -45,6 +46,7 @@ func (a *App) registerJobs() {
 
 	type domainPayload struct {
 		Domain int64 `json:"domain"`
+		DNS    bool  `json:"dns"`
 	}
 
 	type accountPayload struct {
@@ -85,7 +87,7 @@ func (a *App) registerJobs() {
 		// Unlocked for good: the files are about to be removed, or left behind
 		// for somebody to use without the panel.
 		err := a.withSiteUnlocked(ctx, payload.Site, false, func() error {
-			return a.Sites.Destroy(ctx, payload.Site, payload.Files)
+			return a.Sites.Destroy(ctx, payload.Site, payload.Files, payload.DNS)
 		})
 		return err
 	})
@@ -280,7 +282,7 @@ func (a *App) registerJobs() {
 			return err
 		}
 
-		return a.Mail.DeleteDomain(ctx, payload.Domain)
+		return a.Mail.DeleteDomain(ctx, payload.Domain, payload.DNS)
 	})
 
 	a.Queue.Handle(queue.MailAccountCreate, func(ctx context.Context, job *store.Job) error {

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
@@ -80,6 +81,11 @@ func New(cfg *config.Config, st *store.Store, assets fs.FS, log *slog.Logger) *A
 	security.SiteHomes = app.siteHomes
 	catalog.ConfigureMail = app.Mail.Configure
 	catalog.ConfigurePhpMyAdmin = app.EnsurePhpMyAdminReady
+
+	// Before anything reads the default: a panel from before the default was
+	// the newest PHP keeps the one already on its machine.
+	_, legacySocket := os.Stat("/run/php/php8.3-fpm.sock")
+	st.PinLegacyPHPDefault(st.ServiceInstalled("php") || legacySocket == nil)
 
 	app.registerJobs()
 	app.registerSecurityJobs()

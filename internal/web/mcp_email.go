@@ -313,6 +313,9 @@ func (a *App) mcpDeleteEmailDomain() *mcp.Tool {
 			"mail, its DKIM key and the records the panel published for it. This cannot be undone.",
 		Properties: map[string]mcp.Property{
 			"domain": {Description: "The domain's id, or the domain itself."},
+			"delete_dns": {Type: "boolean", Default: false,
+				Description: "Also remove its MX, SPF, DKIM and DMARC records. Leave off when the domain " +
+					"has moved to another server: the records are that server's now."},
 			"confirm": {Type: "boolean", Default: false,
 				Description: "The person has been told what this removes and has said yes."},
 		},
@@ -329,7 +332,10 @@ func (a *App) mcpDeleteEmailDomain() *mcp.Tool {
 			}
 
 			a.Store.MarkEmailDomainDeleted(domain.ID)
-			a.Queue.PushID(queue.MailDomainDelete, "domain", domain.ID)
+			a.Queue.Push(queue.MailDomainDelete, map[string]any{
+				"domain": domain.ID,
+				"dns":    args.Bool("delete_dns", false),
+			})
 
 			return map[string]any{
 				"domain_id": domain.ID,

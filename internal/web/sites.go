@@ -316,6 +316,9 @@ func (a *App) sitesDestroy(w http.ResponseWriter, r *http.Request) {
 	a.Queue.Push(queue.SiteDelete, map[string]any{
 		"site":  site.ID,
 		"files": boolInput(input, "delete_files", true),
+		// Off unless asked: a deleted site has often moved, and its records
+		// are the new server's now.
+		"dns": boolInput(input, "delete_dns", false),
 	})
 
 	if sess := session.FromContext(r.Context()); sess != nil {

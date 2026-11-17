@@ -64,20 +64,43 @@ func (a *App) awaitSiteServices(ctx context.Context, job *store.Job, siteID int6
 		return nil
 	}
 
-	needed := siteServices(site.Type, site.SSL)
+	failed, err := a.awaitServices(ctx, job, siteServices(site.Type, site.SSL), site.UserID, site.Domain)
+
+	if len(failed) > 0 {
+		reason := fmt.Sprintf("%s could not be installed, so the site was not deployed. "+
+			"The Services page has the install's console and a Retry; deploy the site again after.",
+			strings.Join(failed, " and "))
+		a.Store.SetSiteStatus(site.ID, "failed", reason)
+
+		return fmt.Errorf("%s", reason)
+	}
+
+	return err
+}
+
+// awaitServices gets the services in needed, and what they depend on, onto
+// this machine for a job that cannot start without them: a site's deployment,
+// or a site or mail domain arriving from another server.
+//
+// It returns nil once they are all installed and a RetryLater while any is
+// still queued or installing, having queued the ones that are missing. failed
+// names the ones whose install has already been tried for this job and did
+// not work; the caller says what that means for its own work.
+func (a *App) awaitServices(ctx context.Context, job *store.Job, needed []string, userID int64, forWhat string) (failed []string, err error) {
+	needed = catalog.WithDependencies(needed)
 
 	// Asked of the machine rather than the rows the first time: a service
 	// put there by hand, or a stale `failed`, is not a reason to install.
 	if job.Attempts <= 1 {
-		a.Catalog.Detect(catalog.WithDependencies(needed))
+		a.Catalog.Detect(needed)
 	}
 
 	rows, _ := a.Store.Services(ctx)
 
-	missing, failed := []string{}, []string{}
+	missing := []string{}
 	pending := false
 
-	for _, key := range catalog.WithDependencies(needed) {
+	for _, key := range needed {
 		row := rows[key]
 		status := store.ServiceNotInstalled
 		if row != nil {
@@ -89,8 +112,8 @@ func (a *App) awaitSiteServices(ctx context.Context, job *store.Job, siteID int6
 		case store.ServiceQueued, store.ServiceInstalling:
 			pending = true
 		case store.ServiceFailed:
-			// Failed before this deployment asked for it: worth one more go.
-			// Failed after: the deployment stops here.
+			// Failed before this job asked for it: worth one more go.
+			// Failed after: the job stops here.
 			if job.Attempts <= 1 {
 				missing = append(missing, key)
 			} else {
@@ -102,32 +125,27 @@ func (a *App) awaitSiteServices(ctx context.Context, job *store.Job, siteID int6
 	}
 
 	if len(failed) > 0 {
-		reason := fmt.Sprintf("%s could not be installed, so the site was not deployed. "+
-			"The Services page has the install's console and a Retry; deploy the site again after.",
-			strings.Join(failed, " and "))
-		a.Store.SetSiteStatus(site.ID, "failed", reason)
-
-		return fmt.Errorf("%s", reason)
+		return failed, nil
 	}
 
 	if len(missing) > 0 {
 		if a.Catalog.Queue(missing, false) > 0 {
-			if _, err := a.Queue.PushID(queue.ServicesInstall, "user", site.UserID); err != nil {
-				return err
+			if _, err := a.Queue.PushID(queue.ServicesInstall, "user", userID); err != nil {
+				return nil, err
 			}
 		}
 
-		a.Log.Info("installing what a site needs before deploying it", "site", site.Domain,
+		a.Log.Info("installing what a job needs before it runs", "for", forWhat,
 			"services", strings.Join(missing, ","))
 
-		return &queue.RetryLater{After: serviceWait, Reason: fmt.Errorf("installing %s", strings.Join(missing, ", "))}
+		return nil, &queue.RetryLater{After: serviceWait, Reason: fmt.Errorf("installing %s", strings.Join(missing, ", "))}
 	}
 
 	if pending {
-		return &queue.RetryLater{After: serviceWait, Reason: fmt.Errorf("waiting for services to install")}
+		return nil, &queue.RetryLater{After: serviceWait, Reason: fmt.Errorf("waiting for services to install")}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // label is a service's name as the Services page shows it.

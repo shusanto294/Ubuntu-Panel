@@ -57,16 +57,27 @@ const deleteAccount = async (account) => {
     });
 };
 
+// Off by default: a domain removed here has often moved, and its MX, SPF and
+// DKIM are what the new server's mail arrives by.
+const deleteDNS = ref(false);
+
 const deleteDomain = async () => {
     const go = await confirmDanger(
         `Remove ${props.domain.domain}?`,
-        'Every mailbox on it and all stored mail are deleted.',
+        'Every mailbox on it and all stored mail are deleted.' +
+            (props.domain.has_dns_records
+                ? deleteDNS.value
+                    ? ' Its mail DNS records are removed too.'
+                    : ' Its DNS records are left as they are.'
+                : ''),
         'Remove',
     );
 
     if (!go) return;
 
-    router.delete(route('email.domains.destroy', props.domain.id));
+    router.delete(route('email.domains.destroy', props.domain.id), {
+        data: { delete_dns: deleteDNS.value },
+    });
 };
 </script>
 
@@ -360,9 +371,22 @@ const deleteDomain = async () => {
                 <h3 class="font-semibold text-slate-900">Remove this domain</h3>
                 <p class="text-sm text-slate-500">
                     Every mailbox on it and all stored mail are deleted, along
-                    with its DKIM key, its webmail and autoconfig vhosts, and
-                    its published DNS records.
+                    with its DKIM key and its webmail and autoconfig vhosts.
+                    Its DNS records stay unless you tick the box.
                 </p>
+                <label v-if="domain.has_dns_records" class="mt-3 flex items-start gap-2 text-sm">
+                    <input
+                        type="checkbox"
+                        v-model="deleteDNS"
+                        class="mt-0.5 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                    />
+                    <span>
+                        Also delete its MX, SPF, DKIM and DMARC records
+                        <span class="block text-xs text-slate-500">
+                            Leave this off if the domain's mail has moved to another server.
+                        </span>
+                    </span>
+                </label>
             </div>
             <button
                 @click="deleteDomain"

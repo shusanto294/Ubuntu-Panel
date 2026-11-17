@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
@@ -177,4 +178,35 @@ func PHPVersionSteps(list *tasks.List, version, group string) {
 
 	phpOptional(list, version, group)
 	phpTune(list, version, group)
+}
+
+// InstallPHPVersion runs PHPVersionSteps inside a step that is already part of
+// another task — a site deploy that found its PHP missing.
+//
+// It used to be a bare `apt-get install php<version>-*` there, which only
+// works for a version the distro ships: a site migrated off a machine on PHP
+// 8.5 onto a stock Ubuntu 24.04 (8.3 only) asked apt for packages no
+// configured repository had, and the deploy failed with a 502 waiting. The
+// recipe chooses the source first, so it gets the version the same way the
+// Services page and a site's PHP tab do.
+func InstallPHPVersion(runner *tasks.Runner, version string) error {
+	list := &tasks.List{}
+	PHPVersionSteps(list, version, "")
+
+	for _, step := range list.Steps() {
+		runner.Write("\n-- " + step.Name + "\n")
+
+		for _, command := range step.Commands {
+			if err := runner.Must(command, 15*time.Minute); err != nil {
+				if step.Optional {
+					runner.Write("(optional; continuing)\n")
+					break
+				}
+
+				return err
+			}
+		}
+	}
+
+	return nil
 }

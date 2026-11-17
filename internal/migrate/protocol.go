@@ -48,6 +48,12 @@ type Hello struct {
 	SitesRoot      string          `json:"sites_root"`
 	Sites          []string        `json:"sites"`
 	MailDomains    []string        `json:"mail_domains"`
+
+	// InstallsServices is a receiver that installs what an arriving site or
+	// mail domain needs before it builds it, so a missing nginx, PHP or
+	// database engine is not a reason to refuse the move. A receiver from
+	// before this is false, and the sender asks for them up front as it did.
+	InstallsServices bool `json:"installs_services"`
 }
 
 // Database is a site's database, password included: the site's own

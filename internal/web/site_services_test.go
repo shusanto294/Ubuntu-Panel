@@ -67,3 +67,61 @@ func TestASiteDeploymentInstallsOnlyWhatItsTypeNeeds(t *testing.T) {
 		t.Fatalf("the site does not say why: %q %q", site.Status, site.LastError)
 	}
 }
+
+// A site moved onto a server with nothing on it does not fail for want of
+// PHP: the import installs what the site needs, waits, and only then builds it.
+func TestAnArrivingSiteInstallsWhatItNeedsBeforeItIsBuilt(t *testing.T) {
+	ctx := context.Background()
+	app := bootstrapApp(t, "none")
+	app.Catalog.SyncRows()
+
+	siteID, err := app.Store.CreateSite(ctx, &store.Site{
+		Domain: "moved.example", Type: "wordpress", RootPath: "/tmp/moved.example", PHPVersion: "8.5", SSL: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	migrationID, err := app.Store.CreateMigration(ctx, &store.Migration{
+		Direction: "in", Kind: "site", Name: "moved.example", RemoteID: "t1", Status: "importing", LocalID: siteID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job := &store.Job{Attempts: 2}
+
+	var retry *queue.RetryLater
+	if err := app.awaitMigrationServices(ctx, job, migrationID); !errors.As(err, &retry) {
+		t.Fatalf("the import did not wait for its services: %v", err)
+	}
+
+	queued := app.Store.QueuedServices(ctx)
+	for _, key := range []string{"nginx", "php", "mysql", "wpcli"} {
+		if !slices.Contains(queued, key) {
+			t.Errorf("%s was not queued for an arriving WordPress site; queued %v", key, queued)
+		}
+	}
+
+	if m, _ := app.Store.FindMigration(ctx, migrationID); m.Status != "importing" || m.Message == "" {
+		t.Errorf("the move does not say it is installing: %q %q", m.Status, m.Message)
+	}
+
+	for _, key := range catalog.WithDependencies(siteServices("wordpress", true)) {
+		app.Store.SetServiceStatus(key, store.ServiceInstalled, "", "")
+	}
+
+	if err := app.awaitMigrationServices(ctx, job, migrationID); err != nil {
+		t.Fatalf("the import still waits with everything installed: %v", err)
+	}
+
+	app.Store.SetServiceStatus("php", store.ServiceFailed, "", "apt said no")
+
+	if err := app.awaitMigrationServices(ctx, job, migrationID); err == nil || errors.As(err, &retry) {
+		t.Fatalf("a failed install did not stop the import: %v", err)
+	}
+
+	if m, _ := app.Store.FindMigration(ctx, migrationID); m.Status != "failed" || m.Message == "" {
+		t.Fatalf("the move does not say why: %q %q", m.Status, m.Message)
+	}
+}

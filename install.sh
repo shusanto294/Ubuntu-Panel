@@ -64,7 +64,7 @@ PANEL_PUBLIC_PORT="${PANEL_PUBLIC_PORT:-8443}"
 # The panel's own default, because PHP is not on the machine yet when this
 # runs — and the panel rewrites the vhost with the real version the moment
 # phpMyAdmin is installed from Services.
-PANEL_PHP_VERSION="${PANEL_PHP_VERSION:-8.3}"
+PANEL_PHP_VERSION="${PANEL_PHP_VERSION:-8.5}"
 PANEL_SWAP="${PANEL_SWAP:-1}"
 PANEL_SKIP_APT="${PANEL_SKIP_APT:-0}"
 

@@ -390,6 +390,7 @@ func (s *Store) EmailDomainSummary(ctx context.Context, domain *EmailDomain, wit
 		"domain":          domain.Domain,
 		"status":          domain.Status,
 		"manage_dns":      domain.ManageDNS,
+		"has_dns_records": domain.DNSAccountID > 0,
 		"dkim_selector":   domain.DKIMSelector,
 		"dkim_public_key": domain.DKIMPublicKey,
 		"last_error":      domain.LastError,

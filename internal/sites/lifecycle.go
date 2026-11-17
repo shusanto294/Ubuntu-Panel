@@ -253,9 +253,9 @@ func (s *Service) Deploy(ctx context.Context, siteID int64) error {
 	return errors.New(message)
 }
 
-// Destroy removes the vhost, the service, the files, the database and the DNS
-// records, then the row.
-func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) error {
+// Destroy removes the vhost, the service, the files and the database, then
+// the row — and the DNS records only when deleteDNS asks for them.
+func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles, deleteDNS bool) error {
 	site, err := s.Store.FindSite(ctx, siteID)
 	if err != nil {
 		return err
@@ -302,10 +302,13 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles bool) e
 		}).Optional()
 	}
 
-	// Records the panel published are the panel's to take away. A provider
-	// that has already lost them is not a reason to keep the site row, so this
-	// step is optional.
-	if site.ManageDNS && site.DNSAccountID > 0 {
+	// The DNS records go only when the person deleting asked for it. A site
+	// deleted here has often moved: its records point at the new server — the
+	// very same record ids, when both panels use one DNS account — and taking
+	// them down would take the new copy offline with the old one. A provider
+	// that has already lost them is not a reason to keep the site row, so
+	// this step is optional.
+	if deleteDNS && site.DNSAccountID > 0 {
 		list.AddFn("Remove the DNS records", func(runner *tasks.Runner) (string, error) {
 			return dns.RemoveForSite(ctx, s.Store, site)
 		}).Optional()

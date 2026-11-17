@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 )
 
@@ -94,8 +95,27 @@ func (s *Store) RememberSecret(key string, length int) (string, error) {
 }
 
 // PHPVersion and NodeVersion are the defaults new sites are created with.
-func (s *Store) PHPVersion() string  { return s.Setting("php_version", "8.3") }
-func (s *Store) NodeVersion() string { return s.Setting("node_version", "22") }
+func (s *Store) PHPVersion() string  { return s.Setting("php_version", config.PHPVersions[0]) }
+func (s *Store) NodeVersion() string { return s.Setting("node_version", config.NodeVersions[0]) }
+
+// legacyPHPDefault is what PHPVersion fell back to before it was the newest
+// version the panel knows.
+const legacyPHPDefault = "8.3"
+
+// PinLegacyPHPDefault keeps a panel that never chose a PHP on the one it has.
+//
+// A new panel defaults to the newest PHP. One installed when the fallback was
+// 8.3, and never saved a choice, has 8.3 on the machine and its sites on it:
+// moving its default under it would have the Services page installing,
+// tuning and reporting a version nothing uses. So when PHP is already here
+// and nothing was chosen, the old fallback is written down as the choice.
+func (s *Store) PinLegacyPHPDefault(phpPresent bool) {
+	if s.Setting("php_version", "") != "" || !phpPresent {
+		return
+	}
+
+	s.SetSetting("php_version", legacyPHPDefault)
+}
 
 // ErrNotFound is what every model lookup returns for a row that is not there,
 // so handlers can answer 404 without knowing which table was asked.
