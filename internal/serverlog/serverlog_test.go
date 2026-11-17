@@ -204,3 +204,22 @@ func TestIncludeFilesRequestedDirectlyAreNotCritical(t *testing.T) {
 		t.Errorf("a real fatal error is %s", got)
 	}
 }
+
+// nginx removing a page-cache file the panel had already emptied is expected,
+// not a crisis; any other trouble in the cache directory still is.
+func TestAPurgedCacheFileIsNotCritical(t *testing.T) {
+	purged := `[crit] 48458#48458: unlink() "/var/cache/ubuntu-panel/tulibuilder.com/6/4e/67fa490629f0c2f9a4bcd9069d2d54e6" failed (2: No such file or directory)`
+	if got := level(purged); got != LevelInfo {
+		t.Errorf("a cache file already purged is %s", got)
+	}
+
+	denied := `[crit] 48458#48458: unlink() "/var/cache/ubuntu-panel/tulibuilder.com/6/4e/67fa" failed (13: Permission denied)`
+	if got := level(denied); got != LevelCritical {
+		t.Errorf("a cache file nginx may not remove is %s", got)
+	}
+
+	elsewhere := `[crit] 48458#48458: unlink() "/var/lib/nginx/fastcgi/1/00/0000000001" failed (2: No such file or directory)`
+	if got := level(elsewhere); got != LevelCritical {
+		t.Errorf("a missing file outside the panel's cache is %s", got)
+	}
+}

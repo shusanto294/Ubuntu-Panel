@@ -319,8 +319,20 @@ var outOfContext = regexp.MustCompile(`PHP Fatal error:\s+Uncaught Error: (?:Und
 	`get_option|is_admin|wp_die|plugin_dir_path|plugin_dir_url|plugins_url|register_activation_hook|` +
 	`get_template_part|get_header|get_footer|wp_enqueue_script|wp_enqueue_style)\(\))`)
 
+// cacheAlreadyPurged is nginx finding a page-cache file already gone when it
+// comes to remove it. The panel empties a site's page cache by deleting the
+// files — WordPress does it on every publish, and so does Empty the cache —
+// while nginx's in-memory index still lists them, so its cache manager later
+// tries to unlink each one and says [crit] when there is nothing to unlink.
+// The page was removed, as wanted, and is rebuilt on the next visit. Only
+// "no such file" under the panel's own cache directory: any other failure
+// there, a full disk or a permission, is still critical.
+var cacheAlreadyPurged = regexp.MustCompile(`\[crit\] \d+#\d+: (?:\*\d+ )?unlink\(\) "/var/cache/ubuntu-panel/[^"]+" failed \(2: No such file or directory\)`)
+
 func level(message string) string {
 	switch {
+	case cacheAlreadyPurged.MatchString(message):
+		return LevelInfo
 	case reloadChatter.MatchString(message):
 		return LevelWarning
 	case outOfContext.MatchString(message):
