@@ -24,7 +24,7 @@ onMounted(() => {
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Link :href="route('logs.index')" class="text-sm font-medium text-slate-500 hover:text-slate-900">← Logs</Link>
+                <Link :href="route('analytics.index')" class="text-sm font-medium text-slate-500 hover:text-slate-900">← Analytics</Link>
                 <h2 class="min-w-0 break-all font-mono text-lg font-semibold text-slate-900">{{ ip }}</h2>
             </div>
         </template>

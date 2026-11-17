@@ -17,6 +17,7 @@ const props = defineProps({
     trustedIps: { type: Object, default: () => ({}) },
     processes: { type: Object, default: null },
     fpm: { type: Array, default: () => [] },
+    site: { type: String, default: '' },
 });
 
 // What each page shows of the traffic view, and how it narrows it.
@@ -54,7 +55,11 @@ onMounted(() => {
     });
 });
 
-const back = computed(() => `${route('logs.index')}?range=${props.window}`);
+const back = computed(() => {
+    const query = new URLSearchParams({ window: props.window });
+    if (props.site) query.set('site', props.site);
+    return `${route('analytics.index')}?${query}`;
+});
 
 const errorsLink = computed(
     () => `${route('logs.index')}?range=${props.window}&source=requests&level=error`,
@@ -67,8 +72,9 @@ const errorsLink = computed(
     <AuthenticatedLayout>
         <template #header>
             <div class="flex flex-wrap items-center gap-3">
-                <Link :href="back" class="text-sm font-medium text-slate-500 hover:text-slate-900">← Logs</Link>
+                <Link :href="back" class="text-sm font-medium text-slate-500 hover:text-slate-900">← Analytics</Link>
                 <h2 class="text-lg font-semibold text-slate-900">{{ title }}</h2>
+                <span v-if="site" class="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{{ site }}</span>
             </div>
         </template>
 

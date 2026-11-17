@@ -413,6 +413,7 @@ func dnsAccountSummary(account *store.DNSAccount) map[string]any {
 		"provider_label": dns.ProviderLabel(account.Provider),
 		"label":          account.Label,
 		"supports_proxy": dns.SupportsProxy(account.Provider),
+		"security_rules": dns.SupportsEdgeRules(account.Provider),
 		"verified_at":    verified,
 		"sites_count":    account.SitesCount,
 	}

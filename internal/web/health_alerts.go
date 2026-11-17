@@ -94,7 +94,7 @@ func (a *App) healthAlerts(ctx context.Context) []alert {
 	health.Unlock()
 
 	if hot >= cpuAlertMinutes && a.healthAlert(alertCPUSetting) && a.cooled("cpu", time.Hour) {
-		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/logs", a.cpuAlert(ctx, hot)))
+		alerts = append(alerts, newAlert("cpu_high", levelCritical, "/analytics", a.cpuAlert(ctx, hot)))
 	}
 
 	metrics := system.Read()

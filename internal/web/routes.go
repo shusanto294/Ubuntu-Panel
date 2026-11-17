@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
@@ -89,8 +90,18 @@ func (a *App) routes() *router {
 	// the pages that start the work show a line of progress and link here
 	// rather than carrying a console each.
 	rt.get("/logs", "logs.index", authenticated, a.logsIndex)
-	rt.get("/logs/stats/{section}", "logs.stats", authenticated, a.logsStatsPage)
-	rt.get("/logs/ip/{ip}", "logs.ip", authenticated, a.logsIP)
+
+	// Analytics: the access logs added up — the sites' traffic, its detail
+	// pages and one address's. They lived under /logs, and still answer there.
+	rt.get("/analytics", "analytics.index", authenticated, a.analyticsIndex)
+	rt.get("/analytics/ip/{ip}", "analytics.ip", authenticated, a.logsIP)
+	rt.get("/analytics/{section}", "analytics.stats", authenticated, a.logsStatsPage)
+	rt.get("/logs/stats/{section}", "", authenticated, a.analyticsMoved(func(r *http.Request) string {
+		return "/analytics/" + url.PathEscape(r.PathValue("section"))
+	}))
+	rt.get("/logs/ip/{ip}", "", authenticated, a.analyticsMoved(func(r *http.Request) string {
+		return "/analytics/ip/" + url.PathEscape(r.PathValue("ip"))
+	}))
 	rt.get("/logs/{task}", "logs.show", authenticated, a.logsShow)
 
 	rt.get("/tasks/latest", "tasks.latest", authenticated, a.tasksLatest)
@@ -218,6 +229,21 @@ func (a *App) routes() *router {
 	rt.post("/dns-accounts/{account}/records", "dns.records.store", authenticated, a.dnsStoreRecord)
 	rt.delete("/dns-accounts/{account}/records", "dns.records.destroy", authenticated,
 		a.dnsDestroyRecord)
+
+	// The security rules a DNS host enforces in front of the server —
+	// Cloudflare's WAF custom rules, rate limits, IP access rules and
+	// security level — managed from Security → Cloudflare.
+	rt.get("/dns-accounts/{account}/edge", "edge.index", authenticated, a.edgeIndex)
+	rt.post("/dns-accounts/{account}/edge/rules", "edge.rules.store", authenticated, a.edgeRuleStore)
+	rt.patch("/dns-accounts/{account}/edge/rules/{rule}", "edge.rules.update", authenticated, a.edgeRuleUpdate)
+	rt.post("/dns-accounts/{account}/edge/rules/{rule}/move", "edge.rules.move", authenticated, a.edgeRuleMove)
+	rt.delete("/dns-accounts/{account}/edge/rules/{rule}", "edge.rules.destroy", authenticated, a.edgeRuleDestroy)
+	rt.post("/dns-accounts/{account}/edge/access", "edge.access.store", authenticated, a.edgeAccessStore)
+	rt.patch("/dns-accounts/{account}/edge/access/{rule}", "edge.access.update", authenticated, a.edgeAccessUpdate)
+	rt.delete("/dns-accounts/{account}/edge/access/{rule}", "edge.access.destroy", authenticated, a.edgeAccessDestroy)
+	rt.post("/dns-accounts/{account}/edge/level", "edge.level", authenticated, a.edgeLevel)
+	rt.post("/edge/bulk/rules", "edge.bulk.rules", authenticated, a.edgeBulkRuleStore)
+	rt.post("/edge/bulk/access", "edge.bulk.access", authenticated, a.edgeBulkAccessStore)
 
 	rt.get("/dns/nameserver", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
 		inertia.Redirect(w, r, "/dns")

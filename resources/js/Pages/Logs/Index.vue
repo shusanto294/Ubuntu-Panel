@@ -1,24 +1,18 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Events from '@/Components/Logs/Events.vue';
-import SiteTraffic from '@/Components/Logs/SiteTraffic.vue';
-import StatTiles from '@/Components/Logs/StatTiles.vue';
 import { confirmDanger } from '@/dialog';
-import { Head, router, useForm } from '@inertiajs/vue3';
+import { Head, Link, router, useForm } from '@inertiajs/vue3';
 
 /*
- * The Logs page: what the server is doing. The traffic's totals, the sites it
- * went to and the pages most visited, then everything the server's programs
- * logged.
+ * The Logs page: everything the server's programs logged. What the sites'
+ * traffic adds up to is the Analytics page's.
  */
 const props = defineProps({
     retention: { type: Number, default: 90 },
     retentionOptions: { type: Array, default: () => [7, 30, 90, 180, 365] },
     clearSources: { type: Array, default: () => [] },
-
-    // The boxes over the server's list: asked for once the page is up.
-    stats: { type: Object, default: null },
 
     // Everything that happened.
     events: { type: Array, default: () => [] },
@@ -58,14 +52,6 @@ const clearLogs = async () => {
         });
 };
 
-// The boxes read the access logs, which is the slow part: the page shows the
-// list first and asks for them after.
-onMounted(() => {
-    if (!props.stats) {
-        router.reload({ only: ['stats'], preserveScroll: true, preserveState: true });
-    }
-});
-
 const setRetention = (days) => router.post(route('logs.retention'), { days }, { preserveScroll: true });
 </script>
 
@@ -76,13 +62,21 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
         <template #header>
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-xl font-semibold text-slate-800">Server logs</h2>
-                <button
-                    type="button"
-                    class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
-                    @click="showClear = !showClear"
-                >
-                    {{ showClear ? 'Close' : 'Clear logs' }}
-                </button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Link
+                        :href="route('analytics.index')"
+                        class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                    >
+                        Traffic analytics →
+                    </Link>
+                    <button
+                        type="button"
+                        class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                        @click="showClear = !showClear"
+                    >
+                        {{ showClear ? 'Close' : 'Clear logs' }}
+                    </button>
+                </div>
             </div>
         </template>
 
@@ -120,8 +114,7 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
                         <span class="font-medium text-slate-700">Also empty the log files on disk</span>
                         <span class="block text-xs text-slate-500">
                             nginx's, PHP-FPM's, the databases', fail2ban's, the system's and each site's — whichever
-                            the choice above covers. The traffic boxes and their pages read the access logs, so they start
-                            from zero too.
+                            the choice above covers. Analytics reads the access logs, so it starts from zero too.
                         </span>
                     </span>
                 </label>
@@ -160,10 +153,6 @@ const setRetention = (days) => router.post(route('logs.retention'), { days }, { 
         </div>
 
         <div class="space-y-6">
-            <StatTiles :stats="stats" :window="filters.range ?? '1h'" />
-
-            <SiteTraffic :stats="stats" />
-
             <section>
                 <Events
                     view="server"

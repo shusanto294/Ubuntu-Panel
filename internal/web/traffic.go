@@ -93,9 +93,17 @@ var trafficCache struct {
 // seconds: the page refreshes while it is open, and a 24-hour read of a busy
 // machine is a few seconds of work nobody needs done twice in a row.
 func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
+	return a.siteTraffic(ctx, window, "")
+}
+
+// siteTraffic is the same read narrowed to one site's log: "" is every site
+// and the server's own, and a domain the panel has no site for reads nothing.
+func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string) trafficReport {
+	cacheKey := window.key + "|" + only
+
 	trafficCache.Lock()
-	if at, ok := trafficCache.at[window.key]; ok && time.Since(at) < window.keep {
-		report := trafficCache.reports[window.key]
+	if at, ok := trafficCache.at[cacheKey]; ok && time.Since(at) < window.keep {
+		report := trafficCache.reports[cacheKey]
 		trafficCache.Unlock()
 		return report
 	}
@@ -107,11 +115,18 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 	analyzer := weblog.New(now.Add(-window.span), now, window.buckets)
 	analyzer.Trusted = a.trustedSet(ctx)
 
-	sources := map[string]string{unmatchedSite: "/var/log/nginx/access.log"}
+	sources := map[string]string{}
 	domains := []string{}
+
+	if only == "" || only == unmatchedSite {
+		sources[unmatchedSite] = "/var/log/nginx/access.log"
+	}
 
 	if sites, err := a.Store.Sites(ctx); err == nil {
 		for _, site := range sites {
+			if only != "" && site.Domain != only {
+				continue
+			}
 			sources[site.Domain] = "/var/log/nginx/" + site.Domain + "-access.log"
 			domains = append(domains, site.Domain)
 		}
@@ -203,8 +218,8 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 		trafficCache.at = map[string]time.Time{}
 		trafficCache.reports = map[string]trafficReport{}
 	}
-	trafficCache.at[window.key] = time.Now()
-	trafficCache.reports[window.key] = report
+	trafficCache.at[cacheKey] = time.Now()
+	trafficCache.reports[cacheKey] = report
 	trafficCache.Unlock()
 
 	return report
@@ -371,12 +386,10 @@ const serverLogPerPage = 20
 
 // ------------------------------------------------------------ stats pages
 
-// trafficStats are the Logs page's boxes: the period's totals, each a link
-// to its own page.
-func (a *App) trafficStats(ctx context.Context, windowKey, viewer string) map[string]any {
-	window := findTrafficWindow(windowKey)
-
-	report, _ := a.markTrusted(ctx, a.traffic(context.WithoutCancel(ctx), window), viewer)
+// trafficStats are the Analytics page's boxes and lists: the period's
+// totals, each a link to its own page, and the sites and pages with a link to
+// each.
+func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string]any {
 
 	suspicious := 0
 	for _, threat := range report.Threats {
@@ -437,7 +450,7 @@ func (a *App) trafficStats(ctx context.Context, windowKey, viewer string) map[st
 	}
 
 	return map[string]any{
-		"window":        window.key,
+		"window":        report.Window,
 		"sites":         sites,
 		"pages":         pages,
 		"requests":      report.Requests,
@@ -476,6 +489,7 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	window := findTrafficWindow(r.URL.Query().Get("window"))
+	site := a.analyticsSite(r.Context(), r.URL.Query().Get("site"))
 
 	windows := make([]string, 0, len(trafficWindows))
 	for _, w := range trafficWindows {
@@ -487,13 +501,14 @@ func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 		"title":   title,
 		"window":  window.key,
 		"windows": windows,
+		"site":    site,
 	}
 
 	viewer := session.ClientIP(r)
 	ctx := context.WithoutCancel(r.Context())
 
 	if inertia.Asked(r, "Logs/Stats", "traffic") {
-		report, reasons := a.markTrusted(ctx, a.traffic(ctx, window), viewer)
+		report, reasons := a.markTrusted(ctx, a.siteTraffic(ctx, window, site), viewer)
 		props["traffic"] = report
 		props["trustedIps"] = reasons
 	}

@@ -43,12 +43,19 @@ func New(st *store.Store, account *store.DNSAccount) *Client {
 // instead of in a header — which is why body is passed through rather than
 // built here.
 func (c *Client) request(method, url string, body any) (map[string]any, error) {
+	parsed, _, err := c.requestStatus(method, url, body)
+	return parsed, err
+}
+
+// requestStatus is request, with the HTTP status the provider answered — for
+// the callers that read a 404 as "there is none yet" rather than a failure.
+func (c *Client) requestStatus(method, url string, body any) (map[string]any, int, error) {
 	var payload io.Reader
 
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		payload = bytes.NewReader(encoded)
@@ -56,7 +63,7 @@ func (c *Client) request(method, url string, body any) (map[string]any, error) {
 
 	request, err := http.NewRequest(method, url, payload)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	request.Header.Set("Accept", "application/json")
@@ -77,13 +84,13 @@ func (c *Client) request(method, url string, body any) (map[string]any, error) {
 
 	response, err := c.http.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", c.label(), err)
+		return nil, 0, fmt.Errorf("%s: %v", c.label(), err)
 	}
 	defer response.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", c.label(), err)
+		return nil, response.StatusCode, fmt.Errorf("%s: %v", c.label(), err)
 	}
 
 	var parsed map[string]any
@@ -94,24 +101,24 @@ func (c *Client) request(method, url string, body any) (map[string]any, error) {
 	json.Unmarshal(raw, &parsed)
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s: %s", c.label(), errorMessage(parsed, raw, response.StatusCode))
+		return nil, response.StatusCode, fmt.Errorf("%s: %s", c.label(), errorMessage(parsed, raw, response.StatusCode))
 	}
 
 	// Cloudflare and Porkbun both report failure inside a 200 envelope, so the
 	// status code alone is not enough to know the call worked.
 	if c.Account.Provider == "cloudflare" && parsed != nil {
 		if success, ok := parsed["success"].(bool); ok && !success {
-			return nil, fmt.Errorf("Cloudflare: %s", errorMessage(parsed, raw, 200))
+			return nil, response.StatusCode, fmt.Errorf("Cloudflare: %s", errorMessage(parsed, raw, 200))
 		}
 	}
 
 	if c.Account.Provider == "porkbun" && parsed != nil {
 		if status, ok := parsed["status"].(string); ok && !strings.EqualFold(status, "SUCCESS") {
-			return nil, fmt.Errorf("Porkbun: %s", errorMessage(parsed, raw, 200))
+			return nil, response.StatusCode, fmt.Errorf("Porkbun: %s", errorMessage(parsed, raw, 200))
 		}
 	}
 
-	return parsed, nil
+	return parsed, response.StatusCode, nil
 }
 
 func (c *Client) label() string { return ProviderLabel(c.Account.Provider) }

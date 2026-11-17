@@ -90,6 +90,13 @@ const remove = async (account) => {
                     </div>
 
                     <div class="flex shrink-0 gap-2">
+                        <Link
+                            v-if="account.security_rules"
+                            :href="`${route('security.index')}?tab=cloudflare&account=${account.id}`"
+                            class="inline-flex items-center rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/10 transition hover:bg-slate-50"
+                        >
+                            Security rules
+                        </Link>
                         <SecondaryButton
                             type="button"
                             :disabled="verifying === account.id"

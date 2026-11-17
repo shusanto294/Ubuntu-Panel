@@ -20,7 +20,7 @@ import (
 )
 
 // An address's report: everything the server has on one address, for the
-// page a notification about it opens and for /logs/ip/{ip}. What it asked
+// page a notification about it opens and for /analytics/ip/{ip}. What it asked
 // the sites for, from the access logs; what the server logged about it; its
 // panel sign-ins and SSH attempts; whether
 // it is trusted, or a useful bot — and if it says it is a search engine,

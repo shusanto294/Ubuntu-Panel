@@ -12,6 +12,7 @@ package weblog
 
 import (
 	"net"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -31,6 +32,7 @@ type Entry struct {
 	Path      string // without the query string
 	Status    int
 	Bytes     int64
+	Referrer  string
 	UserAgent string
 }
 
@@ -97,7 +99,10 @@ func Parse(line string) (Entry, bool) {
 	// the byte count is still a request.
 	rest = strings.TrimLeft(rest, " ")
 	if i := strings.IndexByte(rest, '"'); i >= 0 {
-		if _, after, ok := quoted(rest[i:]); ok {
+		if referrer, after, ok := quoted(rest[i:]); ok {
+			if referrer != "-" {
+				entry.Referrer = referrer
+			}
 			after = strings.TrimLeft(after, " ")
 			if agent, _, ok := quoted(after); ok {
 				entry.UserAgent = agent
@@ -388,6 +393,12 @@ type Analyzer struct {
 	timeline []Bucket
 	statuses map[string]int
 
+	// codes are the exact status codes, methods the request methods, and
+	// referrers the other sites visitors came from, by hostname.
+	codes     map[string]int
+	methods   map[string]int
+	referrers map[string]int
+
 	total, dynamic, static, bytes int
 	scanned, skipped              int
 }
@@ -444,14 +455,17 @@ func New(from, to time.Time, buckets int) *Analyzer {
 
 	a := &Analyzer{
 		From: from, To: to, buckets: buckets,
-		width:    to.Sub(from) / time.Duration(buckets),
-		sites:    map[string]*siteTotals{},
-		ips:      map[string]*ipTotals{},
-		paths:    map[string]*pathTotals{},
-		agents:   map[string]int{},
-		threats:  map[string]*threatTotals{},
-		statuses: map[string]int{},
-		timeline: make([]Bucket, buckets),
+		width:     to.Sub(from) / time.Duration(buckets),
+		sites:     map[string]*siteTotals{},
+		ips:       map[string]*ipTotals{},
+		paths:     map[string]*pathTotals{},
+		agents:    map[string]int{},
+		threats:   map[string]*threatTotals{},
+		statuses:  map[string]int{},
+		codes:     map[string]int{},
+		methods:   map[string]int{},
+		referrers: map[string]int{},
+		timeline:  make([]Bucket, buckets),
 	}
 
 	if a.width <= 0 {
@@ -503,6 +517,21 @@ func (a *Analyzer) Add(site string, entry Entry) {
 		a.static++
 	}
 	a.statuses[strconv.Itoa(class)+"xx"]++
+	a.codes[strconv.Itoa(entry.Status)]++
+
+	// A junk method from a TLS probe is a new key every line; past a handful
+	// they are all one.
+	method := entry.Method
+	if _, known := a.methods[method]; !known && len(a.methods) >= 20 {
+		method = "other"
+	}
+	a.methods[method]++
+
+	if host := referrerHost(entry.Referrer, site); host != "" && dynamic && threat == "" {
+		if _, known := a.referrers[host]; known || len(a.referrers) < 5000 {
+			a.referrers[host]++
+		}
+	}
 
 	// The window's last instant belongs to its last bucket.
 	if i := min(int(entry.Time.Sub(a.From)/a.width), len(a.timeline)-1); i >= 0 {
@@ -652,6 +681,12 @@ type Report struct {
 	// probes, and not addresses that only ever failed.
 	Pages  []PathStat  `json:"pages"`
 	Agents []AgentStat `json:"agents"`
+
+	// Codes are the exact status codes answered, Methods the request
+	// methods, and Referrers the other sites the pages were opened from.
+	Codes     []Count `json:"codes"`
+	Methods   []Count `json:"methods"`
+	Referrers []Count `json:"referrers"`
 }
 
 type SiteStat struct {
@@ -782,6 +817,7 @@ func (a *Analyzer) Report() Report {
 		Statuses: a.statuses, Timeline: a.timeline,
 		Sites: []SiteStat{}, TopIPs: []IPStat{}, Paths: []PathStat{}, Pages: []PathStat{},
 		Threats: []ThreatStat{}, Agents: []AgentStat{},
+		Codes: top(a.codes, 50), Methods: top(a.methods, 20), Referrers: top(a.referrers, 100),
 	}
 
 	for domain, s := range a.sites {
@@ -866,6 +902,28 @@ func (a *Analyzer) Report() Report {
 	}
 
 	return report
+}
+
+// referrerHost is the hostname a request was referred from, when it is
+// another site's: a site linking to its own pages, and a referrer that is not
+// a web address, are not where a visitor came from.
+func referrerHost(referrer, site string) string {
+	if referrer == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(referrer)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return ""
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	bare := strings.TrimPrefix(host, "www.")
+	if bare == strings.TrimPrefix(strings.ToLower(site), "www.") {
+		return ""
+	}
+
+	return bare
 }
 
 // SortIPs puts the addresses worth acting on first, then the busiest.

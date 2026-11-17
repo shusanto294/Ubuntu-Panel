@@ -10,6 +10,7 @@ import ServerHardening from '@/Components/Security/ServerHardening.vue';
 import Updates from '@/Components/Security/Updates.vue';
 import Sessions from '@/Components/Security/Sessions.vue';
 import Alerts from '@/Components/Security/Alerts.vue';
+import CloudflareRules from '@/Components/Security/CloudflareRules.vue';
 import { ago, card } from '@/Components/Security/ui';
 import { Head, router } from '@inertiajs/vue3';
 
@@ -31,6 +32,8 @@ const props = defineProps({
     alerts: Object,
     smtpReady: Boolean,
     checkedAt: Number,
+    edgeAccounts: { type: Array, default: () => [] },
+    siteDomains: { type: Array, default: () => [] },
     activeTask: Object,
     latestTask: Object,
 });
@@ -45,6 +48,7 @@ const tabs = [
     { key: 'updates', name: 'Updates' },
     { key: 'hardening', name: 'Hardening' },
     { key: 'alerts', name: 'Alerts' },
+    { key: 'cloudflare', name: 'Cloudflare' },
 ];
 
 // Older links name the tabs that were merged or removed.
@@ -251,5 +255,11 @@ const openPorts = computed(() => props.ports.filter((p) => p.open).length);
         <Updates v-else-if="tab === 'updates'" :updates="updates" :busy="Boolean(activeTask)" />
         <ServerHardening v-else-if="tab === 'hardening'" :server="server" />
         <Alerts v-else-if="tab === 'alerts'" :alerts="alerts" :smtp-ready="smtpReady" />
+        <CloudflareRules
+            v-else-if="tab === 'cloudflare'"
+            :accounts="edgeAccounts"
+            :site-domains="siteDomains"
+            :my-ip="myIp"
+        />
     </AuthenticatedLayout>
 </template>

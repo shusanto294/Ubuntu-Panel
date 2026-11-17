@@ -32,6 +32,13 @@ const props = defineProps({
 
     // Still being read.
     loading: { type: Boolean, default: false },
+
+    // Whether this copy shows the period picker and Refresh: a page that
+    // shows the view in two parts shows them once.
+    controls: { type: Boolean, default: true },
+
+    // The props a new period or a refresh asks the server for again.
+    reloads: { type: Array, default: () => ['window', 'traffic', 'trustedIps', 'processes', 'fpm'] },
 });
 
 const show = (section) => props.sections.includes(section);
@@ -62,7 +69,7 @@ const setWindow = (key) =>
         {
             preserveScroll: true,
             preserveState: true,
-            only: ['window', 'traffic', 'trustedIps', 'processes', 'fpm'],
+            only: props.reloads,
             onStart: () => (refreshing.value = true),
             onFinish: () => (refreshing.value = false),
         },
@@ -85,7 +92,7 @@ const refresh = () => {
     if (refreshing.value || document.hidden) return;
 
     router.reload({
-        only: ['traffic', 'trustedIps', 'processes', 'fpm'],
+        only: props.reloads.filter((key) => key !== 'window'),
         preserveScroll: true,
         preserveState: true,
         onStart: () => (refreshing.value = true),
@@ -251,7 +258,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
 <template>
     <div class="space-y-6">
         <!-- Window and refreshing -->
-        <div class="flex flex-wrap items-center gap-2">
+        <div v-if="controls" class="flex flex-wrap items-center gap-2">
             <label class="flex items-center gap-2 text-sm">
                 <span class="text-xs font-medium text-slate-700">Traffic over</span>
                 <select
@@ -570,7 +577,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                                 </td>
                                 <td class="whitespace-nowrap px-5 py-2.5 text-right">
                                     <Link
-                                        :href="route('logs.ip', ip.ip)"
+                                        :href="route('analytics.ip', ip.ip)"
                                         class="text-xs font-medium text-brand-600 hover:underline"
                                     >
                                         Details
@@ -606,7 +613,7 @@ const processPages = usePagination(() => props.processes?.top ?? [], 20);
                             <span class="flex items-center gap-3">
                                 <span class="text-slate-500">{{ number(ip.count) }}</span>
                                 <span v-if="trustedIps[ip.name]" class="text-emerald-700">trusted</span>
-                                <Link :href="route('logs.ip', ip.name)" class="font-medium text-brand-600 hover:underline">Details</Link>
+                                <Link :href="route('analytics.ip', ip.name)" class="font-medium text-brand-600 hover:underline">Details</Link>
                             </span>
                         </li>
                     </ul>

@@ -10,6 +10,7 @@ import { Link } from '@inertiajs/vue3';
 const props = defineProps({
     stats: { type: Object, default: null },
     window: { type: String, default: '1h' },
+    site: { type: String, default: '' },
 });
 
 const number = (n) => (n ?? 0).toLocaleString();
@@ -21,7 +22,11 @@ const bytes = (n) => {
     return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 };
 
-const href = (section) => `${route('logs.stats', section)}?window=${props.window}`;
+const href = (section) => {
+    const query = new URLSearchParams({ window: props.window });
+    if (props.site) query.set('site', props.site);
+    return `${route('analytics.stats', section)}?${query}`;
+};
 
 const tiles = computed(() => {
     const s = props.stats;

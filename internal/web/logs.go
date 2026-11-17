@@ -12,15 +12,13 @@ import (
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/serverlog"
-	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
 )
 
-// logsIndex is the Logs page: what the server is doing. The traffic over a
-// window — its totals, the sites it went to and the pages most asked for
-// (traffic.go) — and below it every entry the machine's own programs logged:
+// logsIndex is the Logs page: every entry the machine's own programs logged —
 // nginx, PHP, the databases, fail2ban, sudo, the kernel, mail and each site
-// (events.go).
+// (events.go). The traffic those logs add up to is the Analytics page's
+// (analytics.go).
 //
 // Only the server's: the panel's own history is on each site and task, and
 // sign-ins on the Security page.
@@ -42,12 +40,6 @@ func (a *App) logsIndex(w http.ResponseWriter, r *http.Request) {
 
 	for key, value := range a.logsEventsProps(r.Context(), flat, "server") {
 		props[key] = value
-	}
-
-	// The traffic reads the access logs, which is the slow part of the page:
-	// never on the first paint, only when the page asks once it is up.
-	if inertia.Asked(r, "Logs/Index", "stats") {
-		props["stats"] = a.trafficStats(r.Context(), query.Get("range"), session.ClientIP(r))
 	}
 
 	a.Render.Render(w, r, "Logs/Index", props)

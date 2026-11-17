@@ -129,6 +129,14 @@ Everything the C panel does, from the same pages:
   a site gets its records published and a mail domain gets its SPF, DKIM and
   DMARC written without leaving the panel
 - **Logs** — every deployment and install streams its console to the page
+- **Analytics** — the sites' traffic from nginx's access logs, over an hour to
+  30 days, for every site or one: requests, visitors, the pages visited most,
+  status codes, referring sites, the busiest addresses, bots and attacks
+- **Cloudflare security rules** — Security → Cloudflare lists and edits a zone's
+  WAF custom rules (with a rule builder), rate limiting rules, IP access rules
+  and security level through the DNS credential. The token needs Zone WAF,
+  Firewall Services and Zone Settings · Edit besides DNS · Edit. The other DNS
+  hosts only answer queries, so they have no rules to manage
 - **Terminal** — a real shell in the browser, on a PTY over a websocket
 
 And one thing the C panel does not:

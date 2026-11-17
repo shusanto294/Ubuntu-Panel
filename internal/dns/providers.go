@@ -28,7 +28,7 @@ type Provider struct {
 var Providers = []Provider{
 	{
 		Key: "cloudflare", Label: "Cloudflare", TokenLabel: "API token", Proxy: true,
-		Help: "Create a token with Zone · DNS · Edit on the zones you want the panel to manage.",
+		Help: "Create a token with Zone · DNS · Edit on the zones you want the panel to manage. To manage Cloudflare's security rules from Security → Cloudflare too, add Zone · Zone WAF · Edit, Zone · Firewall Services · Edit and Zone · Zone Settings · Edit.",
 		URL:  "https://dash.cloudflare.com/profile/api-tokens",
 	},
 	{

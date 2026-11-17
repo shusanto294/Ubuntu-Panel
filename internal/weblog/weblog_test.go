@@ -324,3 +324,28 @@ func TestReportPagesAreWhatVisitorsOpened(t *testing.T) {
 		t.Fatalf("second page = %+v", pages[1])
 	}
 }
+
+func TestReferrersAndCodes(t *testing.T) {
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	a := New(now.Add(-time.Hour), now.Add(time.Minute), 4)
+
+	line := func(ref string) string {
+		return `1.2.3.4 - - [04/Nov/2026:10:00:00 +0000] "GET /about HTTP/1.1" 200 512 "` + ref + `" "Mozilla/5.0"`
+	}
+	a.Line("example.com", line("https://www.google.com/search?q=x"))
+	a.Line("example.com", line("https://example.com/"))
+	a.Line("example.com", line("https://www.example.com/blog"))
+	a.Line("example.com", line("-"))
+	a.Line("example.com", line("android-app://com.slack"))
+
+	report := a.Report()
+	if len(report.Referrers) != 1 || report.Referrers[0].Name != "google.com" || report.Referrers[0].Count != 1 {
+		t.Fatalf("referrers = %+v", report.Referrers)
+	}
+	if len(report.Codes) != 1 || report.Codes[0].Name != "200" || report.Codes[0].Count != 5 {
+		t.Fatalf("codes = %+v", report.Codes)
+	}
+	if len(report.Methods) != 1 || report.Methods[0].Name != "GET" {
+		t.Fatalf("methods = %+v", report.Methods)
+	}
+}
