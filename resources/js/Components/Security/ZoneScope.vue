@@ -2,20 +2,24 @@
 import { computed, ref, watch } from 'vue';
 
 /*
- * Which zones a new rule goes to: this one — the default — every zone with a
- * site on this server, or a hand-picked list, across every Cloudflare account
- * connected. The model is the list of targets, each { account, zone_id,
- * zone_name }.
+ * Which zones a new rule goes to: every zone with a site on this server — the
+ * default when the tab shows them all — the one zone the tab shows, every
+ * zone, or a hand-picked list, across every Cloudflare account connected. The
+ * model is the list of targets, each { account, zone_id, zone_name }.
  */
 const props = defineProps({
     zones: { type: Array, default: () => [] }, // { account, account_label, id, name, has_site }
     current: { type: Object, default: null }, // the zone the tab is showing
     loading: { type: Boolean, default: false },
+    initial: { type: String, default: 'one' }, // 'one' | 'sites'
 });
 
 const model = defineModel({ type: Array, default: () => [] });
 
-const mode = ref('one');
+const withSitesNow = props.zones.filter((z) => z.has_site);
+const mode = ref(
+    props.initial === 'sites' && withSitesNow.length ? 'sites' : props.current ? 'one' : withSitesNow.length ? 'sites' : 'pick',
+);
 const picked = ref(new Set());
 const filter = ref('');
 
@@ -67,7 +71,7 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
         <legend class="text-xs font-medium text-slate-700">Add it to</legend>
 
         <div class="mt-1 grid gap-2 sm:grid-cols-2">
-            <label :class="[option, mode === 'one' ? on : off]">
+            <label v-if="current" :class="[option, mode === 'one' ? on : off]">
                 <input v-model="mode" type="radio" value="one" class="mt-0.5 text-brand-600" />
                 <span>
                     <span class="font-medium text-slate-800">Only {{ current?.name ?? 'this zone' }}</span>
@@ -78,7 +82,7 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
             <label v-if="withSites.length" :class="[option, mode === 'sites' ? on : off]">
                 <input v-model="mode" type="radio" value="sites" class="mt-0.5 text-brand-600" />
                 <span>
-                    <span class="font-medium text-slate-800">Every site on this server</span>
+                    <span class="font-medium text-slate-800">Every site domain</span>
                     <span class="block text-xs text-slate-500">
                         {{ withSites.length }} zone{{ withSites.length === 1 ? '' : 's' }} with a site here
                     </span>

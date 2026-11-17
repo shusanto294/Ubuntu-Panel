@@ -241,3 +241,172 @@ export const presets = (phase, myIp) => {
         },
     ];
 };
+
+// ------------------------------------------------------- reading it back
+
+// Splits text at a separator that is outside quotes, braces and brackets.
+const splitTop = (text, separator) => {
+    const parts = [];
+    let depth = 0;
+    let quoted = false;
+    let start = 0;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (quoted) {
+            if (ch === '\\') i++;
+            else if (ch === '"') quoted = false;
+            continue;
+        }
+        if (ch === '"') quoted = true;
+        else if ('({['.includes(ch)) depth++;
+        else if (')}]'.includes(ch)) depth--;
+        else if (depth === 0 && text.startsWith(separator, i)) {
+            parts.push(text.slice(start, i));
+            start = i + separator.length;
+            i += separator.length - 1;
+        }
+    }
+
+    parts.push(text.slice(start));
+    return parts.map((p) => p.trim());
+};
+
+// "(a)" → "a", only when the outer brackets belong together.
+const unwrap = (text) => {
+    let t = text.trim();
+    while (t.startsWith('(') && t.endsWith(')') && balanced(t.slice(1, -1))) {
+        t = t.slice(1, -1).trim();
+    }
+    return t;
+};
+
+const balanced = (text) => {
+    let depth = 0;
+    let quoted = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (quoted) {
+            if (ch === '\\') i++;
+            else if (ch === '"') quoted = false;
+            continue;
+        }
+        if (ch === '"') quoted = true;
+        else if (ch === '(') depth++;
+        else if (ch === ')' && --depth < 0) return false;
+    }
+    return depth === 0 && !quoted;
+};
+
+// A literal as the builder's text box holds it, or null.
+const fromLiteral = (kind, text) => {
+    const t = text.trim();
+    if (t.startsWith('"')) {
+        try {
+            const value = JSON.parse(t);
+            return typeof value === 'string' ? value : null;
+        } catch {
+            return null;
+        }
+    }
+    if (kind === 'ip' && /^[0-9a-f:.]+(\/\d+)?$/i.test(t)) return t;
+    if (kind === 'number' && /^\d+$/.test(t)) return t;
+    return null;
+};
+
+// The items of "{a b c}", each read as a literal.
+const fromSet = (kind, text) => {
+    const t = text.trim();
+    if (!t.startsWith('{') || !t.endsWith('}')) return null;
+    const items = [];
+    const body = t.slice(1, -1).trim();
+    const re = /"(?:[^"\\]|\\.)*"|[^\s"]+/g;
+    let m;
+    while ((m = re.exec(body))) {
+        const value = fromLiteral(kind, m[0]);
+        // A value with a space or comma would come apart in the text box.
+        if (value === null || /[\s,]/.test(value)) return null;
+        items.push(value);
+    }
+    return items.length ? items.join('\n') : null;
+};
+
+const FIELD_RE = '([a-z_.]+)';
+
+/** One condition, read back from the rule language, or null. */
+const parseCondition = (text) => {
+    let t = unwrap(text);
+    let negated = false;
+    if (t.startsWith('not ')) {
+        negated = true;
+        t = unwrap(t.slice(4));
+    }
+
+    const known = (key) => FIELDS.some((f) => f.key === key);
+    let m;
+
+    // starts_with(field, "x") / ends_with(field, "x")
+    if ((m = t.match(new RegExp(`^(starts_with|ends_with)\\(${FIELD_RE},\\s*(.+)\\)$`)))) {
+        if (negated || !known(m[2])) return null;
+        const value = fromLiteral(fieldOf(m[2]).kind, m[3]);
+        return value === null ? null : { field: m[2], operator: m[1], value };
+    }
+
+    // field in {…}
+    if ((m = t.match(new RegExp(`^${FIELD_RE}\\s+in\\s+(\\{.*\\})$`)))) {
+        if (!known(m[1])) return null;
+        const value = fromSet(fieldOf(m[1]).kind, m[2]);
+        return value === null ? null : { field: m[1], operator: negated ? 'not_in' : 'in', value };
+    }
+
+    // field op value
+    if ((m = t.match(new RegExp(`^${FIELD_RE}\\s+(eq|ne|contains|wildcard|matches|gt|lt|==|!=)\\s+(.+)$`)))) {
+        if (!known(m[1])) return null;
+        const field = fieldOf(m[1]);
+        const op = { '==': 'eq', '!=': 'ne' }[m[2]] ?? m[2];
+        if (negated && op !== 'contains') return null;
+        const operator = negated ? 'not_contains' : op;
+        if (!operatorsFor(field.key).includes(operator)) return null;
+        let value = fromLiteral(field.kind, m[3]);
+        if (value === null) return null;
+        if (field.kind === 'number' && !/^\d+$/.test(value)) return null;
+        return { field: field.key, operator, value };
+    }
+
+    // a true-or-false field on its own
+    if (known(t) && fieldOf(t).kind === 'bool') {
+        return { field: t, operator: negated ? 'is_false' : 'is_true', value: '' };
+    }
+
+    return null;
+};
+
+/**
+ * An expression as builder rows — { joiner, conditions } — or null when it
+ * says something the builder has no row for (nesting, mixed and/or, a field
+ * it does not offer). Rules written by the builder always read back.
+ */
+export const parseExpression = (expression) => {
+    const text = unwrap(String(expression ?? ''));
+    if (!text || !balanced(text)) return null;
+
+    const ands = splitTop(text, ' and ');
+    const ors = splitTop(text, ' or ');
+    if (ands.length > 1 && ors.length > 1) return null;
+
+    const joiner = ors.length > 1 ? 'or' : 'and';
+    const parts = joiner === 'or' ? ors : ands;
+
+    const conditions = [];
+    for (const part of parts) {
+        // A part that still holds an and/or is nested.
+        const inner = unwrap(part);
+        if (splitTop(inner, ' and ').length > 1 || splitTop(inner, ' or ').length > 1) return null;
+        const condition = parseCondition(inner);
+        // The builder cannot write everything it can read — an empty value.
+        if (!condition || !conditionExpression(condition)) return null;
+        conditions.push(condition);
+    }
+
+    return { joiner, conditions };
+};

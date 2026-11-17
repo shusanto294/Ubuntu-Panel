@@ -11,6 +11,7 @@ import {
     fieldOf,
     newCondition,
     operatorsFor,
+    parseExpression,
     presets,
     seconds,
 } from './edge';
@@ -18,10 +19,11 @@ import { field } from './ui';
 import ZoneScope from './ZoneScope.vue';
 
 /*
- * One custom or rate limiting rule, new or being edited. A new rule starts in
- * the builder — field, operator, value, as many as it needs — which writes the
- * expression; an existing one opens on its expression, because a rule made in
- * Cloudflare's dashboard can say things the builder has no row for.
+ * One custom or rate limiting rule, new or being edited. It opens in the
+ * builder — field, operator, value, as many as it needs — which writes the
+ * expression. An existing rule is read back into the builder's rows; one that
+ * says something the builder has no row for (nesting, a field it does not
+ * offer) opens on its expression instead.
  */
 const props = defineProps({
     phase: { type: String, required: true }, // 'custom' | 'ratelimit'
@@ -32,6 +34,11 @@ const props = defineProps({
     allZones: { type: Array, default: () => [] },
     current: { type: Object, default: null },
     loadingZones: { type: Boolean, default: false },
+    // Where a new rule goes by default: 'one' or 'sites'.
+    scope: { type: String, default: 'one' },
+    // Editing: how many zones hold this rule, and the ones that do not.
+    copies: { type: Number, default: 1 },
+    missing: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(['save', 'cancel']);
@@ -48,10 +55,13 @@ const form = reactive({
     mitigation_timeout: props.rule?.ratelimit?.mitigation_timeout ?? 10,
 });
 
-// Builder or the expression itself.
-const mode = ref(editing.value ? 'expression' : 'builder');
-const joiner = ref('and');
-const conditions = ref([newCondition()]);
+// Builder or the expression itself. The builder unless the expression is
+// one it cannot show.
+const parsed = props.rule ? parseExpression(props.rule.expression) : null;
+const mode = ref(!props.rule || parsed ? 'builder' : 'expression');
+const joiner = ref(parsed?.joiner ?? 'and');
+const conditions = ref(parsed ? parsed.conditions.map((c) => ({ ...c })) : [newCondition()]);
+const builderNote = ref(props.rule && !parsed ? 'This expression uses more than the builder can show, so it opens as text.' : '');
 
 const built = computed(() => buildExpression(conditions.value, joiner.value));
 
@@ -59,9 +69,32 @@ watch(built, (expression) => {
     if (mode.value === 'builder') form.expression = expression;
 });
 
+// Loads the expression into the builder when it can be read back; otherwise
+// the builder starts empty and what is built replaces it.
+const loadIntoBuilder = (expression) => {
+    const read = parseExpression(expression);
+    if (read) {
+        joiner.value = read.joiner;
+        conditions.value = read.conditions.map((c) => ({ ...c }));
+        builderNote.value = '';
+        return true;
+    }
+    return false;
+};
+
 const useBuilder = () => {
+    if (mode.value === 'builder') return;
+    if (!loadIntoBuilder(form.expression) && form.expression.trim()) {
+        conditions.value = [newCondition()];
+        builderNote.value = 'The builder cannot show this expression — what you build here replaces it.';
+    }
     mode.value = 'builder';
     form.expression = built.value;
+};
+
+const useExpression = () => {
+    mode.value = 'expression';
+    builderNote.value = '';
 };
 
 const setField = (condition, key) => {
@@ -77,12 +110,17 @@ const removeCondition = (i) => {
 
 const isList = (c) => c.operator === 'in' || c.operator === 'not_in';
 
-// A preset is a starting point, written as an expression to read and change.
+// A preset is a starting point: in the builder when it fits there.
 const applyPreset = (preset) => {
-    mode.value = 'expression';
     form.description = preset.description;
-    form.expression = preset.expression;
     form.action = preset.action;
+    if (loadIntoBuilder(preset.expression)) {
+        mode.value = 'builder';
+        form.expression = built.value;
+    } else {
+        mode.value = 'expression';
+        form.expression = preset.expression;
+    }
     if (preset.period) {
         form.period = preset.period;
         form.requests_per_period = preset.requests_per_period;
@@ -91,6 +129,7 @@ const applyPreset = (preset) => {
 };
 
 const targets = ref([]);
+const addMissing = ref(false);
 
 const presetList = computed(() => (editing.value ? [] : presets(props.phase, props.myIp)));
 
@@ -115,6 +154,7 @@ const submit = () => {
     }
 
     if (!editing.value) payload.targets = targets.value;
+    else if (addMissing.value) payload.addMissing = true;
 
     emit('save', payload);
 };
@@ -165,7 +205,7 @@ const submit = () => {
                         type="button"
                         class="rounded-md px-2.5 py-1 font-medium"
                         :class="mode === 'expression' ? 'bg-brand-600 text-white' : 'text-slate-600'"
-                        @click="mode = 'expression'"
+                        @click="useExpression"
                     >
                         Expression
                     </button>
@@ -173,9 +213,7 @@ const submit = () => {
             </div>
 
             <div v-if="mode === 'builder'" class="mt-2 space-y-2">
-                <p v-if="editing" class="text-xs text-amber-700">
-                    The builder starts empty: saving from it replaces this rule's expression.
-                </p>
+                <p v-if="builderNote" class="text-xs text-amber-700">{{ builderNote }}</p>
                 <div v-for="(c, i) in conditions" :key="i" class="space-y-2">
                     <div v-if="i > 0" class="flex items-center gap-2">
                         <select v-model="joiner" class="rounded-lg border-slate-300 py-1 text-xs shadow-sm">
@@ -221,6 +259,8 @@ const submit = () => {
                     + Another condition
                 </button>
             </div>
+
+            <p v-if="mode === 'expression' && builderNote" class="mt-2 text-xs text-slate-500">{{ builderNote }}</p>
 
             <label class="mt-3 block text-sm">
                 <span class="text-xs font-medium text-slate-700">
@@ -278,8 +318,23 @@ const submit = () => {
             :zones="allZones"
             :current="current"
             :loading="loadingZones"
+            :initial="scope"
             class="border-t border-slate-200 pt-4"
         />
+
+        <div v-if="editing && (copies > 1 || missing.length)" class="space-y-2 border-t border-slate-200 pt-4 text-sm">
+            <p v-if="copies > 1" class="text-slate-700">
+                Saving changes this rule on all <strong>{{ copies }}</strong> zones that have it.
+            </p>
+            <label v-if="missing.length" class="flex items-start gap-2 text-slate-700">
+                <input v-model="addMissing" type="checkbox" class="mt-0.5 rounded border-slate-300 text-brand-600" />
+                <span>
+                    Also add it to the {{ missing.length }} zone{{ missing.length === 1 ? '' : 's' }} that
+                    {{ missing.length === 1 ? 'does' : 'do' }} not have it
+                    <span class="block text-xs text-slate-500">{{ missing.map((z) => z.zone_name).join(', ') }}</span>
+                </span>
+            </label>
+        </div>
 
         <p v-if="form.action === 'skip'" class="text-xs text-slate-500">
             A skip rule only skips the custom rules after it — keep it at the top of the list.
@@ -307,7 +362,11 @@ const submit = () => {
                         saving
                             ? 'Saving…'
                             : editing
-                              ? 'Save rule'
+                              ? addMissing
+                                ? `Save and add to ${missing.length} more`
+                                : copies > 1
+                                  ? `Save on ${copies} zones`
+                                  : 'Save rule'
                               : targets.length > 1
                                 ? `Add to ${targets.length} zones`
                                 : 'Add rule'

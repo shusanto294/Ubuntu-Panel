@@ -2,22 +2,27 @@
 import { computed, reactive, ref } from 'vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
-import { ACCESS_MODES, ACCESS_TARGETS, ACTION_LABEL, ACTION_TONE, PERMISSION, isPermissionError } from './edge';
+import { ACCESS_MODES, ACCESS_TARGETS, ACTION_LABEL, ACTION_TONE, PERMISSION } from './edge';
 import { card, field, smallButton, when } from './ui';
 import { confirmDanger } from '@/dialog';
+import ZoneErrors from './ZoneErrors.vue';
 import ZoneScope from './ZoneScope.vue';
 
 /*
  * IP access rules: an address, a range, a network or a country, always
  * blocked, challenged or let through. The simplest of Cloudflare's rules, and
- * the one to reach for when one address will not stop. Rules made for the
- * whole account show here too, but can only be changed in Cloudflare.
+ * the one to reach for when one address will not stop.
+ *
+ * The same rule in several zones is one row: changing what it does, its note
+ * or deleting it does so in each, and a zone without it can be given it.
+ * Rules made for the whole Cloudflare account show too, but can only be
+ * changed in Cloudflare.
  */
 const props = defineProps({
-    accountId: { type: Number, required: true },
-    zoneId: { type: String, required: true },
-    rules: { type: Array, default: () => [] },
-    error: { type: String, default: '' },
+    groups: { type: Array, default: () => [] }, // { key, rule, copies, missing, readonly }
+    errors: { type: Array, default: () => [] },
+    zoneCount: { type: Number, default: 1 },
+    single: { type: Boolean, default: true },
     myIp: { type: String, default: '' },
     allZones: { type: Array, default: () => [] },
     current: { type: Object, default: null },
@@ -36,20 +41,28 @@ const note = ref('');
 
 const form = reactive({ target: 'ip', value: '', mode: 'block', notes: '' });
 const targets = ref([]);
-const onlyHere = computed(() => targets.value.length <= 1 && (targets.value[0]?.zone_id ?? props.zoneId) === props.zoneId);
 
 const targetLabel = (key) => ACCESS_TARGETS.find((t) => t.key === key)?.label ?? key;
 const placeholder = computed(() => ACCESS_TARGETS.find((t) => t.key === form.target)?.placeholder ?? '');
 
 const filtered = computed(() => {
     const q = search.value.trim().toLowerCase();
-    if (!q) return props.rules;
-    return props.rules.filter((r) => `${r.value} ${r.notes} ${r.mode}`.toLowerCase().includes(q));
+    if (!q) return props.groups;
+    return props.groups.filter((g) =>
+        `${g.rule.value} ${g.rule.notes} ${g.rule.mode} ${g.copies.map((c) => c.zone_name).join(' ')}`.toLowerCase().includes(q),
+    );
 });
 
 const pages = usePagination(filtered, 20);
 
 const failure = (e, fallback) => e?.response?.data?.error ?? fallback;
+
+const report = (data) => {
+    const failures = (data.outcomes ?? []).filter((o) => o.status === 'failed');
+    emit('message', data.message, failures.length > 0, failures);
+};
+
+const copiesOf = (group) => group.copies.map(({ account, zone_id, zone_name, rule_id }) => ({ account, zone_id, zone_name, rule_id }));
 
 const allowMe = () => {
     adding.value = true;
@@ -64,13 +77,10 @@ const submit = async () => {
     formError.value = '';
 
     try {
-        const { data } = onlyHere.value
-            ? await window.axios.post(route('edge.access.store', props.accountId), { ...form, zone_id: props.zoneId })
-            : await window.axios.post(route('edge.bulk.access'), { ...form, targets: targets.value });
+        const { data } = await window.axios.post(route('edge.bulk.access'), { ...form, targets: targets.value });
         Object.assign(form, { value: '', notes: '' });
         adding.value = false;
-        const failures = (data.outcomes ?? []).filter((o) => o.status === 'failed');
-        emit('message', data.message, failures.length > 0, failures);
+        report(data);
         emit('changed');
     } catch (e) {
         formError.value = failure(e, 'Cloudflare did not take the rule.');
@@ -79,17 +89,12 @@ const submit = async () => {
     }
 };
 
-const update = async (rule, changes) => {
-    busy.value = rule.id;
+const act = async (group, request) => {
+    busy.value = group.key;
     try {
-        const { data } = await window.axios.patch(route('edge.access.update', { account: props.accountId, rule: rule.id }), {
-            zone_id: props.zoneId,
-            mode: rule.mode,
-            notes: rule.notes,
-            ...changes,
-        });
+        const { data } = await request();
         editingNote.value = '';
-        emit('message', data.message);
+        report(data);
         emit('changed');
     } catch (e) {
         emit('message', failure(e, 'Cloudflare refused the change.'), true);
@@ -98,27 +103,40 @@ const update = async (rule, changes) => {
     }
 };
 
-const editNote = (rule) => {
-    editingNote.value = rule.id;
-    note.value = rule.notes;
+const update = (group, changes) =>
+    act(group, () =>
+        window.axios.post(route('edge.bulk.access.update'), {
+            mode: group.rule.mode,
+            notes: group.rule.notes,
+            ...changes,
+            copies: copiesOf(group),
+        }),
+    );
+
+const addToRest = (group) =>
+    act(group, () =>
+        window.axios.post(route('edge.bulk.access'), {
+            target: group.rule.target,
+            value: group.rule.value,
+            mode: group.rule.mode,
+            notes: group.rule.notes,
+            targets: group.missing,
+        }),
+    );
+
+const editNote = (group) => {
+    editingNote.value = group.key;
+    note.value = group.rule.notes;
 };
 
-const remove = async (rule) => {
-    if (!(await confirmDanger(`Delete the rule for ${rule.value}?`, 'Cloudflare stops applying it at once.'))) return;
+const remove = async (group) => {
+    const where = group.copies.length > 1 ? ` from ${group.copies.length} zones` : '';
+    if (!(await confirmDanger(`Delete the rule for ${group.rule.value}${where}?`, 'Cloudflare stops applying it at once.'))) return;
 
-    busy.value = rule.id;
-    try {
-        const { data } = await window.axios.delete(route('edge.access.destroy', { account: props.accountId, rule: rule.id }), {
-            params: { zone_id: props.zoneId },
-        });
-        emit('message', data.message);
-        emit('changed');
-    } catch (e) {
-        emit('message', failure(e, 'Cloudflare refused the change.'), true);
-    } finally {
-        busy.value = '';
-    }
+    act(group, () => window.axios.post(route('edge.bulk.access.destroy'), { value: group.rule.value, copies: copiesOf(group) }));
 };
+
+const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
 </script>
 
 <template>
@@ -131,9 +149,9 @@ const remove = async (rule) => {
                     whatever else the rules say.
                 </p>
             </div>
-            <div v-if="!error" class="flex flex-wrap gap-2">
+            <div v-if="zoneCount > 0 && !adding" class="flex flex-wrap gap-2">
                 <button
-                    v-if="myIp && !adding"
+                    v-if="myIp"
                     type="button"
                     class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50"
                     @click="allowMe"
@@ -141,7 +159,6 @@ const remove = async (rule) => {
                     Always allow my address
                 </button>
                 <button
-                    v-if="!adding"
                     type="button"
                     class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
                     @click="adding = true"
@@ -151,13 +168,7 @@ const remove = async (rule) => {
             </div>
         </div>
 
-        <div v-if="error" class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-            <p>{{ error }}</p>
-            <p v-if="isPermissionError(error)" class="mt-1 text-xs">
-                The API token needs <strong>{{ PERMISSION.access }}</strong> — edit it in Cloudflare under My Profile →
-                API Tokens, then reload this tab.
-            </p>
-        </div>
+        <ZoneErrors :errors="errors" :permission="PERMISSION.access" />
 
         <form v-if="adding" class="mt-4 space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200" @submit.prevent="submit">
             <div class="grid gap-3 sm:grid-cols-4">
@@ -182,7 +193,7 @@ const remove = async (rule) => {
                 <span class="text-xs font-medium text-slate-700">Note</span>
                 <input v-model="form.notes" type="text" maxlength="500" :class="field" placeholder="Why — so it makes sense in a year" />
             </label>
-            <ZoneScope v-model="targets" :zones="allZones" :current="current" :loading="loadingZones" />
+            <ZoneScope v-model="targets" :zones="allZones" :current="current" :loading="loadingZones" :initial="single ? 'one' : 'sites'" />
             <p v-if="form.target === 'ip_range'" class="text-xs text-slate-500">
                 Cloudflare takes IPv4 ranges as /16 or /24, and IPv6 ranges as /32, /48 or /64.
             </p>
@@ -196,21 +207,21 @@ const remove = async (rule) => {
                 </button>
                 <button
                     type="submit"
-                    :disabled="saving"
+                    :disabled="saving || !targets.length"
                     class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >
-                    {{ saving ? 'Saving…' : onlyHere ? 'Add rule' : `Add to ${targets.length} zones` }}
+                    {{ saving ? 'Saving…' : targets.length > 1 ? `Add to ${targets.length} zones` : 'Add rule' }}
                 </button>
             </div>
             <p v-if="formError" class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">{{ formError }}</p>
         </form>
 
-        <template v-if="!error && rules.length">
+        <template v-if="groups.length">
             <input
-                v-if="rules.length > 10"
+                v-if="groups.length > 10"
                 v-model="search"
                 type="search"
-                placeholder="Search addresses and notes"
+                placeholder="Search addresses, notes and zones"
                 class="mt-4 w-full rounded-lg border-slate-300 text-sm shadow-sm sm:w-72"
             />
             <div class="mt-4 overflow-x-auto rounded-xl ring-1 ring-slate-200">
@@ -220,46 +231,66 @@ const remove = async (rule) => {
                             <th class="px-4 py-2 font-medium">Matches</th>
                             <th class="px-4 py-2 font-medium">Then</th>
                             <th class="px-4 py-2 font-medium">Note</th>
-                            <th class="px-4 py-2 font-medium">Added</th>
+                            <th class="px-4 py-2 font-medium">{{ single ? 'Added' : 'Zones' }}</th>
                             <th class="px-4 py-2"><span class="sr-only">Actions</span></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <tr v-for="rule in pages.visible.value" :key="rule.id" :class="busy === rule.id ? 'opacity-50' : ''">
+                        <tr v-for="group in pages.visible.value" :key="group.key" :class="busy === group.key ? 'opacity-50' : ''">
                             <td class="px-4 py-2.5">
-                                <span class="font-mono text-slate-900">{{ rule.value }}</span>
-                                <span class="block text-xs text-slate-400">{{ targetLabel(rule.target) }}</span>
+                                <span class="font-mono text-slate-900">{{ group.rule.value }}</span>
+                                <span class="block text-xs text-slate-400">{{ targetLabel(group.rule.target) }}</span>
                             </td>
                             <td class="px-4 py-2.5">
                                 <select
-                                    v-if="rule.scope === 'zone'"
-                                    :value="rule.mode"
+                                    v-if="!group.readonly"
+                                    :value="group.rule.mode"
                                     :disabled="Boolean(busy)"
                                     class="rounded-lg border-slate-300 py-1 text-xs shadow-sm"
-                                    @change="update(rule, { mode: $event.target.value })"
+                                    @change="update(group, { mode: $event.target.value })"
                                 >
                                     <option v-for="m in ACCESS_MODES" :key="m" :value="m">{{ ACTION_LABEL[m] }}</option>
                                 </select>
-                                <span v-else class="rounded-md px-2 py-0.5 text-xs font-medium ring-1" :class="ACTION_TONE[rule.mode]">
-                                    {{ ACTION_LABEL[rule.mode] ?? rule.mode }}
+                                <span v-else class="rounded-md px-2 py-0.5 text-xs font-medium ring-1" :class="ACTION_TONE[group.rule.mode]">
+                                    {{ ACTION_LABEL[group.rule.mode] ?? group.rule.mode }}
                                 </span>
                             </td>
                             <td class="max-w-xs px-4 py-2.5">
-                                <form v-if="editingNote === rule.id" class="flex gap-1" @submit.prevent="update(rule, { notes: note })">
+                                <form v-if="editingNote === group.key" class="flex gap-1" @submit.prevent="update(group, { notes: note })">
                                     <input v-model="note" type="text" maxlength="500" class="w-full rounded-lg border-slate-300 py-1 text-xs shadow-sm" />
                                     <button type="submit" :class="smallButton">Save</button>
                                 </form>
-                                <span v-else class="block truncate text-xs text-slate-600" :title="rule.notes">{{ rule.notes || '—' }}</span>
+                                <span v-else class="block truncate text-xs text-slate-600" :title="group.rule.notes">{{ group.rule.notes || '—' }}</span>
                             </td>
-                            <td class="whitespace-nowrap px-4 py-2.5 text-xs text-slate-500">{{ when(rule.created_on) }}</td>
-                            <td class="whitespace-nowrap px-4 py-2.5 text-right">
-                                <template v-if="rule.scope === 'zone'">
+                            <td class="px-4 py-2.5 text-xs">
+                                <span v-if="single" class="whitespace-nowrap text-slate-500">{{ when(group.rule.created_on) }}</span>
+                                <span v-else-if="group.readonly" class="text-slate-500">every zone on the account</span>
+                                <span v-else-if="!group.missing.length" class="whitespace-nowrap font-medium text-emerald-700" :title="zoneNames(group)">
+                                    All {{ group.copies.length }}
+                                </span>
+                                <span v-else class="block">
+                                    <span class="whitespace-nowrap font-medium text-amber-700" :title="zoneNames(group)">
+                                        {{ group.copies.length }} of {{ group.copies.length + group.missing.length }}
+                                    </span>
                                     <button
-                                        v-if="editingNote !== rule.id"
+                                        type="button"
+                                        class="block whitespace-nowrap font-medium text-brand-600 hover:underline disabled:opacity-50"
+                                        :disabled="Boolean(busy)"
+                                        :title="`Missing on ${group.missing.map((z) => z.zone_name).join(', ')}`"
+                                        @click="addToRest(group)"
+                                    >
+                                        Add to the rest
+                                    </button>
+                                </span>
+                            </td>
+                            <td class="whitespace-nowrap px-4 py-2.5 text-right">
+                                <template v-if="!group.readonly">
+                                    <button
+                                        v-if="editingNote !== group.key"
                                         type="button"
                                         :class="smallButton"
                                         :disabled="Boolean(busy)"
-                                        @click="editNote(rule)"
+                                        @click="editNote(group)"
                                     >
                                         Note
                                     </button>
@@ -268,12 +299,14 @@ const remove = async (rule) => {
                                         :class="smallButton"
                                         class="ml-1.5 text-rose-600"
                                         :disabled="Boolean(busy)"
-                                        @click="remove(rule)"
+                                        @click="remove(group)"
                                     >
                                         Delete
                                     </button>
                                 </template>
-                                <span v-else class="text-xs text-slate-400" title="Made for the whole Cloudflare account">account-wide</span>
+                                <span v-else class="text-xs text-slate-400" title="Made for the whole Cloudflare account — change it in Cloudflare">
+                                    account-wide
+                                </span>
                             </td>
                         </tr>
                     </tbody>
@@ -286,6 +319,8 @@ const remove = async (rule) => {
                 />
             </div>
         </template>
-        <p v-else-if="!error && !adding" class="mt-4 text-sm text-slate-500">No IP access rules on this zone yet.</p>
+        <p v-else-if="zoneCount > 0 && !adding" class="mt-4 text-sm text-slate-500">
+            No IP access rules {{ single ? 'on this zone' : 'on these zones' }} yet.
+        </p>
     </section>
 </template>

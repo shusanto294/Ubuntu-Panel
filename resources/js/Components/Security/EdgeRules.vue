@@ -1,22 +1,24 @@
 <script setup>
 import { ref } from 'vue';
 import EdgeRuleForm from './EdgeRuleForm.vue';
-import { ACTION_LABEL, ACTION_TONE, PERMISSION, isPermissionError, seconds } from './edge';
+import ZoneErrors from './ZoneErrors.vue';
+import { ACTION_LABEL, ACTION_TONE, PERMISSION, seconds } from './edge';
 import { card, smallButton, when } from './ui';
 import { confirmDanger } from '@/dialog';
 
 /*
- * One phase's rules — WAF custom rules or rate limiting rules — in the order
- * Cloudflare runs them, with adding, editing, switching off, moving and
- * deleting. Every change goes to Cloudflare and the list is read again, so
- * what is shown is what Cloudflare has.
+ * One phase's rules — WAF custom rules or rate limiting rules — across every
+ * zone the tab shows. The same rule in several zones is one row: editing,
+ * switching off or deleting it does it in each of them, and a rule some zones
+ * lack can be added to the rest. Every change goes to Cloudflare and the list
+ * is read again, so what is shown is what Cloudflare has.
  */
 const props = defineProps({
-    accountId: { type: Number, required: true },
-    zoneId: { type: String, required: true },
     phase: { type: String, required: true }, // 'custom' | 'ratelimit'
-    rules: { type: Array, default: () => [] },
-    error: { type: String, default: '' },
+    groups: { type: Array, default: () => [] }, // { key, rule, copies, enabledCount, missing }
+    errors: { type: Array, default: () => [] }, // { zone, error }
+    zoneCount: { type: Number, default: 1 }, // zones shown, readable for this phase
+    single: { type: Boolean, default: true }, // one zone: rules can be moved
     myIp: { type: String, default: '' },
     allZones: { type: Array, default: () => [] },
     current: { type: Object, default: null },
@@ -35,7 +37,7 @@ const INTRO = {
     ratelimit: 'Too many requests from one address in a period, and Cloudflare blocks or challenges it for a while.',
 };
 
-// null, 'new', or the id of the rule being edited.
+// null, 'new', or the key of the rule being edited.
 const editing = ref(null);
 const saving = ref(false);
 const formError = ref('');
@@ -44,27 +46,53 @@ const expanded = ref(new Set());
 
 const failure = (e, fallback) => e?.response?.data?.error ?? fallback;
 
-const save = async (payload) => {
+const report = (data) => {
+    const failures = (data.outcomes ?? []).filter((o) => o.status === 'failed');
+    emit('message', data.message, failures.length > 0, failures);
+};
+
+const copiesOf = (group) => group.copies.map(({ account, zone_id, zone_name, rule_id }) => ({ account, zone_id, zone_name, rule_id }));
+
+const ruleFields = (rule) => ({
+    phase: props.phase,
+    description: rule.description,
+    expression: rule.expression,
+    action: rule.action,
+    enabled: rule.enabled,
+    ...(rule.ratelimit
+        ? {
+              period: rule.ratelimit.period,
+              requests_per_period: rule.ratelimit.requests_per_period,
+              mitigation_timeout: rule.ratelimit.mitigation_timeout,
+              characteristics: 'keep',
+          }
+        : {}),
+});
+
+const save = async (payload, group = null) => {
     saving.value = true;
     formError.value = '';
 
     try {
-        const { targets, ...rule } = payload;
-        const body = { ...rule, zone_id: props.zoneId };
-        const onlyHere = !targets || (targets.length === 1 && targets[0].zone_id === props.zoneId);
+        const { targets, addMissing, ...rule } = payload;
 
-        let data;
-        if (editing.value !== 'new') {
-            ({ data } = await window.axios.patch(route('edge.rules.update', { account: props.accountId, rule: editing.value }), body));
-        } else if (onlyHere) {
-            ({ data } = await window.axios.post(route('edge.rules.store', props.accountId), body));
+        if (group) {
+            const { data } = await window.axios.post(route('edge.bulk.rules.update'), { ...rule, copies: copiesOf(group) });
+            if (addMissing && group.missing.length) {
+                // A new copy counts per address, as the panel makes them.
+                const { characteristics, ...fresh } = rule;
+                const { data: added } = await window.axios.post(route('edge.bulk.rules'), { ...fresh, targets: group.missing });
+                const failures = [data, added].flatMap((d) => (d.outcomes ?? []).filter((o) => o.status === 'failed'));
+                emit('message', `${data.message} ${added.message}`, failures.length > 0, failures);
+            } else {
+                report(data);
+            }
         } else {
-            ({ data } = await window.axios.post(route('edge.bulk.rules'), { ...rule, targets }));
+            const { data } = await window.axios.post(route('edge.bulk.rules'), { ...rule, targets });
+            report(data);
         }
 
         editing.value = null;
-        const failures = (data.outcomes ?? []).filter((o) => o.status === 'failed');
-        emit('message', data.message, failures.length > 0, failures);
         emit('changed');
     } catch (e) {
         formError.value = failure(e, 'Cloudflare did not take the rule.');
@@ -73,11 +101,11 @@ const save = async (payload) => {
     }
 };
 
-const act = async (rule, request) => {
-    busy.value = rule.id;
+const act = async (group, request) => {
+    busy.value = group.key;
     try {
         const { data } = await request();
-        emit('message', data.message);
+        data.outcomes ? report(data) : emit('message', data.message);
         emit('changed');
     } catch (e) {
         emit('message', failure(e, 'Cloudflare refused the change.'), true);
@@ -86,60 +114,58 @@ const act = async (rule, request) => {
     }
 };
 
-const toggle = (rule) =>
-    act(rule, () =>
-        window.axios.patch(route('edge.rules.update', { account: props.accountId, rule: rule.id }), {
-            zone_id: props.zoneId,
-            phase: props.phase,
-            description: rule.description,
-            expression: rule.expression,
-            action: rule.action,
-            enabled: !rule.enabled,
-            ...(rule.ratelimit
-                ? {
-                      period: rule.ratelimit.period,
-                      requests_per_period: rule.ratelimit.requests_per_period,
-                      mitigation_timeout: rule.ratelimit.mitigation_timeout,
-                      characteristics: 'keep',
-                  }
-                : {}),
+// Off when every copy is on; otherwise on everywhere.
+const toggle = (group) =>
+    act(group, () =>
+        window.axios.post(route('edge.bulk.rules.update'), {
+            ...ruleFields(group.rule),
+            enabled: group.enabledCount < group.copies.length,
+            copies: copiesOf(group),
         }),
     );
 
-const move = (rule, position) =>
-    act(rule, () =>
-        window.axios.post(route('edge.rules.move', { account: props.accountId, rule: rule.id }), {
-            zone_id: props.zoneId,
+const addToRest = (group) => {
+    const { characteristics, ...rule } = ruleFields(group.rule);
+    act(group, () => window.axios.post(route('edge.bulk.rules'), { ...rule, targets: group.missing }));
+};
+
+const move = (group, position) => {
+    const copy = group.copies[0];
+    act(group, () =>
+        window.axios.post(route('edge.rules.move', { account: copy.account, rule: copy.rule_id }), {
+            zone_id: copy.zone_id,
             phase: props.phase,
             position,
         }),
     );
+};
 
-const remove = async (rule) => {
-    if (!(await confirmDanger(`Delete “${rule.description || 'this rule'}”?`, 'Cloudflare stops applying it at once.'))) return;
+const remove = async (group) => {
+    const name = group.rule.description || 'this rule';
+    const where = group.copies.length > 1 ? ` from ${group.copies.length} zones` : '';
+    if (!(await confirmDanger(`Delete “${name}”${where}?`, 'Cloudflare stops applying it at once.'))) return;
 
-    act(rule, () =>
-        window.axios.delete(route('edge.rules.destroy', { account: props.accountId, rule: rule.id }), {
-            params: { zone_id: props.zoneId, phase: props.phase },
+    act(group, () =>
+        window.axios.post(route('edge.bulk.rules.destroy'), {
+            phase: props.phase,
+            description: group.rule.description,
+            copies: copiesOf(group),
         }),
     );
 };
 
-const toggleExpanded = (id) => {
+const toggleExpanded = (key) => {
     const next = new Set(expanded.value);
-    next.has(id) ? next.delete(id) : next.add(id);
+    next.has(key) ? next.delete(key) : next.add(key);
     expanded.value = next;
 };
 
-const startNew = () => {
+const start = (key) => {
     formError.value = '';
-    editing.value = 'new';
+    editing.value = key;
 };
 
-const startEdit = (rule) => {
-    formError.value = '';
-    editing.value = rule.id;
-};
+const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
 </script>
 
 <template>
@@ -150,22 +176,16 @@ const startEdit = (rule) => {
                 <p class="text-sm text-slate-500">{{ INTRO[phase] }}</p>
             </div>
             <button
-                v-if="!error && editing !== 'new'"
+                v-if="editing !== 'new' && zoneCount > 0"
                 type="button"
                 class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                @click="startNew"
+                @click="start('new')"
             >
                 Add rule
             </button>
         </div>
 
-        <div v-if="error" class="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-            <p>{{ error }}</p>
-            <p v-if="isPermissionError(error)" class="mt-1 text-xs">
-                The API token needs <strong>{{ PERMISSION[phase] }}</strong> — edit it in Cloudflare under My Profile →
-                API Tokens, then reload this tab.
-            </p>
-        </div>
+        <ZoneErrors :errors="errors" :permission="PERMISSION[phase]" />
 
         <EdgeRuleForm
             v-if="editing === 'new'"
@@ -177,88 +197,124 @@ const startEdit = (rule) => {
             :all-zones="allZones"
             :current="current"
             :loading-zones="loadingZones"
-            @save="save"
+            :scope="single ? 'one' : 'sites'"
+            @save="save($event)"
             @cancel="editing = null"
         />
 
-        <p v-if="!error && !rules.length && editing !== 'new'" class="mt-4 text-sm text-slate-500">
-            No {{ phase === 'custom' ? 'custom' : 'rate limiting' }} rules on this zone yet.
+        <p v-if="zoneCount > 0 && !groups.length && editing !== 'new'" class="mt-4 text-sm text-slate-500">
+            No {{ phase === 'custom' ? 'custom' : 'rate limiting' }} rules {{ single ? 'on this zone' : 'on these zones' }} yet.
         </p>
 
-        <ol v-if="rules.length" class="mt-4 divide-y divide-slate-100 rounded-xl ring-1 ring-slate-200">
-            <li v-for="(rule, i) in rules" :key="rule.id" class="p-4" :class="busy === rule.id ? 'opacity-50' : ''">
+        <ol v-if="groups.length" class="mt-4 divide-y divide-slate-100 rounded-xl ring-1 ring-slate-200">
+            <li v-for="(group, i) in groups" :key="group.key" class="p-4" :class="busy === group.key ? 'opacity-50' : ''">
                 <EdgeRuleForm
-                    v-if="editing === rule.id"
+                    v-if="editing === group.key"
                     :phase="phase"
-                    :rule="rule"
+                    :rule="group.rule"
                     :my-ip="myIp"
                     :saving="saving"
                     :error="formError"
-                    @save="save"
+                    :copies="group.copies.length"
+                    :missing="group.missing"
+                    @save="save($event, group)"
                     @cancel="editing = null"
                 />
                 <template v-else>
                     <div class="flex flex-wrap items-start justify-between gap-3">
                         <div class="min-w-0 flex-1">
                             <p class="flex flex-wrap items-center gap-2">
-                                <span v-if="phase === 'custom'" class="text-xs font-semibold tabular-nums text-slate-400">{{ i + 1 }}</span>
-                                <span class="font-medium" :class="rule.enabled ? 'text-slate-900' : 'text-slate-400 line-through'">
-                                    {{ rule.description || '(no name)' }}
+                                <span v-if="phase === 'custom' && single" class="text-xs font-semibold tabular-nums text-slate-400">{{ i + 1 }}</span>
+                                <span class="font-medium" :class="group.enabledCount ? 'text-slate-900' : 'text-slate-400 line-through'">
+                                    {{ group.rule.description || '(no name)' }}
                                 </span>
-                                <span class="rounded-md px-2 py-0.5 text-xs font-medium ring-1" :class="ACTION_TONE[rule.action] ?? ACTION_TONE.log">
-                                    {{ ACTION_LABEL[rule.action] ?? rule.action }}
+                                <span class="rounded-md px-2 py-0.5 text-xs font-medium ring-1" :class="ACTION_TONE[group.rule.action] ?? ACTION_TONE.log">
+                                    {{ ACTION_LABEL[group.rule.action] ?? group.rule.action }}
                                 </span>
-                                <span v-if="!rule.enabled" class="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-500">off</span>
+                                <span v-if="!group.enabledCount" class="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-500">off</span>
+                                <span
+                                    v-else-if="group.enabledCount < group.copies.length"
+                                    class="rounded-md bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                                >
+                                    off on {{ group.copies.length - group.enabledCount }} of {{ group.copies.length }}
+                                </span>
                             </p>
-                            <p v-if="rule.ratelimit" class="mt-1 text-xs text-slate-600">
-                                Over {{ rule.ratelimit.requests_per_period.toLocaleString() }} requests in
-                                {{ seconds(rule.ratelimit.period) }}, then for {{ seconds(rule.ratelimit.mitigation_timeout) }}
+                            <p v-if="group.rule.ratelimit" class="mt-1 text-xs text-slate-600">
+                                Over {{ group.rule.ratelimit.requests_per_period.toLocaleString() }} requests in
+                                {{ seconds(group.rule.ratelimit.period) }}, then for {{ seconds(group.rule.ratelimit.mitigation_timeout) }}
                             </p>
                             <button
                                 type="button"
                                 class="mt-1 block max-w-full text-left font-mono text-xs text-slate-500 hover:text-slate-800"
-                                :class="expanded.has(rule.id) ? 'whitespace-pre-wrap break-all' : 'truncate'"
-                                :title="expanded.has(rule.id) ? '' : 'Show the whole expression'"
-                                @click="toggleExpanded(rule.id)"
+                                :class="expanded.has(group.key) ? 'whitespace-pre-wrap break-all' : 'truncate'"
+                                :title="expanded.has(group.key) ? '' : 'Show the whole expression'"
+                                @click="toggleExpanded(group.key)"
                             >
-                                {{ rule.expression }}
+                                {{ group.rule.expression }}
                             </button>
-                            <p v-if="rule.last_updated" class="mt-1 text-[11px] text-slate-400">Changed {{ when(rule.last_updated) }}</p>
+                            <p v-if="!single" class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                <span
+                                    v-if="!group.missing.length"
+                                    class="rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700"
+                                    :title="zoneNames(group)"
+                                >
+                                    {{ group.copies.length === 2 ? 'On both zones' : `On all ${group.copies.length} zones` }}
+                                </span>
+                                <template v-else>
+                                    <span class="rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700" :title="zoneNames(group)">
+                                        On {{ group.copies.length }} of {{ group.copies.length + group.missing.length }} zones
+                                    </span>
+                                    <span class="text-slate-500">
+                                        missing on {{ group.missing.map((z) => z.zone_name).join(', ') }}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="font-medium text-brand-600 hover:underline disabled:opacity-50"
+                                        :disabled="Boolean(busy)"
+                                        @click="addToRest(group)"
+                                    >
+                                        Add to {{ group.missing.length === 1 ? 'it' : `the other ${group.missing.length}` }}
+                                    </button>
+                                </template>
+                            </p>
+                            <p v-else-if="group.rule.last_updated" class="mt-1 text-[11px] text-slate-400">
+                                Changed {{ when(group.rule.last_updated) }}
+                            </p>
                         </div>
 
                         <div class="flex flex-wrap items-center gap-1.5">
-                            <template v-if="phase === 'custom' && rules.length > 1">
+                            <template v-if="phase === 'custom' && single && groups.length > 1">
                                 <button
                                     type="button"
                                     :class="smallButton"
                                     :disabled="i === 0 || Boolean(busy)"
                                     class="disabled:opacity-30"
-                                    :aria-label="`Move ${rule.description} up`"
-                                    @click="move(rule, i)"
+                                    :aria-label="`Move ${group.rule.description} up`"
+                                    @click="move(group, i)"
                                 >
                                     ↑
                                 </button>
                                 <button
                                     type="button"
                                     :class="smallButton"
-                                    :disabled="i === rules.length - 1 || Boolean(busy)"
+                                    :disabled="i === groups.length - 1 || Boolean(busy)"
                                     class="disabled:opacity-30"
-                                    :aria-label="`Move ${rule.description} down`"
-                                    @click="move(rule, i + 2)"
+                                    :aria-label="`Move ${group.rule.description} down`"
+                                    @click="move(group, i + 2)"
                                 >
                                     ↓
                                 </button>
                             </template>
-                            <button type="button" :class="smallButton" :disabled="Boolean(busy)" @click="toggle(rule)">
-                                {{ rule.enabled ? 'Turn off' : 'Turn on' }}
+                            <button type="button" :class="smallButton" :disabled="Boolean(busy)" @click="toggle(group)">
+                                {{ group.enabledCount === group.copies.length ? 'Turn off' : 'Turn on' }}
                             </button>
-                            <button type="button" :class="smallButton" :disabled="Boolean(busy)" @click="startEdit(rule)">Edit</button>
+                            <button type="button" :class="smallButton" :disabled="Boolean(busy)" @click="start(group.key)">Edit</button>
                             <button
                                 type="button"
                                 :class="smallButton"
                                 class="text-rose-600"
                                 :disabled="Boolean(busy)"
-                                @click="remove(rule)"
+                                @click="remove(group)"
                             >
                                 Delete
                             </button>

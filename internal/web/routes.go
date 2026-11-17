@@ -244,6 +244,12 @@ func (a *App) routes() *router {
 	rt.post("/dns-accounts/{account}/edge/level", "edge.level", authenticated, a.edgeLevel)
 	rt.post("/edge/bulk/rules", "edge.bulk.rules", authenticated, a.edgeBulkRuleStore)
 	rt.post("/edge/bulk/access", "edge.bulk.access", authenticated, a.edgeBulkAccessStore)
+	rt.post("/edge/all", "edge.all", authenticated, a.edgeAll)
+	rt.post("/edge/bulk/rules/update", "edge.bulk.rules.update", authenticated, a.edgeBulkRuleUpdate)
+	rt.post("/edge/bulk/rules/delete", "edge.bulk.rules.destroy", authenticated, a.edgeBulkRuleDestroy)
+	rt.post("/edge/bulk/access/update", "edge.bulk.access.update", authenticated, a.edgeBulkAccessUpdate)
+	rt.post("/edge/bulk/access/delete", "edge.bulk.access.destroy", authenticated, a.edgeBulkAccessDestroy)
+	rt.post("/edge/bulk/level", "edge.bulk.level", authenticated, a.edgeBulkLevel)
 
 	rt.get("/dns/nameserver", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
 		inertia.Redirect(w, r, "/dns")
