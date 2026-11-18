@@ -120,6 +120,16 @@ func (a *App) Start(ctx context.Context) {
 		a.EnsurePanelAddress()
 
 		a.EnsureNginxHelpers()
+
+		// Vhosts written by older versions get the guard include in every
+		// server block — without it "Cloudflare only" leaves their http://
+		// redirect answering anyone who has the server's IP.
+		if a.Store.ServiceInstalled("nginx") {
+			if err := a.Sites.EnsureGuardIncludes(ctx); err != nil {
+				a.Log.Error("could not bring the site vhosts up to date", "error", err)
+			}
+		}
+
 		a.EnsureMailConfigured()
 		a.EnsureWebmailServed()
 		a.EnsurePhpMyAdminReady(nil)

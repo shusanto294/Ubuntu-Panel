@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -614,6 +615,18 @@ func (s *Service) SetCronJobs(ctx context.Context, siteID int64, jobs []CronJob)
 	return nil
 }
 
+// redirectBlockHead is an HTTPS site's port-80 block as versions before 2.36.0
+// wrote it: server_name, then straight into the ACME challenge, with no
+// GuardInclude. That block answers http:// with a 301 to whoever asks, so
+// "Cloudflare only" never reached it.
+var redirectBlockHead = regexp.MustCompile(`(    listen \[::\]:80;\n    server_name [^;\n]+;\n)(\n    location \^~ /\.well-known/acme-challenge/)`)
+
+// guardRedirectBlock gives that port-80 block the include, where the panel
+// writes it today: right under server_name.
+func guardRedirectBlock(contents string) string {
+	return redirectBlockHead.ReplaceAllString(contents, "${1}    "+GuardInclude+"\n${2}")
+}
+
 // EnsureGuardIncludes brings the vhosts written by older versions up to date
 // — GuardInclude after each server block's error_log, and WordPress's
 // internal files refused — and reloads nginx once for all of them. Every file is put back if nginx will not have the result: this
@@ -630,16 +643,24 @@ func (s *Service) EnsureGuardIncludes(ctx context.Context) error {
 		path := AvailablePath(site)
 
 		contents, err := proc.ReadFile(path, true)
-		if err != nil || strings.Contains(contents, GuardInclude) || !strings.Contains(contents, "# Managed by") {
+		if err != nil || !strings.Contains(contents, "# Managed by") {
 			continue
 		}
+
+		updated := contents
 
 		marker := fmt.Sprintf("    error_log  /var/log/nginx/%s-error.log;\n", site.Domain)
-		if !strings.Contains(contents, marker) {
+		if !strings.Contains(updated, GuardInclude) && strings.Contains(updated, marker) {
+			updated = strings.ReplaceAll(updated, marker, marker+"    "+GuardInclude+"\n")
+		}
+
+		updated = guardRedirectBlock(updated)
+
+		if updated == contents {
 			continue
 		}
 
-		if err := proc.PutFile(path, strings.ReplaceAll(contents, marker, marker+"    "+GuardInclude+"\n"), true); err != nil {
+		if err := proc.PutFile(path, updated, true); err != nil {
 			return err
 		}
 		previous[path] = contents

@@ -527,3 +527,29 @@ func TestCatchAllRefusesTheBareAddress(t *testing.T) {
 		t.Fatal("ssl_reject_handshake written for an nginx that may not know it")
 	}
 }
+
+// A vhost written before 2.36.0 had no guard in its port-80 redirect block, so
+// "Cloudflare only" let http:// through with a 301. The upgrade at start puts
+// it there, exactly where a vhost written today has it, and nowhere else.
+func TestGuardRedirectBlockUpgradesAnOldVhost(t *testing.T) {
+	site := wordpress()
+	current := RenderVhost(site, true, false)
+
+	old := strings.Replace(current, "    server_name example.com www.example.com;\n    "+GuardInclude+"\n", "    server_name example.com www.example.com;\n", 1)
+	if old == current {
+		t.Fatal("the test could not make a pre-2.36.0 vhost from today's")
+	}
+
+	if got := guardRedirectBlock(old); got != current {
+		t.Fatalf("upgraded vhost differs from today's:\n%s", got)
+	}
+
+	if got := guardRedirectBlock(current); got != current {
+		t.Fatal("a vhost that already has the guard was changed")
+	}
+
+	plain := RenderVhost(site, false, false)
+	if got := guardRedirectBlock(plain); got != plain {
+		t.Fatal("a plain-HTTP vhost was changed")
+	}
+}
