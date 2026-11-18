@@ -604,7 +604,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 	// which is enough for certbot's own check to reach the challenge, whichever
 	// port a CDN in front of this machine sends it to.
 	if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-		panelVhost(domain, panelPort, port, php, false), true); err != nil {
+		panelVhost(domain, panelPort, port, php, false, a.Sites.Refusal()), true); err != nil {
 		a.Store.FinishTask(taskID, "failed", err.Error(), 0)
 
 		return err
@@ -674,7 +674,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		}
 
 		if err := proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-			panelVhost(domain, panelPort, port, php, true), true); err != nil {
+			panelVhost(domain, panelPort, port, php, true, a.Sites.Refusal()), true); err != nil {
 			return "", err
 		}
 
@@ -682,7 +682,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 		// configuration for every site on the box.
 		if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
 			proc.PutFile("/etc/nginx/sites-available/ubuntu-panel",
-				panelVhost(domain, panelPort, port, php, false), true)
+				panelVhost(domain, panelPort, port, php, false, a.Sites.Refusal()), true)
 			proc.Ok("sudo systemctl reload nginx")
 
 			return "", fmt.Errorf("nginx rejected the HTTPS vhost, so the panel was put back on HTTP:\n%s",
@@ -739,7 +739,7 @@ func (a *App) configurePanelDomain(ctx context.Context, domain, email string) er
 // name they have not guessed. The self-signed pair is presented where the port
 // speaks TLS, because a default server on an `ssl` port with no certificate is a
 // configuration nginx refuses outright.
-func panelDenyBlock(panelPort int, secure bool) string {
+func panelDenyBlock(panelPort int, secure bool, refusal sites.Refusal) string {
 	listen := fmt.Sprintf(
 		"    listen %[1]d default_server;\n"+
 			"    listen [::]:%[1]d default_server;\n", panelPort)
@@ -749,7 +749,7 @@ func panelDenyBlock(panelPort int, secure bool) string {
 		listen = fmt.Sprintf(
 			"    listen %[1]d ssl default_server;\n"+
 				"    listen [::]:%[1]d ssl default_server;\n", panelPort)
-		tls = fmt.Sprintf(
+		tls = refusal.TLS() + fmt.Sprintf(
 			"    ssl_certificate     %[1]s.crt;\n"+
 				"    ssl_certificate_key %[1]s.key;\n"+
 				"    ssl_protocols TLSv1.2 TLSv1.3;\n"+
@@ -762,9 +762,9 @@ func panelDenyBlock(panelPort int, secure bool) string {
 			"    server_name _;\n"+
 			"\n"+
 			"%s"+
-			"    return 404 \"No site is configured for this hostname.\\n\";\n"+
+			"    %s\n"+
 			"}\n",
-		listen, tls)
+		listen, tls, refusal.Return())
 }
 
 // panelPortVhost is the panel itself, on its port.
@@ -777,7 +777,7 @@ func panelDenyBlock(panelPort int, secure bool) string {
 // 404 above. That is what takes the panel off the bare address entirely — before
 // this, `https://<ip>:8443` opened the login form for anyone who scanned the
 // port, whatever hostname the operator had put in front of it.
-func panelPortVhost(domain string, panelPort, port int, php string, certificate string) string {
+func panelPortVhost(domain string, panelPort, port int, php string, certificate string, refusal sites.Refusal) string {
 	tls := ""
 	listen := fmt.Sprintf(
 		"    listen %[1]d default_server;\n"+
@@ -831,7 +831,7 @@ func panelPortVhost(domain string, panelPort, port int, php string, certificate 
 		return block
 	}
 
-	return block + panelDenyBlock(panelPort, certificate != "")
+	return block + panelDenyBlock(panelPort, certificate != "", refusal)
 }
 
 // acmeLocation is the HTTP-01 challenge, on whichever block it is put in.
@@ -926,7 +926,7 @@ const panelNoAccessLog = "    access_log off;\n"
 
 // panelVhost is the whole file: the panel on its own port, plus the panel on the
 // hostname when one has been set.
-func panelVhost(domain string, panelPort, port int, php string, secure bool) string {
+func panelVhost(domain string, panelPort, port int, php string, secure bool, refusal sites.Refusal) string {
 	certificate := ""
 	if secure && domain != "" {
 		certificate = domain
@@ -938,7 +938,7 @@ func panelVhost(domain string, panelPort, port int, php string, secure bool) str
 		"# configured belongs to the catch-all, whose answer is a 404 rather than a\n" +
 		"# login form. Once a hostname is set the panel's own port is named too, and\n" +
 		"# the bare IP gets that same 404 there.\n" +
-		panelPortVhost(domain, panelPort, port, php, certificate)
+		panelPortVhost(domain, panelPort, port, php, certificate, refusal)
 
 	if domain != "" {
 		file += panelHostVhost(domain, port, php, secure)
@@ -992,7 +992,7 @@ func (a *App) refreshPanelVhost(runner *tasks.Runner) error {
 		sites.EnsureDefaultCert()
 	}
 
-	rewritten := panelVhost(domain, a.panelPort(), port, php, secure)
+	rewritten := panelVhost(domain, a.panelPort(), port, php, secure, a.Sites.Refusal())
 
 	if strings.TrimSpace(rewritten) == strings.TrimSpace(current) {
 		return nil

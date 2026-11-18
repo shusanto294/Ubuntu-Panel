@@ -247,6 +247,7 @@ func (a *App) EnsureNginxHelpers() {
 	}
 
 	a.ensureRealIP()
+	a.ensureCloudflareOnly()
 
 	const path = "/etc/nginx/conf.d/panel-proxy.conf"
 

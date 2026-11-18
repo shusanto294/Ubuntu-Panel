@@ -123,7 +123,7 @@ func TestDocumentRootJoinsWithoutDoubleSlashes(t *testing.T) {
 // catch-all that claims it too is not a warning: nginx refuses the whole
 // configuration, for every site on the box and for the panel with them.
 func TestCatchAllYieldsPortEightyWhenSomethingElseHasIt(t *testing.T) {
-	shared := catchAll(true)
+	shared := catchAll(true, Answer404)
 
 	if strings.Contains(shared, "listen 80 default_server") {
 		t.Fatalf("the catch-all claimed a port 80 default server that is already taken:\n%s", shared)
@@ -142,7 +142,7 @@ func TestCatchAllYieldsPortEightyWhenSomethingElseHasIt(t *testing.T) {
 // been written yet — the catch-all takes both, so an unknown hostname gets a
 // 404 rather than whichever site happens to be first.
 func TestCatchAllTakesBothSlotsWhenTheyAreFree(t *testing.T) {
-	shared := catchAll(false)
+	shared := catchAll(false, Answer404)
 
 	if !strings.Contains(shared, "listen 80 default_server") ||
 		!strings.Contains(shared, "listen 443 ssl default_server") {
@@ -488,5 +488,42 @@ func TestWordPressInternalsAreRefused(t *testing.T) {
 	}
 	if strings.Index(vhost, "wp-settings.php") > strings.Index(vhost, `location ~ \.php$`) {
 		t.Error("the refusals come after the PHP location, which would win")
+	}
+}
+
+func TestSupportsRejectHandshake(t *testing.T) {
+	for output, want := range map[string]bool{
+		"nginx version: nginx/1.18.0 (Ubuntu)": false,
+		"nginx version: nginx/1.19.4":          true,
+		"nginx version: nginx/1.24.0 (Ubuntu)": true,
+		"nginx version: nginx/":                false,
+		"":                                     false,
+	} {
+		if got := SupportsRejectHandshake(output); got != want {
+			t.Errorf("SupportsRejectHandshake(%q) = %v, want %v", output, got, want)
+		}
+	}
+}
+
+// Refusing the bare address closes the connection on both ports and, where
+// nginx can, refuses the TLS handshake before any certificate is shown — but
+// the ACME challenge on 80 still answers.
+func TestCatchAllRefusesTheBareAddress(t *testing.T) {
+	shared := catchAll(false, RejectHandshake)
+
+	if strings.Contains(shared, "No site is configured") {
+		t.Fatalf("the catch-all still answers:\n%s", shared)
+	}
+
+	if strings.Count(shared, "return 444;") != 2 || !strings.Contains(shared, "ssl_reject_handshake on;") {
+		t.Fatalf("the catch-all does not close both ports:\n%s", shared)
+	}
+
+	if !strings.Contains(shared, "/.well-known/acme-challenge/") {
+		t.Fatal("the port 80 half no longer serves the ACME challenge")
+	}
+
+	if strings.Contains(catchAll(false, CloseConnection), "ssl_reject_handshake") {
+		t.Fatal("ssl_reject_handshake written for an nginx that may not know it")
 	}
 }

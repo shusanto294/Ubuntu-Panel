@@ -58,7 +58,21 @@ func (s *Service) WriteSharedConfig(runner *tasks.Runner) error {
 		proc.Ok(command)
 	}
 
-	return proc.PutFile(catchAllPath, catchAll(portEightyClaimed()), true)
+	return proc.PutFile(catchAllPath, catchAll(portEightyClaimed(), s.Refusal()), true)
+}
+
+// Refusal is what the default servers should do on this machine, from the
+// Security page's switch and the nginx installed.
+func (s *Service) Refusal() Refusal {
+	if !s.Store.SettingBool(RefuseAddressSetting, false) {
+		return Answer404
+	}
+
+	if SupportsRejectHandshake(proc.Run("nginx -v 2>&1", 15*time.Second).Output) {
+		return RejectHandshake
+	}
+
+	return CloseConnection
 }
 
 // defaultCertCommand writes the self-signed pair if it is not already there.
@@ -91,8 +105,8 @@ const catchAllPath = "/etc/nginx/conf.d/000-panel-default.conf"
 // box, and for the panel itself, which is served through the same nginx. The
 // panel's own vhost claims port 80 so that the panel answers on the server's
 // bare IP address, so the catch-all only claims what is free.
-func catchAll(portEightyTaken bool) string {
-	full := defaultServer()
+func catchAll(portEightyTaken bool, refusal Refusal) string {
+	full := defaultServer(refusal)
 
 	if !portEightyTaken {
 		return full

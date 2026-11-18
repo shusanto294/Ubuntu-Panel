@@ -255,6 +255,7 @@ func (a *App) hardeningProps(ctx context.Context) map[string]any {
 		"locks":             a.lockProps(ctx),
 		"sites":             sites,
 		"cloudflare_attack": a.cloudflareAttackOn(),
+		"origin":            a.originProps(ctx),
 	}
 }
 

@@ -57,6 +57,40 @@ const toggle = async (item) => {
     );
 };
 
+// Who the websites answer: Cloudflare only, and nothing for the bare IP.
+const origin = computed(() => props.server.origin ?? {});
+const ORIGIN_SWITCHES = computed(() => [
+    {
+        key: 'cloudflare_only',
+        title: 'Accept web traffic from Cloudflare only',
+        text: 'Websites answer only connections that come through Cloudflare. Anyone who finds this server’s IP address and sends a site’s hostname straight to it gets the connection closed with no response, so Cloudflare’s firewall, cache and rate limits cannot be bypassed. Email, webmail on mail.* hostnames, SSH, the panel and Let’s Encrypt certificates keep working.',
+        warn: 'Every website’s DNS record must be proxied through Cloudflare (the orange cloud). A site that is “DNS only” stops loading.',
+        confirm:
+            'Websites will only answer requests that come through Cloudflare. Any site whose DNS record is “DNS only” (grey cloud) stops loading until it is proxied.' +
+            (origin.value.sites_not_edge?.length
+                ? ` Check these are proxied: ${origin.value.sites_not_edge.join(', ')}.`
+                : '') +
+            ' Email, SSH and the panel are not affected.',
+        applied: 'cloudflare_only_applied',
+    },
+    {
+        key: 'refuse_address',
+        title: 'Refuse requests to this server’s IP address',
+        text: 'Opening http:// or https:// with this server’s IP address — or any hostname that has no site here — gets the connection closed without an answer, and on HTTPS the handshake is refused before a certificate is shown. Scanners learn nothing about what runs here. Websites, email and certificates keep working.',
+        warn: origin.value.panel_domain
+            ? `The panel answers only at ${origin.value.panel_domain}; its port ${origin.value.panel_port} refuses the bare IP too.`
+            : `No panel hostname is set, so the panel’s own port ${origin.value.panel_port} still answers on the IP address — that is how you reach it. Set a hostname in Settings to close that too.`,
+    },
+]);
+
+const toggleOrigin = async (item) => {
+    const on = !origin.value[item.key];
+    if (on && item.confirm && !(await confirmAction(`Turn on ${item.title.toLowerCase()}?`, item.confirm, 'Turn on'))) return;
+
+    busy.value = item.key;
+    router.post(route('security.origin'), { feature: item.key, enabled: on }, { preserveScroll: true, onFinish: () => (busy.value = '') });
+};
+
 // Site locks.
 const locks = computed(() => props.server.locks ?? []);
 const minutesLeft = (at) => Math.max(1, Math.round((at * 1000 - Date.now()) / 60000));
@@ -90,6 +124,34 @@ const cloudflareAttack = (domain, on) => {
 
 <template>
     <div class="space-y-6">
+        <div v-if="origin.nginx" class="grid gap-6 md:grid-cols-2">
+            <div v-for="item in ORIGIN_SWITCHES" :key="item.key" :class="card" class="flex flex-col">
+                <div class="flex items-start justify-between gap-4">
+                    <h3 class="font-semibold text-slate-900">{{ item.title }}</h3>
+                    <button
+                        type="button"
+                        role="switch"
+                        :aria-checked="Boolean(origin[item.key])"
+                        :aria-label="item.title"
+                        class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50"
+                        :class="origin[item.key] ? 'bg-emerald-600' : 'bg-slate-300'"
+                        :disabled="busy !== ''"
+                        @click="toggleOrigin(item)"
+                    >
+                        <span
+                            class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                            :class="origin[item.key] ? 'left-[22px]' : 'left-0.5'"
+                        />
+                    </button>
+                </div>
+                <p class="mt-2 text-sm text-slate-500">{{ item.text }}</p>
+                <p class="mt-3 text-xs text-amber-700">{{ item.warn }}</p>
+                <p v-if="item.applied && origin[item.key] && !origin[item.applied]" class="mt-2 text-xs text-rose-700">
+                    On, but not applied on the machine right now — switch it off and on again.
+                </p>
+            </div>
+        </div>
+
         <div class="grid gap-6 md:grid-cols-2">
             <div v-for="item in SWITCHES" :key="item.key" :class="card" class="flex flex-col">
                 <div class="flex items-start justify-between gap-4">

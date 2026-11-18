@@ -149,3 +149,29 @@ func TestRealIPConfigTrustsOnlyCloudflare(t *testing.T) {
 		t.Fatalf("trusts every address:\n%s", config)
 	}
 }
+
+// The peer is judged before the real-IP module rewrites it: on $remote_addr
+// every proxied visitor would be refused, since their own address is what
+// CF-Connecting-IP puts there.
+func TestCloudflareOnlyJudgesTheConnectionNotTheHeader(t *testing.T) {
+	config := CloudflareOnlyMap()
+
+	if !strings.Contains(config, "geo $realip_remote_addr $panel_cloudflare_peer") {
+		t.Fatalf("the map does not judge the connecting address:\n%s", config)
+	}
+
+	for _, cidr := range CloudflareRanges {
+		if !strings.Contains(config, "    "+cidr+" 1;\n") {
+			t.Errorf("Cloudflare's %s is not let in", cidr)
+		}
+	}
+
+	// Let's Encrypt reaches a hostname that is not proxied directly.
+	if !strings.Contains(config, `"~^0:/\.well-known/acme-challenge/" 0;`) {
+		t.Error("the ACME challenge is refused to direct connections")
+	}
+
+	if !strings.Contains(CloudflareOnlyGuard(), "if ($panel_refuse_direct) { return 444; }") {
+		t.Error("the guard does not close the connection")
+	}
+}

@@ -394,8 +394,20 @@ func cacheDirectives(site *store.Site, tls bool) string {
 // little speed; guessing wrong the other way costs the whole configuration,
 // for every site on the box.
 func SupportsHTTP2Directive(versionOutput string) bool {
+	return nginxAtLeast(versionOutput, 1, 25, 1)
+}
+
+// SupportsRejectHandshake reports whether this nginx takes
+// `ssl_reject_handshake on;`, which only 1.19.4 and later do — Ubuntu 22.04's
+// own nginx is 1.18. Unreadable is no, for the same reason as above.
+func SupportsRejectHandshake(versionOutput string) bool {
+	return nginxAtLeast(versionOutput, 1, 19, 4)
+}
+
+// nginxAtLeast reads `nginx -v` and compares it with a version.
+func nginxAtLeast(versionOutput string, wantMajor, wantMinor, wantPatch int) bool {
 	_, rest, found := strings.Cut(versionOutput, "nginx/")
-	if !found {
+	if !found || len(strings.Fields(rest)) == 0 {
 		return false
 	}
 
@@ -422,15 +434,15 @@ func SupportsHTTP2Directive(versionOutput string) bool {
 
 	major, minor, patch := number(parts[0]), number(parts[1]), number(parts[2])
 
-	if major != 1 {
-		return major > 1
+	if major != wantMajor {
+		return major > wantMajor
 	}
 
-	if minor != 25 {
-		return minor > 25
+	if minor != wantMinor {
+		return minor > wantMinor
 	}
 
-	return patch >= 1
+	return patch >= wantPatch
 }
 
 // staticOutput is where a proxied framework leaves its built client assets, and
@@ -812,7 +824,8 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 
 	out.WriteString("server {\n")
 	out.WriteString("    listen 80;\n    listen [::]:80;\n")
-	fmt.Fprintf(&out, "    server_name %s;\n\n", names)
+	fmt.Fprintf(&out, "    server_name %s;\n", names)
+	out.WriteString("    " + GuardInclude + "\n\n")
 
 	acme(&out)
 
@@ -921,6 +934,45 @@ const helperConfig = "# Managed by " + config.Name + "\n" +
 	"    \"\"      $scheme;\n" +
 	"}\n"
 
+// Refusal is how a default server answers an address nobody configured — this
+// machine's bare IP, or a hostname with no site.
+type Refusal int
+
+const (
+	// Answer404 says "No site is configured for this hostname." — the default.
+	Answer404 Refusal = iota
+
+	// CloseConnection answers nothing: nginx's 444 drops the connection
+	// without a response, so a scanner learns only that the port is open.
+	CloseConnection
+
+	// RejectHandshake is CloseConnection, and on HTTPS the TLS handshake is
+	// refused before any certificate is shown (nginx 1.19.4 and later).
+	RejectHandshake
+)
+
+// RefuseAddressSetting is the Security page's "Refuse requests to this
+// server's IP address" switch.
+const RefuseAddressSetting = "security_refuse_address"
+
+// Return is the directive a default server answers with.
+func (r Refusal) Return() string {
+	if r == Answer404 {
+		return "return 404 \"No site is configured for this hostname.\\n\";"
+	}
+
+	return "return 444;"
+}
+
+// TLS is the extra line for a default server on an HTTPS port.
+func (r Refusal) TLS() string {
+	if r == RejectHandshake {
+		return "    ssl_reject_handshake on;\n"
+	}
+
+	return ""
+}
+
 // defaultServer is the catch-all that stops an unknown hostname being served
 // by whichever site happens to be first.
 //
@@ -928,7 +980,10 @@ const helperConfig = "# Managed by " + config.Name + "\n" +
 // site whose certificate has not been issued yet has no 443 block, and its
 // HTTPS traffic silently lands on another site — which then redirects the
 // visitor to *its* login page.
-func defaultServer() string {
+//
+// The ACME challenge stays reachable on 80 whatever the refusal: it is how a
+// hostname with no site of its own yet gets its first certificate.
+func defaultServer(refusal Refusal) string {
 	return fmt.Sprintf(
 		"# Managed by %s — refuses unknown hostnames\n"+
 			"server {\n"+
@@ -942,7 +997,7 @@ func defaultServer() string {
 			"    }\n"+
 			"\n"+
 			"    location / {\n"+
-			"        return 404 \"No site is configured for this hostname.\\n\";\n"+
+			"        %s\n"+
 			"    }\n"+
 			"}\n"+
 			"\n"+
@@ -951,12 +1006,13 @@ func defaultServer() string {
 			"    listen [::]:443 ssl default_server;\n"+
 			"    server_name _;\n"+
 			"\n"+
+			"%s"+
 			"    ssl_certificate     %s.crt;\n"+
 			"    ssl_certificate_key %s.key;\n"+
 			"\n"+
-			"    return 404 \"No site is configured for this hostname.\\n\";\n"+
+			"    %s\n"+
 			"}\n",
-		config.Name, ACMEWebroot, DefaultCert, DefaultCert)
+		config.Name, ACMEWebroot, refusal.Return(), refusal.TLS(), DefaultCert, DefaultCert, refusal.Return())
 }
 
 // phpValueParam is the site's own php.ini overrides, handed to PHP-FPM through

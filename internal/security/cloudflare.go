@@ -1,8 +1,13 @@
 package security
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"strings"
+	"time"
+
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 )
 
 // CloudflareRanges are the addresses Cloudflare's proxies connect from,
@@ -69,4 +74,122 @@ func RealIPConfig() string {
 	b.WriteString("real_ip_header CF-Connecting-IP;\n")
 
 	return b.String()
+}
+
+// ------------------------------------------------------------ Cloudflare only
+
+// "Accept web traffic from Cloudflare only": every site answers a connection
+// that comes from one of Cloudflare's addresses and closes any other without a
+// response (nginx's 444). Somebody who finds the server's IP — in an old DNS
+// record, a mail header, a scan — cannot reach a site around Cloudflare's
+// firewall, cache and rate limits by sending its hostname straight here.
+//
+// It is done in nginx rather than ufw on purpose. A firewall rule for ports 80
+// and 443 cannot tell a site from a mail hostname, and mail.example.com is
+// never proxied by Cloudflare — so its webmail would go dark, and certbot's
+// renewal of the certificate Postfix and Dovecot use would fail ninety days
+// later. In nginx the rule sits only in the sites' own server blocks (through
+// the panel-guard include every site vhost has), so the mail hostnames, the
+// panel's hostname and its own port, SSH and the mail ports are untouched, and
+// the ACME challenge stays reachable for every hostname.
+//
+// The connecting address is $realip_remote_addr: the real peer, before the
+// real-IP module has replaced $remote_addr with the visitor's own from
+// CF-Connecting-IP. Judging $remote_addr would refuse every visitor.
+
+// CloudflareOnlyMapPath declares, for the whole http block, whether the
+// connection came from Cloudflare.
+const CloudflareOnlyMapPath = "/etc/nginx/conf.d/panel-cloudflare-only.conf"
+
+// CloudflareOnlyGuardPath is the line in each site's server blocks that acts
+// on it.
+const CloudflareOnlyGuardPath = "/etc/nginx/panel-guard/cloudflare-only.conf"
+
+// CloudflareOnlyMap is the conf.d file. Loopback is let in too, so the
+// machine's own requests to its sites — a health check, WordPress calling
+// itself through /etc/hosts — keep working.
+func CloudflareOnlyMap() string {
+	var b strings.Builder
+
+	b.WriteString("# Managed by the server panel — Security → Hardening → Cloudflare only.\n")
+	b.WriteString("# 1 when the connection itself comes from Cloudflare (or this machine).\n")
+	b.WriteString("geo $realip_remote_addr $panel_cloudflare_peer {\n")
+	b.WriteString("    default 0;\n")
+	b.WriteString("    127.0.0.0/8 1;\n")
+	b.WriteString("    ::1 1;\n")
+
+	for _, cidr := range CloudflareRanges {
+		b.WriteString("    " + cidr + " 1;\n")
+	}
+
+	b.WriteString("}\n\n")
+	b.WriteString("# Refuse a direct connection, except to the ACME challenge, which Let's\n")
+	b.WriteString("# Encrypt reaches without Cloudflare for a hostname that is not proxied.\n")
+	b.WriteString("map \"$panel_cloudflare_peer:$uri\" $panel_refuse_direct {\n")
+	b.WriteString("    default 1;\n")
+	b.WriteString("    \"~^1:\" 0;\n")
+	b.WriteString("    \"~^0:/\\.well-known/acme-challenge/\" 0;\n")
+	b.WriteString("}\n")
+
+	return b.String()
+}
+
+// CloudflareOnlyGuard is the server-block file.
+func CloudflareOnlyGuard() string {
+	return "# Managed by the server panel — Security → Hardening → Cloudflare only.\n" +
+		"if ($panel_refuse_direct) { return 444; }\n"
+}
+
+// CloudflareOnlyApplied is whether both files are on the machine as this build
+// writes them.
+func CloudflareOnlyApplied() bool {
+	mapFile, err := proc.ReadFile(CloudflareOnlyMapPath, true)
+	if err != nil || mapFile != CloudflareOnlyMap() {
+		return false
+	}
+
+	guard, err := proc.ReadFile(CloudflareOnlyGuardPath, true)
+
+	return err == nil && guard == CloudflareOnlyGuard()
+}
+
+// ApplyCloudflareOnly writes the two files, or removes them, and reloads
+// nginx. The map goes in before the guard that uses its variable and comes out
+// after it, so no moment has a configuration nginx would refuse; and if nginx
+// refuses the result anyway, the files are taken out again and nothing changes.
+func ApplyCloudflareOnly(on bool) error {
+	if !proc.Which("nginx") {
+		return errors.New("nginx is not installed")
+	}
+
+	remove := func() {
+		proc.Run("sudo rm -f "+proc.Quote(CloudflareOnlyGuardPath)+" "+proc.Quote(CloudflareOnlyMapPath), time.Minute)
+	}
+
+	if on {
+		if err := proc.PutFile(CloudflareOnlyMapPath, CloudflareOnlyMap(), true); err != nil {
+			return err
+		}
+
+		if err := proc.PutFile(CloudflareOnlyGuardPath, CloudflareOnlyGuard(), true); err != nil {
+			remove()
+			return err
+		}
+	} else {
+		remove()
+	}
+
+	if test := proc.Run("sudo nginx -t 2>&1", time.Minute); !test.OK() {
+		if on {
+			remove()
+		}
+
+		return fmt.Errorf("nginx refused the configuration, so nothing was changed: %s", lastLines(test.Output, 2))
+	}
+
+	if result := proc.Run("sudo systemctl reload nginx 2>&1", time.Minute); !result.OK() {
+		return fmt.Errorf("nginx did not reload: %s", lastLines(result.Output, 2))
+	}
+
+	return nil
 }

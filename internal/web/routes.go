@@ -291,6 +291,7 @@ func (a *App) routes() *router {
 	rt.post("/security/alerts", "security.alerts", authenticated, a.securityAlerts)
 	rt.post("/security/server-hardening", "security.server-hardening", authenticated, a.securityServerHardening)
 	rt.post("/security/locks", "security.locks", authenticated, a.securityLock)
+	rt.post("/security/origin", "security.origin", authenticated, a.securityOrigin)
 	rt.post("/security/cloudflare-attack", "security.cloudflare-attack", authenticated, a.securityCloudflareAttack)
 	rt.delete("/security/sessions/{session}", "security.sessions.destroy", authenticated,
 		a.securityRevokeSession)

@@ -13,9 +13,9 @@ import (
 // The three shapes the panel's own vhost comes in.
 func panelVhosts() map[string]string {
 	return map[string]string{
-		"no hostname":                 panelVhost("", 8443, 8088, "8.3", false),
-		"hostname":                    panelVhost("panel.example.com", 8443, 8088, "8.3", false),
-		"hostname with a certificate": panelVhost("panel.example.com", 8443, 8088, "8.3", true),
+		"no hostname":                 panelVhost("", 8443, 8088, "8.3", false, sites.Answer404),
+		"hostname":                    panelVhost("panel.example.com", 8443, 8088, "8.3", false, sites.Answer404),
+		"hostname with a certificate": panelVhost("panel.example.com", 8443, 8088, "8.3", true, sites.Answer404),
 	}
 }
 
@@ -77,7 +77,7 @@ func TestThePanelClaimsNoBarePort(t *testing.T) {
 // form.
 func TestAHostnameTakesThePanelOffTheBareAddress(t *testing.T) {
 	// With no hostname the port is the address, and answers to anything.
-	bare := panelVhost("", 8443, 8088, "8.3", false)
+	bare := panelVhost("", 8443, 8088, "8.3", false, sites.Answer404)
 
 	if !strings.Contains(bare, "listen 8443 default_server;") ||
 		!strings.Contains(bare, "server_name _;") {
@@ -89,7 +89,7 @@ func TestAHostnameTakesThePanelOffTheBareAddress(t *testing.T) {
 	}
 
 	for _, secure := range []bool{false, true} {
-		vhost := panelVhost("panel.example.com", 8443, 8088, "8.3", secure)
+		vhost := panelVhost("panel.example.com", 8443, 8088, "8.3", secure, sites.Answer404)
 
 		for _, block := range strings.Split(vhost, "server {")[1:] {
 			if !strings.Contains(block, "listen 8443") {
@@ -133,7 +133,7 @@ func TestAHostnameTakesThePanelOffTheBareAddress(t *testing.T) {
 // because there is no name to redirect. The bare address belongs to the
 // catch-all, which is what answers "No site is configured for this hostname."
 func TestWithNoHostnameThePanelTouchesNeitherPort(t *testing.T) {
-	vhost := panelVhost("", 8443, 8088, "8.3", false)
+	vhost := panelVhost("", 8443, 8088, "8.3", false, sites.Answer404)
 
 	for _, listen := range []string{"listen 80", "listen [::]:80", "listen 443"} {
 		if strings.Contains(vhost, listen+";") || strings.Contains(vhost, listen+" ") {
@@ -150,7 +150,7 @@ func TestWithNoHostnameThePanelTouchesNeitherPort(t *testing.T) {
 // what a CDN in front of it reports as an origin SSL error — and what stopped
 // the certificate being issued in the first place.
 func TestAHostnameServesThePanelWithoutAPort(t *testing.T) {
-	plain := panelVhost("panel.example.com", 8443, 8088, "8.3", false)
+	plain := panelVhost("panel.example.com", 8443, 8088, "8.3", false, sites.Answer404)
 
 	if !strings.Contains(plain, "listen 443 ssl;") {
 		t.Errorf("a hostname with no certificate does not answer on 443 at all:\n%s", plain)
@@ -166,7 +166,7 @@ func TestAHostnameServesThePanelWithoutAPort(t *testing.T) {
 		t.Errorf("a hostname with no certificate redirects into its own warning:\n%s", plain)
 	}
 
-	secure := panelVhost("panel.example.com", 8443, 8088, "8.3", true)
+	secure := panelVhost("panel.example.com", 8443, 8088, "8.3", true, sites.Answer404)
 
 	if !strings.Contains(secure, "return 301 https://panel.example.com$request_uri;") {
 		t.Errorf("port 80 does not redirect to the certificate's address:\n%s", secure)
@@ -202,7 +202,7 @@ func TestAHostnameServesThePanelWithoutAPort(t *testing.T) {
 // certificate is never issued, and nothing on the machine can see why.
 func TestTheHostnameAnswersTheACMEChallengeOnBothPorts(t *testing.T) {
 	for _, secure := range []bool{false, true} {
-		vhost := panelVhost("panel.example.com", 8443, 8088, "8.3", secure)
+		vhost := panelVhost("panel.example.com", 8443, 8088, "8.3", secure, sites.Answer404)
 
 		for _, block := range strings.Split(vhost, "server {")[1:] {
 			if strings.Contains(block, "listen 8443") {
