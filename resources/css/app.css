@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * A table cell that may break a long name breaks it only where the line is
+ * full, not between every letter. `break-all` lets a cell shrink to one
+ * character wide, and on a phone the table then takes it at its word: a
+ * domain comes out as a column of three-letter rows.
+ */
+td.break-all {
+    word-break: normal;
+    overflow-wrap: anywhere;
+}

@@ -404,6 +404,26 @@ var schema = []string{
 	`CREATE INDEX IF NOT EXISTS notifications_created ON notifications(created_at)`,
 	`CREATE INDEX IF NOT EXISTS notifications_unread ON notifications(read_at, id)`,
 
+	// Addresses challenged or blocked at Cloudflare for asking for pages that
+	// do not exist, each with the access rule the panel made and when it is
+	// taken away again.
+	`CREATE TABLE IF NOT EXISTS notfound_blocks (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		ip         TEXT NOT NULL,
+		host       TEXT NOT NULL,
+		path       TEXT NOT NULL DEFAULT '',
+		account_id INTEGER NOT NULL,
+		zone_id    TEXT NOT NULL,
+		zone_name  TEXT NOT NULL,
+		rule_id    TEXT NOT NULL,
+		mode       TEXT NOT NULL,
+		hits       INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS notfound_blocks_expires ON notfound_blocks(expires_at)`,
+	`CREATE INDEX IF NOT EXISTS notfound_blocks_ip ON notfound_blocks(ip, zone_id)`,
+
 	`CREATE TABLE IF NOT EXISTS ip_countries (
 		ip         TEXT PRIMARY KEY,
 		country    TEXT NOT NULL,

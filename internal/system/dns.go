@@ -179,3 +179,9 @@ func ReverseName(ctx context.Context, ip string) (name string, confirmed bool) {
 
 	return strings.ToLower(strings.TrimSuffix(names[0], ".")), false
 }
+
+// PublicResolver is the resolver the panel checks published records with:
+// 1.1.1.1, what the rest of the internet sees, not this machine's cache.
+func PublicResolver() *net.Resolver {
+	return publicResolver()
+}

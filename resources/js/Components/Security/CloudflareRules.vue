@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { Link } from '@inertiajs/vue3';
 import EdgeAccessRules from './EdgeAccessRules.vue';
 import EdgeRules from './EdgeRules.vue';
+import NotFoundGuard from './NotFoundGuard.vue';
 import ZoneErrors from './ZoneErrors.vue';
 import { PERMISSION, SECURITY_LEVELS } from './edge';
 import { card, field } from './ui';
@@ -267,6 +268,9 @@ const setLevel = async (value) => {
         </div>
 
         <template v-else>
+            <!-- Every site domain at once, whichever zone is picked below -->
+            <NotFoundGuard />
+
             <!-- Which zones -->
             <div :class="card" class="flex flex-wrap items-end gap-4">
                 <label class="block min-w-64 text-sm">

@@ -59,18 +59,18 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                     <tr
                         class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                     >
-                        <th class="px-5 py-3">Domain</th>
-                        <th class="hidden px-5 py-3 md:table-cell">Type</th>
-                        <th class="px-5 py-3">Status</th>
-                        <th class="hidden px-5 py-3 lg:table-cell">Runtime</th>
-                        <th class="hidden px-5 py-3 sm:table-cell">SSL</th>
-                        <th class="hidden px-5 py-3 lg:table-cell">DNS</th>
-                        <th class="px-5 py-3"></th>
+                        <th class="px-3 py-3 sm:px-5">Domain</th>
+                        <th class="hidden px-3 py-3 sm:px-5 md:table-cell">Type</th>
+                        <th class="hidden px-3 py-3 sm:px-5 sm:table-cell">Status</th>
+                        <th class="hidden px-3 py-3 sm:px-5 lg:table-cell">Runtime</th>
+                        <th class="hidden px-3 py-3 sm:px-5 sm:table-cell">SSL</th>
+                        <th class="hidden px-3 py-3 sm:px-5 lg:table-cell">DNS</th>
+                        <th class="px-3 py-3 sm:px-5"></th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-sm">
                     <tr v-for="site in visibleSites" :key="site.id">
-                        <td class="break-all px-5 py-3">
+                        <td class="break-all px-3 py-3 sm:px-5">
                             <!--
                                 The domain opens the site itself, in a new tab:
                                 it is an address, and an address is clicked to
@@ -111,27 +111,31 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                                     ><template v-if="i < site.aliases.length - 1">, </template>
                                 </template>
                             </p>
+                            <!-- On a phone the status rides under the name, freeing its column. -->
+                            <div class="mt-1.5 sm:hidden"><StatusBadge :status="site.status" /></div>
                         </td>
-                        <td class="hidden px-5 py-3 text-slate-600 md:table-cell">
+                        <td class="hidden px-3 py-3 sm:px-5 text-slate-600 md:table-cell">
                             {{ site.type_label }}
                         </td>
-                        <td class="px-5 py-3">
+                        <td class="hidden px-3 py-3 sm:px-5 sm:table-cell">
                             <StatusBadge :status="site.status" />
                         </td>
-                        <td class="hidden px-5 py-3 text-slate-600 lg:table-cell">
+                        <td class="hidden px-3 py-3 sm:px-5 text-slate-600 lg:table-cell">
                             {{
                                 site.app_port
                                     ? 'port ' + site.app_port
                                     : 'PHP ' + site.php_version
                             }}
                         </td>
-                        <td class="hidden px-5 py-3 text-slate-600 sm:table-cell">
+                        <td class="hidden px-3 py-3 sm:px-5 text-slate-600 sm:table-cell">
                             {{ site.ssl ? 'yes' : 'no' }}
                         </td>
-                        <td class="hidden px-5 py-3 text-slate-600 lg:table-cell">
+                        <td class="hidden px-3 py-3 sm:px-5 text-slate-600 lg:table-cell">
                             {{ site.dns_provider ?? (site.manage_dns ? 'managed' : 'manual') }}
                         </td>
-                        <td class="whitespace-nowrap px-5 py-3 text-right">
+                        <td
+                            class="whitespace-nowrap px-3 py-3 sm:px-5 text-right [&>*]:block [&>*]:py-0.5 sm:[&>*]:inline sm:[&>*]:py-0"
+                        >
                             <!--
                                 The way into the application itself, so the
                                 thing most often wanted from this list does not
@@ -144,7 +148,7 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                                 :href="route('sites.wp-admin', site.id)"
                                 target="_blank"
                                 rel="noopener"
-                                class="mr-3 text-brand-600 hover:underline"
+                                class="text-brand-600 hover:underline sm:mr-3"
                                 >WP Admin</a
                             >
                             <a
@@ -152,7 +156,7 @@ const { page, pages, total, perPage, visible: visibleSites } = usePagination(() 
                                 :href="site.admin_url"
                                 target="_blank"
                                 rel="noopener"
-                                class="mr-3 text-brand-600 hover:underline"
+                                class="text-brand-600 hover:underline sm:mr-3"
                                 >Open</a
                             >
                             <Link

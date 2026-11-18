@@ -215,8 +215,15 @@ const sections = [
             class="transition-[padding] duration-150"
             :class="collapsed ? 'lg:ps-20' : 'lg:ps-64'"
         >
+            <!--
+                On a phone the page's own header — title, subtitle, buttons —
+                gets a row of its own under the menu, bell and account, rather
+                than being squeezed into the gap between them a word wide. Not
+                sticky there either: a header two rows tall pinned to a small
+                screen is a third of it gone.
+            -->
             <header
-                class="sticky top-0 z-20 flex min-h-20 items-center gap-4 border-b border-slate-200 bg-slate-50/90 px-4 py-4 backdrop-blur sm:px-6 lg:px-8"
+                class="relative z-20 flex flex-wrap items-center gap-x-3 gap-y-3 border-b border-slate-200 bg-slate-50/90 px-4 py-3 backdrop-blur sm:px-6 lg:sticky lg:top-0 lg:min-h-20 lg:flex-nowrap lg:gap-4 lg:px-8 lg:py-4"
             >
                 <button
                     type="button"
@@ -239,11 +246,13 @@ const sections = [
                     </svg>
                 </button>
 
-                <div class="min-w-0 flex-1 break-words">
+                <div class="order-last min-w-0 basis-full break-words lg:order-none lg:basis-auto lg:flex-1">
                     <slot name="header" />
                 </div>
 
-                <NotificationBell />
+                <div class="ms-auto lg:ms-0">
+                    <NotificationBell />
+                </div>
 
                 <Dropdown align="right" width="48">
                     <template #trigger>

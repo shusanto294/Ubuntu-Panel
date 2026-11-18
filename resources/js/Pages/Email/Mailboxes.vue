@@ -106,7 +106,7 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                 v-model="search"
                 type="search"
                 placeholder="Search by address, name or domain"
-                class="mb-4 w-full rounded-lg border-slate-300 text-sm shadow-sm sm:w-80"
+                class="mb-4 block w-full rounded-lg border-slate-300 text-sm shadow-sm"
             />
 
             <div
@@ -118,11 +118,11 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                             <tr
                                 class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                             >
-                                <th class="px-5 py-3">Address</th>
-                                <th class="hidden px-5 py-3 md:table-cell">Domain</th>
-                                <th class="hidden px-5 py-3 sm:table-cell">Quota</th>
-                                <th class="px-5 py-3">Status</th>
-                                <th class="px-5 py-3"></th>
+                                <th class="px-3 py-3 sm:px-5">Address</th>
+                                <th class="hidden px-3 py-3 sm:px-5 md:table-cell">Domain</th>
+                                <th class="hidden px-3 py-3 sm:px-5 sm:table-cell">Quota</th>
+                                <th class="hidden px-3 py-3 sm:px-5 sm:table-cell">Status</th>
+                                <th class="px-3 py-3 sm:px-5"></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100 text-sm">
@@ -131,7 +131,7 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                 :key="mailbox.id"
                             >
                                 <tr>
-                                    <td class="break-all px-5 py-3 font-medium text-slate-800">
+                                    <td class="break-all px-3 py-3 sm:px-5 font-medium text-slate-800">
                                         <Link
                                             :href="route('email.accounts.show', mailbox.id)"
                                             class="hover:text-brand-600 hover:underline"
@@ -142,27 +142,28 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                             class="block text-xs font-normal text-slate-500"
                                             >{{ mailbox.name }}</span
                                         >
+                                        <div class="mt-1.5 sm:hidden"><StatusBadge :status="mailbox.status" /></div>
                                     </td>
-                                    <td class="hidden px-5 py-3 md:table-cell">
+                                    <td class="hidden px-3 py-3 sm:px-5 md:table-cell">
                                         <Link
                                             :href="route('email.domains.show', mailbox.domain_id)"
                                             class="text-slate-600 hover:text-brand-600 hover:underline"
                                             >{{ mailbox.domain }}</Link
                                         >
                                     </td>
-                                    <td class="hidden whitespace-nowrap px-5 py-3 text-slate-600 sm:table-cell">
+                                    <td class="hidden whitespace-nowrap px-3 py-3 sm:px-5 text-slate-600 sm:table-cell">
                                         {{ mailbox.quota_label }}
                                     </td>
-                                    <td class="px-5 py-3">
+                                    <td class="hidden px-3 py-3 sm:px-5 sm:table-cell">
                                         <StatusBadge :status="mailbox.status" />
                                     </td>
-                                    <td class="whitespace-nowrap px-5 py-3 text-right">
+                                    <td class="whitespace-nowrap px-3 py-3 sm:px-5 text-right [&>*]:block [&>*]:py-0.5 sm:[&>*]:inline sm:[&>*]:py-0">
                                         <a
                                             v-if="roundcubeInstalled"
                                             :href="mailbox.webmail_url"
                                             target="_blank"
                                             rel="noopener"
-                                            class="mr-3 text-brand-600 hover:underline"
+                                            class="text-brand-600 hover:underline sm:mr-3"
                                             >Webmail</a
                                         >
                                         <Link
@@ -175,7 +176,7 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                 <tr v-if="mailbox.last_error">
                                     <td
                                         colspan="5"
-                                        class="bg-rose-50 px-5 py-2 text-xs text-rose-700"
+                                        class="bg-rose-50 px-3 py-2 sm:px-5 text-xs text-rose-700"
                                     >
                                         {{ mailbox.last_error }}
                                     </td>

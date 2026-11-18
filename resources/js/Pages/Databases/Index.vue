@@ -367,16 +367,16 @@ const copy = async (text, which) => {
                         <tr
                             class="text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
                         >
-                            <th class="px-5 py-3">Name</th>
-                            <th class="hidden px-5 py-3 sm:table-cell">Engine</th>
-                            <th class="px-5 py-3">Status</th>
-                            <th class="px-5 py-3"></th>
+                            <th class="px-3 py-3 sm:px-5">Name</th>
+                            <th class="hidden px-3 py-3 sm:px-5 sm:table-cell">Engine</th>
+                            <th class="px-3 py-3 sm:px-5">Status</th>
+                            <th class="px-3 py-3 sm:px-5"></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100 text-sm">
                         <template v-for="database in visibleDatabases" :key="database.id">
                             <tr>
-                                <td class="break-all px-5 py-3">
+                                <td class="break-all px-3 py-3 sm:px-5">
                                     <Link
                                         :href="route('databases.show', database.id)"
                                         class="font-medium text-slate-800 hover:text-brand-600 hover:underline"
@@ -392,10 +392,10 @@ const copy = async (text, which) => {
                                         >
                                     </p>
                                 </td>
-                                <td class="hidden px-5 py-3 text-slate-600 sm:table-cell">
+                                <td class="hidden px-3 py-3 sm:px-5 text-slate-600 sm:table-cell">
                                     {{ database.engine_label }}
                                 </td>
-                                <td class="px-5 py-3">
+                                <td class="px-3 py-3 sm:px-5">
                                     <StatusBadge :status="database.status" />
                                 </td>
                                 <!--
@@ -405,7 +405,7 @@ const copy = async (text, which) => {
                                     database's own page now, under a heading
                                     that says what it is.
                                 -->
-                                <td class="whitespace-nowrap px-5 py-3 text-right">
+                                <td class="whitespace-nowrap px-3 py-3 sm:px-5 text-right">
                                     <Link
                                         :href="route('databases.show', database.id)"
                                         class="text-brand-600 hover:underline"
@@ -417,7 +417,7 @@ const copy = async (text, which) => {
                             <tr v-if="database.last_error">
                                 <td
                                     colspan="4"
-                                    class="bg-rose-50 px-5 py-2 text-xs text-rose-700"
+                                    class="bg-rose-50 px-3 py-2 sm:px-5 text-xs text-rose-700"
                                 >
                                     {{ database.last_error }}
                                 </td>

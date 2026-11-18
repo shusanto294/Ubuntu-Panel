@@ -345,17 +345,28 @@ func (c *Client) AccessRules(zoneID string) ([]AccessRule, error) {
 
 // CreateAccessRule adds an IP access rule to a zone.
 func (c *Client) CreateAccessRule(zoneID string, rule AccessRule) error {
+	_, err := c.CreateAccessRuleID(zoneID, rule)
+
+	return err
+}
+
+// CreateAccessRuleID adds an IP access rule to a zone and answers the id
+// Cloudflare gave it, for a rule the panel will take away again itself.
+func (c *Client) CreateAccessRuleID(zoneID string, rule AccessRule) (string, error) {
 	if err := c.edgeOnly(); err != nil {
-		return err
+		return "", err
 	}
 
-	_, err := c.request("POST", zoneURL(zoneID, "firewall", "access_rules", "rules"), map[string]any{
+	body, err := c.request("POST", zoneURL(zoneID, "firewall", "access_rules", "rules"), map[string]any{
 		"mode":          rule.Mode,
 		"configuration": map[string]any{"target": rule.Target, "value": rule.Value},
 		"notes":         rule.Notes,
 	})
+	if err != nil {
+		return "", err
+	}
 
-	return err
+	return str(object(body["result"]), "id", ""), nil
 }
 
 // UpdateAccessRule changes what a rule does and its note; what it names is

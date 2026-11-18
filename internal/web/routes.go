@@ -193,6 +193,7 @@ func (a *App) routes() *router {
 	rt.post("/email/repair", "email.repair", authenticated, a.emailRepair)
 	rt.post("/email/test", "email.test", authenticated, a.emailTest)
 	rt.get("/email/domains", "email.domains.index", authenticated, a.emailDomains)
+	rt.get("/email/dns-health", "email.dns-health", authenticated, a.emailDNSHealth)
 	rt.get("/email/mailboxes", "email.mailboxes.index", authenticated, a.emailMailboxes)
 	rt.get("/email/domains/create", "email.domains.create", authenticated, a.emailCreateDomain)
 	rt.post("/email/domains", "email.domains.store", authenticated, a.emailStoreDomain)
@@ -251,6 +252,9 @@ func (a *App) routes() *router {
 	rt.post("/edge/bulk/access/update", "edge.bulk.access.update", authenticated, a.edgeBulkAccessUpdate)
 	rt.post("/edge/bulk/access/delete", "edge.bulk.access.destroy", authenticated, a.edgeBulkAccessDestroy)
 	rt.post("/edge/bulk/level", "edge.bulk.level", authenticated, a.edgeBulkLevel)
+	rt.get("/security/notfound", "security.notfound", authenticated, a.notFoundShow)
+	rt.post("/security/notfound", "security.notfound.save", authenticated, a.notFoundSave)
+	rt.delete("/security/notfound/{block}", "security.notfound.lift", authenticated, a.notFoundLift)
 
 	rt.get("/dns/nameserver", "", authenticated, func(w http.ResponseWriter, r *http.Request) {
 		inertia.Redirect(w, r, "/dns")

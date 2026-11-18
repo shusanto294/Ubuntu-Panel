@@ -151,6 +151,9 @@ func (a *App) Start(ctx context.Context) {
 
 		a.RetireOwnNameserver(ctx)
 		a.EnsurePagePurge(ctx)
+
+		// After the guard includes are in every vhost: the 404 log is one.
+		a.EnsureNotFoundGuard(ctx)
 	}()
 
 	// Alerts: the clock that emails sign-ins, lockouts and server problems.

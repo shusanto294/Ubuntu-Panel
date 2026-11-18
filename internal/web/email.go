@@ -2,9 +2,12 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
+	"github.com/shusanto294/Ubuntu-Panel/internal/mail"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
@@ -582,4 +585,50 @@ func (a *App) emailDestroyAccount(w http.ResponseWriter, r *http.Request) {
 	// asking, and back is the address that has just stopped existing. The list
 	// it was on is where somebody who has deleted one wants to be.
 	inertia.Redirect(w, r, "/email/mailboxes")
+}
+
+// emailDNSHealth is what the public DNS says about each mail domain's records,
+// for the ticks on the domains list and the detail behind them. Asked for by
+// the page once it is up rather than rendered with it, so a slow resolver
+// never holds the list back. ?domain= checks one, and ?fresh=1 skips the
+// five-minute cache — the "Check again" after fixing a record.
+func (a *App) emailDNSHealth(w http.ResponseWriter, r *http.Request) {
+	domains, err := a.Store.EmailDomains(r.Context())
+	if err != nil {
+		a.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Could not list the mail domains."})
+		return
+	}
+
+	only, _ := strconv.ParseInt(r.URL.Query().Get("domain"), 10, 64)
+	fresh := r.URL.Query().Get("fresh") == "1"
+
+	results := map[string]mail.DNSHealth{}
+
+	var (
+		mu    sync.Mutex
+		wait  sync.WaitGroup
+		slots = make(chan struct{}, 4)
+	)
+
+	for _, domain := range domains {
+		if domain.Status == "deleting" || (only > 0 && domain.ID != only) {
+			continue
+		}
+
+		wait.Add(1)
+		go func(domain *store.EmailDomain) {
+			defer wait.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+
+			health := a.Mail.DNSHealthOf(r.Context(), domain, fresh)
+
+			mu.Lock()
+			results[strconv.FormatInt(domain.ID, 10)] = health
+			mu.Unlock()
+		}(domain)
+	}
+	wait.Wait()
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"health": results})
 }
