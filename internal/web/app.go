@@ -132,6 +132,7 @@ func (a *App) Start(ctx context.Context) {
 
 		a.EnsureMailConfigured()
 		a.EnsureWebmailServed()
+		a.EnsureMailCertificates(ctx)
 		a.EnsurePhpMyAdminReady(nil)
 		a.EnsureMySQLAccess(ctx)
 

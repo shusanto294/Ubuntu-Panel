@@ -75,6 +75,24 @@ func (a *App) EnsureWebmailServed() {
 	a.Log.Info("serving webmail for the mail domains set up before Roundcube was installed")
 }
 
+// EnsureMailCertificates has the mail server present each mail domain's own
+// certificate. Every start, not once: it only reads what is on the machine, so
+// a server set up by an older panel — which showed every client the first
+// domain's certificate — is repaired by updating the panel, and one whose
+// certificates changed while the panel was down is brought up to date.
+func (a *App) EnsureMailCertificates(ctx context.Context) {
+	out, err := a.Mail.PresentCertificates(ctx)
+	if err != nil {
+		a.Log.Error("could not present every mail domain's certificate", "error", err, "output", out)
+
+		return
+	}
+
+	if out != "" {
+		a.Log.Info("mail certificates", "result", strings.TrimSpace(out))
+	}
+}
+
 // EnsureSiteAliases gives the sites already on this server the www hostname a
 // site created now is given at birth.
 //

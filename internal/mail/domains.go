@@ -274,6 +274,9 @@ func (s *Service) DeleteDomain(ctx context.Context, domainID int64, deleteDNS bo
 
 	s.Store.DeleteEmailDomain(domainID)
 
+	// Its certificate leaves the mail server's list of names with it.
+	s.PresentCertificates(ctx)
+
 	return nil
 }
 
@@ -691,6 +694,15 @@ func (s *Service) secureMailHost(ctx context.Context, domainID int64) func(*task
 			} else {
 				fmt.Fprintf(&log, "Postfix and Dovecot now present the certificate for %s.\n", host)
 			}
+		}
+
+		// And by name, for every other domain on this server: a client that
+		// connects to this domain's mail host has to be shown this domain's
+		// certificate, not the one the server greets other servers as.
+		if out, err := s.PresentCertificates(ctx); err != nil {
+			fmt.Fprintf(&log, "%sThe mail server could not present every domain's certificate: %v\n", out, err)
+		} else {
+			log.WriteString(out)
 		}
 
 		s.webmailSmokeTest(runner, host)
