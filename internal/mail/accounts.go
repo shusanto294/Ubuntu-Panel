@@ -152,8 +152,19 @@ func (s *Service) CreateAccount(ctx context.Context, accountID int64) error {
 	// every sense: the identity row only exists once somebody has signed in, a
 	// machine with no Roundcube has no table at all, and neither is a reason to
 	// fail a mailbox that receives mail perfectly well.
-	if account.Name != "" && s.Store.ServiceInstalled("roundcube") {
+	//
+	// The names file is what the webmail's identity plugin reads when this
+	// address first signs in; the UPDATE is for an address that already has.
+	if s.Store.ServiceInstalled("roundcube") {
 		list.AddFn("Name the mailbox in webmail", func(runner *tasks.Runner) (string, error) {
+			if err := s.writeWebmailNames(ctx); err != nil {
+				return "", err
+			}
+
+			if account.Name == "" {
+				return "This mailbox has no name, so webmail signs its mail with the address alone.", nil
+			}
+
 			if err := s.nameWebmailIdentity(address, account.Name); err != nil {
 				return "", err
 			}
@@ -285,6 +296,10 @@ func (s *Service) DeleteAccount(ctx context.Context, accountID int64, deleteMail
 	}
 
 	s.Store.DeleteEmailAccount(accountID)
+
+	// Off the list the webmail names mailboxes from, so an address made again
+	// later does not inherit somebody else's name.
+	s.writeWebmailNames(ctx)
 
 	return nil
 }

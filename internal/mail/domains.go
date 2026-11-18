@@ -346,12 +346,23 @@ func (s *Service) webmailConfig(host string) error {
 			"$config['support_url'] = '';\n"+
 			"$config['product_name'] = 'Webmail';\n"+
 			"$config['des_key'] = '%s';\n"+
-			"$config['plugins'] = ['archive', 'zipdownload'];\n"+
+			"$config['plugins'] = ['archive', 'zipdownload', '"+identityPlugin+"'];\n"+
 			"$config['skin'] = 'elastic';\n"+
 			"$config['enable_installer'] = false;\n"+
 			"$config['mail_domain'] = '%s';\n",
 		config.Name, roundcubeUser, s.roundcubePassword(), roundcubeDB,
 		s.roundcubeDESKey(), host)
+
+	// The plugin before the configuration that loads it: Roundcube refuses to
+	// start on a plugin it is told about and cannot find.
+	if err := proc.PutFile(roundcubeRoot+"/plugins/"+identityPlugin+"/"+identityPlugin+".php",
+		identityPluginSource, true); err != nil {
+		return err
+	}
+
+	if err := s.writeWebmailNames(context.Background()); err != nil {
+		return err
+	}
 
 	return proc.PutFile(roundcubeRoot+"/config/config.inc.php", contents, true)
 }

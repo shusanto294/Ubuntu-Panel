@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import ReverseDnsNotice from '@/Components/ReverseDnsNotice.vue';
 import EmailTabs from '@/Components/EmailTabs.vue';
@@ -33,8 +33,24 @@ const busy = computed(
 
 useLiveRefresh(busy, ['mailboxes', 'counts', 'activeTask']);
 
+// Filtered here rather than asked of the server: the whole list is already on
+// the page, and a search that answers as you type is the point of it.
+const search = ref('');
+
+const filtered = computed(() => {
+    const term = search.value.trim().toLowerCase();
+    if (!term) return props.mailboxes;
+
+    return props.mailboxes.filter(
+        (item) =>
+            (item.address ?? '').toLowerCase().includes(term) ||
+            (item.name ?? '').toLowerCase().includes(term) ||
+            (item.domain ?? '').toLowerCase().includes(term),
+    );
+});
+
 const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination(
-    () => props.mailboxes,
+    filtered,
 );
 </script>
 
@@ -84,6 +100,14 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
             <EmailTabs current="mailboxes" :counts="counts" />
 
             <ReverseDnsNotice :status="reverseDns" class="mb-6" />
+
+            <input
+                v-if="mailboxes.length"
+                v-model="search"
+                type="search"
+                placeholder="Search by address, name or domain"
+                class="mb-4 w-full rounded-lg border-slate-300 text-sm shadow-sm sm:w-80"
+            />
 
             <div
                 class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
@@ -157,6 +181,14 @@ const { page, pages, total, perPage, visible: visibleMailboxes } = usePagination
                                     </td>
                                 </tr>
                             </template>
+                            <tr v-if="mailboxes.length && !filtered.length">
+                                <td
+                                    colspan="5"
+                                    class="px-5 py-12 text-center text-sm text-slate-500"
+                                >
+                                    No mailboxes match “{{ search }}”.
+                                </td>
+                            </tr>
                             <tr v-if="!mailboxes.length">
                                 <td
                                     colspan="5"

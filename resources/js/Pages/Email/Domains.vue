@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import ReverseDnsNotice from '@/Components/ReverseDnsNotice.vue';
 import EmailTabs from '@/Components/EmailTabs.vue';
@@ -37,8 +37,23 @@ const busy = computed(
 
 useLiveRefresh(busy, ['domains', 'counts', 'activeTask']);
 
+// Filtered here rather than asked of the server: the whole list is already on
+// the page, and a search that answers as you type is the point of it.
+const search = ref('');
+
+const filtered = computed(() => {
+    const term = search.value.trim().toLowerCase();
+    if (!term) return props.domains;
+
+    return props.domains.filter(
+        (item) =>
+            (item.domain ?? '').toLowerCase().includes(term) ||
+            (item.webmail_host ?? '').toLowerCase().includes(term),
+    );
+});
+
 const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
-    () => props.domains,
+    filtered,
 );
 </script>
 
@@ -94,6 +109,14 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
             <EmailTabs current="domains" :counts="counts" />
 
             <ReverseDnsNotice :status="reverseDns" class="mb-6" />
+
+            <input
+                v-if="domains.length"
+                v-model="search"
+                type="search"
+                placeholder="Search domains"
+                class="mb-4 w-full rounded-lg border-slate-300 text-sm shadow-sm sm:w-80"
+            />
 
             <div
                 class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
@@ -156,6 +179,14 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
                                     </td>
                                 </tr>
                             </template>
+                            <tr v-if="domains.length && !filtered.length">
+                                <td
+                                    colspan="4"
+                                    class="px-5 py-12 text-center text-sm text-slate-500"
+                                >
+                                    No domains match “{{ search }}”.
+                                </td>
+                            </tr>
                             <tr v-if="!domains.length">
                                 <td
                                     colspan="4"

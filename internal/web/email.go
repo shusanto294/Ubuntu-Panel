@@ -375,8 +375,13 @@ func (a *App) emailStoreAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	local := strings.ToLower(strings.TrimSpace(input["local_part"]))
+	name := strings.TrimSpace(input["name"])
 	password := input["password"]
 	quota := intInput(input, "quota_mb", 2048)
+
+	if len(name) > 120 {
+		sess.Error("name", "Keep the name under 120 characters.")
+	}
 
 	if !validLocalPart(local) {
 		sess.Error("local_part", "Use letters, digits, dots, dashes and underscores.")
@@ -411,6 +416,7 @@ func (a *App) emailStoreAccount(w http.ResponseWriter, r *http.Request) {
 		EmailDomainID: domain.ID,
 		UserID:        user.ID,
 		LocalPart:     local,
+		Name:          name,
 		Password:      password,
 		QuotaMB:       int(quota),
 	})

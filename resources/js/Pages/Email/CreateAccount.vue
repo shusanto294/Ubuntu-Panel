@@ -14,6 +14,7 @@ const props = defineProps({
 
 const form = useForm({
     local_part: '',
+    name: '',
     password: '',
     quota_mb: 2048,
 });
@@ -61,6 +62,22 @@ const submit = () => form.post(route('email.accounts.store', props.domain.id));
                     >
                 </div>
                 <InputError class="mt-2" :message="form.errors.local_part" />
+            </div>
+
+            <div>
+                <InputLabel for="name" value="Name (optional)" />
+                <TextInput
+                    id="name"
+                    v-model="form.name"
+                    class="mt-1 block w-full"
+                    placeholder="Jane Smith, or Sales"
+                    maxlength="120"
+                />
+                <InputError class="mt-2" :message="form.errors.name" />
+                <p class="mt-1 text-xs text-slate-500">
+                    Shown as the sender on mail sent from webmail. Leave it
+                    empty to send as the address alone.
+                </p>
             </div>
 
             <div>

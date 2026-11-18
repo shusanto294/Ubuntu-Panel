@@ -49,7 +49,7 @@ func New(st *store.Store) *Service { return &Service{Store: st} }
 // **Bump this when you change what writeConfigs, writeDKIMConfig or
 // EnsureSchema produce.** Nothing else needs to move with it: the panel's
 // version is about releases, and this is about the contents of six files.
-const ConfigRevision = "5"
+const ConfigRevision = "6"
 
 // IsConfigured reports whether the mail server is installed and set up.
 func (s *Service) IsConfigured() bool {
