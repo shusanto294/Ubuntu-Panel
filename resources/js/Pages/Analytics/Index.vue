@@ -149,6 +149,68 @@ const bars = computed(() => {
     });
 });
 
+// One bar opened: the requests in its slice of time, read when it is
+// clicked. The slice is kept by its time, so a live refresh that moves the
+// bars on keeps showing the same minutes.
+const barWidth = computed(() => {
+    const timeline = t.value?.timeline ?? [];
+    if (timeline.length > 1) return timeline[1].at - timeline[0].at;
+    return Math.round((PERIOD_MINUTES[props.window] * 60) / Math.max(1, timeline.length));
+});
+
+const picked = ref(null); // { from, to, data, loading, error }
+let pickSeq = 0;
+
+const isPicked = (b) => {
+    if (!picked.value) return false;
+    const middle = (picked.value.from + picked.value.to) / 2;
+    return b.at <= middle && middle < b.at + barWidth.value;
+};
+
+const pick = async (b) => {
+    if (isPicked(b)) {
+        picked.value = null;
+        return;
+    }
+
+    const from = b.at;
+    const to = b.at + barWidth.value;
+    const seq = ++pickSeq;
+    picked.value = { from, to, data: null, loading: true, error: '' };
+
+    try {
+        const { data } = await window.axios.get(route('analytics.slice'), {
+            params: { window: props.window, from, to, ...(props.site ? { site: props.site } : {}) },
+        });
+        if (seq === pickSeq) picked.value = { from, to, data, loading: false, error: '' };
+    } catch (e) {
+        if (seq === pickSeq) {
+            picked.value = { from, to, data: null, loading: false, error: e?.response?.data?.error ?? 'The logs could not be read.' };
+        }
+    }
+};
+
+// A new period or site is a new chart.
+watch(() => [props.window, props.site], () => (picked.value = null));
+
+const SHORT_SPANS = ['1h', '24h'];
+const pickedLabel = computed(() => {
+    if (!picked.value) return '';
+    const from = new Date(picked.value.from * 1000);
+    const to = new Date(Math.min(picked.value.to * 1000, Date.now()));
+    const time = { hour: '2-digit', minute: '2-digit' };
+    const day = { weekday: 'short', month: 'short', day: 'numeric' };
+    if (SHORT_SPANS.includes(props.window) && from.toDateString() === to.toDateString()) {
+        const date = from.toDateString() === new Date().toDateString() ? 'Today' : from.toLocaleDateString(undefined, day);
+        return `${date}, ${from.toLocaleTimeString(undefined, time)} – ${to.toLocaleTimeString(undefined, time)}`;
+    }
+    return `${from.toLocaleString(undefined, { ...day, ...time })} – ${to.toLocaleString(undefined, { ...day, ...time })}`;
+});
+
+const pickedPages = computed(() => picked.value?.data?.pages ?? []);
+const allPickedPages = ref(false);
+watch(picked, () => (allPickedPages.value = false));
+
 const AXIS = {
     '1h': ['60 min ago', '30 min ago'],
     '24h': ['24 h ago', '12 h ago'],
@@ -393,16 +455,103 @@ const attention = computed(() => {
                 <div v-if="!t" class="mt-4 h-[168px] animate-pulse rounded-lg bg-slate-50" />
                 <template v-else>
                     <div class="mt-4 flex h-[168px] items-end gap-1 border-b border-slate-200">
-                        <div v-for="b in bars" :key="b.at" :title="b.title" class="flex h-full flex-1 flex-col justify-end hover:opacity-80">
-                            <div v-if="b.fail" class="rounded-t-[3px] bg-rose-700" :style="{ height: `${b.fail}%` }" />
-                            <div v-if="b.warn" class="bg-amber-400" :class="b.fail ? '' : 'rounded-t-[3px]'" :style="{ height: `${b.warn}%` }" />
-                            <div v-if="b.ok" class="bg-brand-600" :class="b.fail || b.warn ? '' : 'rounded-t-[3px]'" :style="{ height: `${b.ok}%` }" />
-                        </div>
+                        <button
+                            v-for="b in bars"
+                            :key="b.at"
+                            type="button"
+                            :title="`${b.title} — click to see them`"
+                            :aria-pressed="isPicked(b)"
+                            class="flex h-full flex-1 cursor-pointer flex-col justify-end rounded-t-[3px] transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                            :class="[
+                                picked && !isPicked(b) ? 'opacity-35 hover:opacity-70' : 'hover:opacity-80',
+                                isPicked(b) ? 'bg-slate-100' : '',
+                            ]"
+                            @click="pick(b)"
+                        >
+                            <div v-if="b.fail" class="w-full rounded-t-[3px] bg-rose-700" :style="{ height: `${b.fail}%` }" />
+                            <div v-if="b.warn" class="w-full bg-amber-400" :class="b.fail ? '' : 'rounded-t-[3px]'" :style="{ height: `${b.warn}%` }" />
+                            <div v-if="b.ok" class="w-full bg-brand-600" :class="b.fail || b.warn ? '' : 'rounded-t-[3px]'" :style="{ height: `${b.ok}%` }" />
+                        </button>
                     </div>
                     <div class="mt-2 flex justify-between text-xs text-slate-500">
-                        <span>{{ AXIS[window]?.[0] }}</span><span>{{ AXIS[window]?.[1] }}</span><span>Now</span>
+                        <span>{{ AXIS[window]?.[0] }}</span>
+                        <span v-if="!picked" class="hidden text-slate-400 sm:inline">Click a bar to see its requests</span>
+                        <span>{{ AXIS[window]?.[1] }}</span><span>Now</span>
                     </div>
                 </template>
+            </section>
+
+            <!-- One bar's requests -->
+            <section v-if="picked" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-2 ring-brand-500/30">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                    <div>
+                        <h3 class="font-semibold text-slate-900">{{ pickedLabel }}</h3>
+                        <p v-if="picked.data" class="text-sm text-slate-500">
+                            {{ number(picked.data.requests) }} requests from {{ number(picked.data.ips) }}
+                            {{ picked.data.ips === 1 ? 'address' : 'addresses' }}
+                            <template v-if="picked.data.client_errors"> · {{ number(picked.data.client_errors) }} blocked or not found</template>
+                            <template v-if="picked.data.server_errors"> · {{ number(picked.data.server_errors) }} server errors</template>
+                        </p>
+                        <p v-else-if="picked.loading" class="text-sm text-slate-500">Reading the logs for this time…</p>
+                        <p v-else class="text-sm text-rose-700">{{ picked.error }}</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                        @click="picked = null"
+                    >
+                        Close
+                    </button>
+                </div>
+
+                <div v-if="picked.loading" class="space-y-3 p-5">
+                    <div v-for="i in 5" :key="i" class="h-5 animate-pulse rounded bg-slate-100" />
+                </div>
+                <div v-else-if="picked.data" class="border-b border-slate-100 px-5 py-4">
+                    <h4 class="text-sm font-semibold text-slate-900">Pages asked for most</h4>
+                    <p v-if="!pickedPages.length" class="mt-2 text-sm text-slate-500">No pages were requested in this time.</p>
+                    <ol v-else class="mt-2.5 space-y-2">
+                        <li
+                            v-for="p in allPickedPages ? pickedPages : pickedPages.slice(0, 8)"
+                            :key="p.site + p.path"
+                            class="flex justify-between gap-3 text-sm"
+                        >
+                            <a
+                                v-if="p.url"
+                                :href="p.url"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="min-w-0 truncate text-slate-900 hover:text-brand-700 hover:underline"
+                                :title="p.site + p.path"
+                            >
+                                <span class="text-slate-500">{{ p.site }}</span>{{ p.path }}
+                            </a>
+                            <span v-else class="min-w-0 truncate text-slate-900"><span class="text-slate-500">{{ p.site }}</span>{{ p.path }}</span>
+                            <span class="shrink-0 tabular-nums text-slate-700">{{ number(p.requests) }}</span>
+                        </li>
+                    </ol>
+                    <button
+                        v-if="pickedPages.length > 8"
+                        type="button"
+                        class="mt-3 text-sm font-medium text-brand-600 hover:underline"
+                        @click="allPickedPages = !allPickedPages"
+                    >
+                        {{ allPickedPages ? 'Show fewer' : `Show all ${number(pickedPages.length)} →` }}
+                    </button>
+                </div>
+
+                <RecentRequests
+                    v-if="picked.data"
+                    flat
+                    title="Requests in this time"
+                    :rows="picked.data.recent ?? []"
+                    :total="picked.data.requests ?? 0"
+                    :unmatched="unmatched"
+                />
+
+                <p v-if="picked.data?.partial?.length" class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                    Only the newest part of {{ picked.data.partial.map(siteLabel).join(', ') }}'s log is read for this period, so this time may be missing from it.
+                </p>
             </section>
 
             <!-- Latest requests -->

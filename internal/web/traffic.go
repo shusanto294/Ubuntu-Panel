@@ -99,10 +99,16 @@ func (a *App) traffic(ctx context.Context, window trafficWindow) trafficReport {
 // siteTraffic is the same read narrowed to one site's log: "" is every site
 // and the server's own, and a domain the panel has no site for reads nothing.
 func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string) trafficReport {
-	cacheKey := window.key + "|" + only
+	now := time.Now()
+	return a.readTraffic(ctx, window, only, now.Add(-window.span), now, window.buckets, window.key+"|"+only)
+}
 
+// readTraffic reads the access logs between from and to, with the files and
+// the cap a window reads: the whole window, or one bar of its chart. A read
+// with no cache key — a bar, asked for once — is not kept.
+func (a *App) readTraffic(ctx context.Context, window trafficWindow, only string, from, to time.Time, buckets int, cacheKey string) trafficReport {
 	trafficCache.Lock()
-	if at, ok := trafficCache.at[cacheKey]; ok && time.Since(at) < window.keep {
+	if at, ok := trafficCache.at[cacheKey]; ok && cacheKey != "" && time.Since(at) < window.keep {
 		report := trafficCache.reports[cacheKey]
 		trafficCache.Unlock()
 		return report
@@ -110,9 +116,8 @@ func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string
 	trafficCache.Unlock()
 
 	started := time.Now()
-	now := time.Now()
 
-	analyzer := weblog.New(now.Add(-window.span), now, window.buckets)
+	analyzer := weblog.New(from, to, buckets)
 	analyzer.Trusted = a.trustedSet(ctx)
 
 	sources := map[string]string{}
@@ -186,7 +191,7 @@ func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string
 			// through from the start.
 			script := fmt.Sprintf(`for f in %s; do [ -e "$f" ] && [ "$(stat -c %%Y -- "$f")" -ge %d ] || continue; `+
 				`case "$f" in *.gz) zcat -f -- "$f";; *) tail -n %d -- "$f";; esac; done`,
-				strings.Join(quoted, " "), now.Add(-window.span).Unix(), window.lines)
+				strings.Join(quoted, " "), from.Unix(), window.lines)
 			command := fmt.Sprintf("sudo sh -c %s 2>/dev/null | tail -n %d", proc.Quote(script), window.lines)
 
 			if err := proc.Pipe(ctx, command, 5*time.Minute, nil, sink); err != nil {
@@ -211,6 +216,10 @@ func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string
 		Window:  window.key,
 		Partial: append([]string{}, partial...),
 		TookMS:  time.Since(started).Milliseconds(),
+	}
+
+	if cacheKey == "" {
+		return report
 	}
 
 	trafficCache.Lock()

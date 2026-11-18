@@ -14,6 +14,8 @@ const props = defineProps({
     limit: { type: Number, default: 0 }, // 0 is every row
     unmatched: { type: String, default: '' },
     allHref: { type: String, default: '' },
+    title: { type: String, default: 'Latest requests' },
+    flat: { type: Boolean, default: false }, // inside another card
 });
 
 const now = useNow();
@@ -31,6 +33,9 @@ const filtered = computed(() =>
 
 const visible = computed(() => (props.limit ? filtered.value.slice(0, props.limit) : filtered.value));
 
+// Inside one bar of the chart the rows are minutes apart, so they say when.
+const clock = (at) => new Date(at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
 const host = (site) => (site === props.unmatched ? 'server IP' : site);
 
 const tag = (r) => {
@@ -41,10 +46,10 @@ const tag = (r) => {
 </script>
 
 <template>
-    <section class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+    <section :class="flat ? '' : 'overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5'">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
-                <h3 class="font-semibold text-slate-900">Latest requests</h3>
+                <h3 class="font-semibold text-slate-900">{{ title }}</h3>
                 <p class="text-sm text-slate-500">Newest first. Images, scripts and styles are left out.</p>
             </div>
             <div role="group" aria-label="Filter requests" class="flex gap-1.5">
@@ -66,7 +71,7 @@ const tag = (r) => {
             <div v-for="i in limit || 8" :key="i" class="h-5 animate-pulse rounded bg-slate-100" />
         </div>
         <p v-else-if="!visible.length" class="px-5 py-8 text-center text-sm text-slate-500">
-            {{ rows.length ? 'None of the latest requests match.' : 'No pages were requested in this period.' }}
+            {{ rows.length ? 'None of these requests match.' : 'No pages were requested in this period.' }}
         </p>
         <div v-else class="overflow-x-auto">
             <table class="w-full min-w-[720px] text-sm">
@@ -81,7 +86,7 @@ const tag = (r) => {
                 <tbody>
                     <tr v-for="(r, i) in visible" :key="`${r.at}-${r.ip}-${r.path}-${i}`" class="border-t border-slate-100">
                         <td class="whitespace-nowrap px-5 py-2.5 tabular-nums text-slate-500" :title="new Date(r.at * 1000).toLocaleString()">
-                            {{ ago(r.at, now) }}
+                            {{ flat ? clock(r.at) : ago(r.at, now) }}
                         </td>
                         <td class="px-2 py-2.5">
                             <span class="inline-block rounded-md px-1.5 py-0.5 font-mono text-xs font-medium" :class="statusTone(r.status)">

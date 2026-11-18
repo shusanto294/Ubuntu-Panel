@@ -94,6 +94,7 @@ func (a *App) routes() *router {
 	// Analytics: the access logs added up — the sites' traffic, its detail
 	// pages and one address's. They lived under /logs, and still answer there.
 	rt.get("/analytics", "analytics.index", authenticated, a.analyticsIndex)
+	rt.get("/analytics/slice", "analytics.slice", authenticated, a.analyticsSlice)
 	rt.get("/analytics/ip/{ip}", "analytics.ip", authenticated, a.logsIP)
 	rt.get("/analytics/{section}", "analytics.stats", authenticated, a.logsStatsPage)
 	rt.get("/logs/stats/{section}", "", authenticated, a.analyticsMoved(func(r *http.Request) string {
