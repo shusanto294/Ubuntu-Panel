@@ -174,9 +174,8 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 			"certbot":   a.Store.ServiceInstalled("certbot"),
 		},
 		"defaults": map[string]any{
-			"php_version":   a.Store.PHPVersion(),
-			"node_version":  a.Store.NodeVersion(),
-			"mail_hostname": nullable(a.Store.Setting("mail_hostname", "")),
+			"php_version":  a.Store.PHPVersion(),
+			"node_version": a.Store.NodeVersion(),
 		},
 		"phpVersions":   config.PHPVersions,
 		"nodeVersions":  config.NodeVersions,
@@ -237,12 +236,6 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 	a.Store.SetSetting("php_version", php)
 	a.Store.SetSetting("node_version", node)
-
-	if hostname := strings.TrimSpace(input["mail_hostname"]); hostname != "" {
-		a.Store.SetSetting("mail_hostname", hostname)
-	} else {
-		a.Store.ForgetSetting("mail_hostname")
-	}
 
 	if port != a.panelPort() {
 		if err := a.movePanelPort(port); err != nil {

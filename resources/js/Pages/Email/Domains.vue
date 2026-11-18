@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import ReverseDnsNotice from '@/Components/ReverseDnsNotice.vue';
 import EmailTabs from '@/Components/EmailTabs.vue';
 import Pagination from '@/Components/Pagination.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
@@ -19,6 +20,7 @@ const props = defineProps({
     mailConfigured: Boolean,
     requirements: { type: Array, default: () => [] },
     mailHostname: String,
+    reverseDns: { type: Object, default: null },
     roundcubeInstalled: Boolean,
     activeTask: { type: Object, default: null },
 });
@@ -90,6 +92,8 @@ const { page, pages, total, perPage, visible: visibleDomains } = usePagination(
 
         <template v-else>
             <EmailTabs current="domains" :counts="counts" />
+
+            <ReverseDnsNotice :status="reverseDns" class="mb-6" />
 
             <div
                 class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"

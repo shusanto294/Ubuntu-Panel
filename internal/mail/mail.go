@@ -49,7 +49,7 @@ func New(st *store.Store) *Service { return &Service{Store: st} }
 // **Bump this when you change what writeConfigs, writeDKIMConfig or
 // EnsureSchema produce.** Nothing else needs to move with it: the panel's
 // version is about releases, and this is about the contents of six files.
-const ConfigRevision = "4"
+const ConfigRevision = "5"
 
 // IsConfigured reports whether the mail server is installed and set up.
 func (s *Service) IsConfigured() bool {
@@ -532,6 +532,15 @@ func (s *Service) writeConfigs() error {
 			// The name in EHLO when this server sends, which is what a receiver
 			// checks against DNS.
 			"smtp_helo_name = $myhostname\n"+
+			// Deliver over IPv4 whenever the receiver has an IPv4 address.
+			//
+			// Postfix otherwise prefers IPv6, and a VPS's IPv6 address almost
+			// never has reverse DNS: the provider hands out a /64 and nobody
+			// sets a PTR for the one address Postfix happens to pick. Gmail
+			// refuses such mail outright (550 5.7.25), and the refusal is
+			// permanent, so Postfix bounces it rather than retrying over IPv4.
+			// Listening is untouched — mail still arrives over either.
+			"smtp_address_preference = ipv4\n"+
 			"virtual_mailbox_domains = proxy:mysql:/etc/postfix/sql/virtual-domains.cf\n"+
 			"virtual_mailbox_maps = proxy:mysql:/etc/postfix/sql/virtual-mailboxes.cf\n"+
 			"virtual_alias_maps = proxy:mysql:/etc/postfix/sql/virtual-aliases.cf\n"+

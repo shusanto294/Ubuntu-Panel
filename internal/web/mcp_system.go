@@ -208,9 +208,8 @@ func (a *App) mcpPanelSettings() *mcp.Tool {
 			"loud, because whoever is using it has to type it, and a firewall at their host " +
 			"rather than on the machine has to be told about the port as well.",
 		Properties: map[string]mcp.Property{
-			"php_version":   {Description: "The default PHP version for new sites."},
-			"node_version":  {Description: "The default Node.js version for new sites."},
-			"mail_hostname": {Description: "What the mail server calls itself. Empty clears it."},
+			"php_version":  {Description: "The default PHP version for new sites."},
+			"node_version": {Description: "The default Node.js version for new sites."},
 			"panel_port": {Type: "integer",
 				Description: "The port nginx serves the panel on. Not 80 or 443 — those are for " +
 					"this machine's sites, and the panel being off them is what keeps its login " +
@@ -236,14 +235,6 @@ func (a *App) mcpPanelSettings() *mcp.Tool {
 				}
 
 				a.Store.SetSetting("node_version", node)
-			}
-
-			if args.Has("mail_hostname") {
-				if hostname := args.String("mail_hostname"); hostname != "" {
-					a.Store.SetSetting("mail_hostname", hostname)
-				} else {
-					a.Store.ForgetSetting("mail_hostname")
-				}
 			}
 
 			moved := ""

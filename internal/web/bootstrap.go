@@ -93,6 +93,22 @@ func (a *App) EnsureMailCertificates(ctx context.Context) {
 	}
 }
 
+// EnsureMailHostname has Postfix greet other servers with the name this
+// server's reverse DNS gives, once that name resolves back to it — so a PTR
+// record fixed at the provider while the panel was down is picked up on start.
+func (a *App) EnsureMailHostname(ctx context.Context) {
+	out, err := a.Mail.SyncHostname(ctx)
+	if err != nil {
+		a.Log.Error("could not name the mail server after its reverse DNS", "error", err)
+
+		return
+	}
+
+	if out != "" {
+		a.Log.Info("mail hostname", "result", out)
+	}
+}
+
 // EnsureSiteAliases gives the sites already on this server the www hostname a
 // site created now is given at birth.
 //

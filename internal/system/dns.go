@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -140,4 +141,41 @@ func ForgetResolution(hostname string) {
 	resolutions.Lock()
 	delete(resolutions.entries, hostname)
 	resolutions.Unlock()
+}
+
+// ReverseName is the name an address's reverse DNS (PTR) record gives, and
+// whether that name resolves back to the address — forward-confirmed, which is
+// the check a receiving mail server makes before it reads a message. name is
+// whatever PTR was found, confirmed or not, and empty when there is none.
+func ReverseName(ctx context.Context, ip string) (name string, confirmed bool) {
+	if ip == "" {
+		return "", false
+	}
+
+	lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resolver := publicResolver()
+
+	names, err := resolver.LookupAddr(lookup, ip)
+	if err != nil || len(names) == 0 {
+		return "", false
+	}
+
+	for _, candidate := range names {
+		candidate = strings.ToLower(strings.TrimSuffix(candidate, "."))
+
+		addresses, err := resolver.LookupHost(lookup, candidate)
+		if err != nil {
+			continue
+		}
+
+		for _, address := range addresses {
+			if net.ParseIP(address).Equal(net.ParseIP(ip)) {
+				return candidate, true
+			}
+		}
+	}
+
+	return strings.ToLower(strings.TrimSuffix(names[0], ".")), false
 }

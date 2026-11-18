@@ -53,7 +53,6 @@ const domainForm = useForm({
 const defaultsForm = useForm({
     php_version: props.defaults.php_version,
     node_version: props.defaults.node_version,
-    mail_hostname: props.defaults.mail_hostname ?? '',
     panel_port: props.panel.port,
 });
 
@@ -332,18 +331,6 @@ const submitDefaults = () => defaultsForm.patch(route('system.settings'), { pres
                             </option>
                         </select>
                         <InputError class="mt-2" :message="defaultsForm.errors.node_version" />
-                    </div>
-
-                    <div>
-                        <InputLabel for="mail_hostname" value="Mail hostname" />
-                        <TextInput
-                            id="mail_hostname"
-                            v-model="defaultsForm.mail_hostname"
-                            type="text"
-                            class="mt-1 block w-full"
-                            placeholder="mail.example.com"
-                        />
-                        <InputError class="mt-2" :message="defaultsForm.errors.mail_hostname" />
                     </div>
 
                     <PrimaryButton :disabled="defaultsForm.processing">Save</PrimaryButton>

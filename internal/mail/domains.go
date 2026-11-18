@@ -202,7 +202,7 @@ func (s *Service) nameServerAfter(domain *store.EmailDomain) func(*tasks.Runner)
 			return "This server already greets other servers as " + existing + ".", nil
 		}
 
-		hostname := domain.WebmailHost()
+		hostname := s.preferredHostname(context.Background(), domain.WebmailHost())
 
 		s.Store.SetSetting("mail_hostname", hostname)
 
@@ -215,8 +215,14 @@ func (s *Service) nameServerAfter(domain *store.EmailDomain) func(*tasks.Runner)
 			return "", err
 		}
 
+		if hostname != domain.WebmailHost() {
+			return "This server now greets other servers as " + hostname +
+				", the name its reverse DNS gives.", nil
+		}
+
 		return "This server now greets other servers as " + hostname + ", which resolves to it " +
-			"and matches its certificate.", nil
+			"and matches its certificate. Set this server's reverse DNS (PTR) to it at your " +
+			"hosting provider, and the panel will notice.", nil
 	}
 }
 

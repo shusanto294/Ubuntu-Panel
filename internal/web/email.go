@@ -37,7 +37,20 @@ func (a *App) mailShell(r *http.Request, domains []map[string]any) inertia.Props
 		}
 	}
 
+	// Only once there is mail to send: before the first domain there is no
+	// name to suggest, and nothing for a receiver to refuse.
+	var reverseDNS any
+
+	if len(domains) > 0 && a.Mail.IsConfigured() {
+		reverseDNS = a.Mail.ReverseDNSStatus(r.Context())
+
+		// A PTR record fixed at the provider since the last look is picked up
+		// here, without the page waiting for Postfix to reload.
+		a.Mail.SyncHostnameInBackground()
+	}
+
 	return inertia.Props{
+		"reverseDns":         reverseDNS,
 		"counts":             map[string]any{"domains": len(domains), "mailboxes": mailboxes},
 		"requirements":       a.Catalog.Requirements(r.Context(), mailApps),
 		"mailConfigured":     a.Mail.IsConfigured(),
