@@ -512,6 +512,8 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 		"window":        report.Window,
 		"sites":         sites,
 		"pages":         pages,
+		"urls":          urlRows(base, report.Paths[:min(len(report.Paths), 20)]),
+		"urls_total":    len(report.Paths),
 		"recent":        recent,
 		"bots":          report.Bots,
 		"requests":      report.Requests,

@@ -238,7 +238,26 @@ const pickedLabel = computed(() => (picked.value ? spanLabel(picked.value.from, 
 const pickedHref = (view = '') =>
     picked.value ? periodHref({ window: props.window, site: props.site, from: picked.value.from, to: picked.value.to, view }) : '';
 
-const PICKED_ROWS = 10;
+// The URL and request cards show the bar picked, or the whole period, and
+// say which.
+const ROWS = 10;
+
+const spanText = computed(() => (picked.value ? pickedLabel.value : `The ${PERIOD_LABEL[props.window]}`));
+const spanTone = computed(() => (picked.value ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'));
+
+const spanHref = (view) => (picked.value ? pickedHref(view) : periodHref({ window: props.window, site: props.site, view }));
+
+const urlRows = computed(() => {
+    if (picked.value) return picked.value.data ? picked.value.data.urls.slice(0, ROWS) : picked.value.error ? [] : null;
+    return s.value ? (s.value.urls ?? []).slice(0, ROWS) : null;
+});
+const urlTotal = computed(() => (picked.value ? picked.value.data?.urls_total ?? 0 : s.value?.urls_total ?? 0));
+
+const requestRows = computed(() => {
+    if (picked.value) return picked.value.data ? picked.value.data.recent : picked.value.error ? [] : null;
+    return s.value?.recent ?? null;
+});
+const requestTotal = computed(() => (picked.value ? picked.value.data?.requests ?? 0 : s.value?.requests ?? 0));
 
 const AXIS = {
     '1h': ['60 min ago', '30 min ago'],
@@ -344,7 +363,6 @@ const block = async (ip) => {
 
 // ----------------------------------------------------- supporting detail
 
-const pages = computed(() => s.value?.pages ?? []);
 
 const allCodes = ref(false);
 const codes = computed(() => t.value?.codes ?? []);
@@ -504,90 +522,57 @@ const attention = computed(() => {
                     </div>
                     <div class="mt-2 flex justify-between text-xs text-slate-500">
                         <span>{{ AXIS[window]?.[0] }}</span>
-                        <span v-if="!picked" class="hidden text-slate-400 sm:inline">Click a bar to see its requests</span>
+                        <span v-if="!picked" class="hidden text-slate-400 sm:inline">Click a bar to see its URLs and requests below</span>
+                        <span v-else class="hidden font-medium text-brand-700 sm:inline">
+                            {{ pickedLabel }}<template v-if="picked.data"> · {{ number(picked.data.requests) }} requests</template> — shown below
+                        </span>
                         <span>{{ AXIS[window]?.[1] }}</span><span>Now</span>
                     </div>
                 </template>
             </section>
 
-            <!-- One bar's requests -->
-            <section v-if="picked" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-2 ring-brand-500/30">
+            <!-- The URLs and requests of the bar picked, or of the whole period -->
+            <section class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
                 <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
                     <div>
-                        <h3 class="font-semibold text-slate-900">{{ pickedLabel }}</h3>
-                        <p v-if="picked.data" class="text-sm text-slate-500">
-                            {{ number(picked.data.requests) }} requests from {{ number(picked.data.ips) }}
-                            {{ picked.data.ips === 1 ? 'address' : 'addresses' }}
-                            <template v-if="picked.data.client_errors"> · {{ number(picked.data.client_errors) }} blocked or not found</template>
-                            <template v-if="picked.data.server_errors"> · {{ number(picked.data.server_errors) }} server errors</template>
-                        </p>
-                        <p v-else-if="picked.loading" class="text-sm text-slate-500">Reading the logs for this time…</p>
-                        <p v-else class="text-sm text-rose-700">{{ picked.error }}</p>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <Link
-                            :href="pickedHref()"
-                            class="inline-flex h-8 items-center rounded-lg bg-white px-3 text-sm font-medium text-brand-700 ring-1 ring-slate-200 hover:bg-slate-50"
-                        >
-                            Open on its own page →
-                        </Link>
-                        <button
-                            type="button"
-                            class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
-                            @click="close"
-                        >
-                            Close
-                        </button>
-                    </div>
-                </div>
-
-                <div v-if="picked.loading" class="space-y-3 p-5">
-                    <div v-for="i in 5" :key="i" class="h-5 animate-pulse rounded bg-slate-100" />
-                </div>
-                <template v-else-if="picked.data">
-                    <div class="border-b border-slate-100">
-                        <div class="flex flex-wrap items-baseline justify-between gap-3 px-5 pb-2 pt-4">
-                            <div>
-                                <h4 class="text-sm font-semibold text-slate-900">Most requested URLs</h4>
-                                <p class="text-xs text-slate-500">Every URL, pages and files alike — blocked ones too.</p>
-                            </div>
-                            <Link
-                                v-if="picked.data.urls_total > PICKED_ROWS"
-                                :href="pickedHref('urls')"
-                                class="text-sm font-medium text-brand-600 hover:underline"
-                            >
-                                View all {{ number(picked.data.urls_total) }} →
-                            </Link>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <h3 class="font-semibold text-slate-900">Most requested URLs</h3>
+                            <span class="rounded-md px-2 py-0.5 text-xs font-medium" :class="spanTone">{{ spanText }}</span>
                         </div>
-                        <UrlTable :rows="picked.data.urls.slice(0, PICKED_ROWS)" :unmatched="unmatched" />
+                        <p class="text-sm text-slate-500">Every URL, pages and files alike — blocked ones too. The most asked for first.</p>
                     </div>
-
-                    <RecentRequests
-                        flat
-                        title="Latest requests"
-                        subtitle="Every request in this time, newest first."
-                        :rows="picked.data.recent ?? []"
-                        :total="picked.data.requests ?? 0"
-                        :limit="PICKED_ROWS"
-                        :filters="false"
-                        :unmatched="unmatched"
-                        :all-href="pickedHref('requests')"
-                    />
-                </template>
-
-                <p v-if="picked.data?.partial?.length" class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
-                    Only the newest part of {{ picked.data.partial.map(siteLabel).join(', ') }}'s log is read for this period, so this time may be missing from it.
-                </p>
+                    <button
+                        v-if="picked"
+                        type="button"
+                        class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                        @click="close"
+                    >
+                        Show the {{ PERIOD_LABEL[window] }}
+                    </button>
+                </div>
+                <p v-if="picked?.error" class="px-5 py-8 text-center text-sm text-rose-700">{{ picked.error }}</p>
+                <UrlTable v-else class="flex-1" :rows="urlRows" :unmatched="unmatched" />
+                <div v-if="urlRows" class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
+                    <span class="tabular-nums">{{ number(urlRows.length) }} of {{ number(urlTotal) }} URLs</span>
+                    <Link :href="spanHref('urls')" class="font-medium text-brand-600 hover:underline">View all →</Link>
+                </div>
             </section>
 
-            <!-- Latest requests -->
             <RecentRequests
-                :rows="s?.recent ?? null"
-                :total="s?.requests ?? 0"
-                :limit="8"
+                :rows="requestRows"
+                :total="requestTotal"
+                :limit="ROWS"
                 :unmatched="unmatched"
-                :all-href="periodHref({ window, site, view: 'requests' })"
+                :badge="spanText"
+                :badge-tone="spanTone"
+                :subtitle="picked ? 'Every request in this time, newest first.' : 'Newest first. Images, scripts and styles are left out.'"
+                :all-href="spanHref('requests')"
+                :exact="Boolean(picked)"
             />
+
+            <p v-if="picked?.data?.partial?.length" class="text-xs text-slate-500">
+                Only the newest part of {{ picked.data.partial.map(siteLabel).join(', ') }}'s log is read for this period, so this time may be missing from it.
+            </p>
 
             <!-- Domains and addresses, latest first -->
             <section class="grid gap-5 lg:grid-cols-2">
@@ -706,35 +691,7 @@ const attention = computed(() => {
             </section>
 
             <!-- Supporting detail -->
-            <section class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                <div class="flex flex-col rounded-2xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-900/5">
-                    <h3 class="font-semibold text-slate-900">Top pages</h3>
-                    <div v-if="!s" class="mt-3 space-y-3">
-                        <div v-for="i in LIMIT" :key="i" class="h-5 animate-pulse rounded bg-slate-100" />
-                    </div>
-                    <p v-else-if="!pages.length" class="mt-3 flex-1 text-sm text-slate-500">No pages were opened in this period.</p>
-                    <ol v-else class="mt-3 flex-1 space-y-2.5">
-                        <li v-for="p in pages.slice(0, LIMIT)" :key="p.site + p.path" class="flex justify-between gap-3 text-sm">
-                            <a
-                                v-if="p.url"
-                                :href="p.url"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="min-w-0 truncate text-slate-900 hover:text-brand-700 hover:underline"
-                                :title="p.site + p.path"
-                            >
-                                <span class="text-slate-500">{{ p.site }}</span>{{ p.path }}
-                            </a>
-                            <span v-else class="min-w-0 truncate text-slate-900"><span class="text-slate-500">{{ p.site }}</span>{{ p.path }}</span>
-                            <span class="tabular-nums text-slate-700">{{ number(p.requests) }}</span>
-                        </li>
-                    </ol>
-                    <div v-if="s" class="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-sm text-slate-600">
-                        <span class="tabular-nums">{{ Math.min(LIMIT, pages.length) }} of {{ number(pages.length) }}{{ pages.length >= 100 ? '+' : '' }} pages</span>
-                        <Link :href="periodHref({ window, site, view: 'urls' })" class="font-medium text-brand-600 hover:underline">View all →</Link>
-                    </div>
-                </div>
-
+            <section class="grid gap-5 md:grid-cols-2">
                 <div class="flex flex-col rounded-2xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-900/5">
                     <h3 class="font-semibold text-slate-900">Responses</h3>
                     <div v-if="!t" class="mt-3 space-y-3">
@@ -768,7 +725,7 @@ const attention = computed(() => {
                     </template>
                 </div>
 
-                <div class="flex flex-col rounded-2xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-900/5 md:col-span-2 xl:col-span-1">
+                <div class="flex flex-col rounded-2xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-900/5">
                     <h3 class="font-semibold text-slate-900">Came from</h3>
                     <p class="text-[13px] text-slate-500">Sites that linked visitors here.</p>
                     <div v-if="!t" class="mt-3 space-y-3">

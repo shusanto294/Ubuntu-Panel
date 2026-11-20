@@ -20,6 +20,8 @@ const props = defineProps({
     filters: { type: Boolean, default: true }, // false when the page filters them itself
     footer: { type: Boolean, default: true },
     exact: { type: Boolean, default: false }, // the time of day rather than "3 min ago"
+    badge: { type: String, default: '' }, // the time the rows are from
+    badgeTone: { type: String, default: 'bg-slate-100 text-slate-600' },
 });
 
 const now = useNow();
@@ -58,7 +60,10 @@ const tag = (r) => {
     <section :class="flat ? '' : 'overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5'">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
-                <h3 class="font-semibold text-slate-900">{{ title }}</h3>
+                <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="font-semibold text-slate-900">{{ title }}</h3>
+                    <span v-if="badge" class="rounded-md px-2 py-0.5 text-xs font-medium" :class="badgeTone">{{ badge }}</span>
+                </div>
                 <p v-if="subtitle" class="text-sm text-slate-500">{{ subtitle }}</p>
             </div>
             <slot name="actions" />
