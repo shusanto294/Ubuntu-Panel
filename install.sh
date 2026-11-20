@@ -567,10 +567,16 @@ else
         [ "$WAITED" -gt 0 ] && ok "Lock released after ${WAITED}s" || true
     fi
 
-    detail "Refreshing the package lists…"
-    logged apt-get "${APT_OPTS[@]}" update -y -qq || die "apt-get update failed. See $INSTALL_LOG."
-
     if [ "${#MISSING[@]}" -gt 0 ]; then
+        # The lists are refreshed only when something is to be installed: an
+        # update with everything present has no use for them, and one broken
+        # third-party repository or a mirror having a bad minute used to stop
+        # the update here and roll it back. Even then a failed refresh is not
+        # the end — the lists already on the machine usually still install.
+        detail "Refreshing the package lists…"
+        logged apt-get "${APT_OPTS[@]}" update -y -qq \
+            || warn "apt-get update failed (see $INSTALL_LOG); trying with the package lists already here."
+
         detail "Installing ${#MISSING[@]} missing package(s): ${MISSING[*]}"
 
         logged apt-get "${APT_OPTS[@]}" install -y -qq "${MISSING[@]}" \
