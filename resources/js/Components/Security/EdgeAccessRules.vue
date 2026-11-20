@@ -17,9 +17,12 @@ import ZoneScope from './ZoneScope.vue';
  * or deleting it does so in each, and a zone without it can be given it.
  * Rules made for the whole Cloudflare account show too, but can only be
  * changed in Cloudflare.
+ *
+ * A change shows at once and goes to Cloudflare behind it; the row says
+ * "Saving…" until each zone's copy comes back.
  */
 const props = defineProps({
-    groups: { type: Array, default: () => [] }, // { key, rule, copies, missing, readonly }
+    groups: { type: Array, default: () => [] }, // { key, rule, copies, missing, readonly, pending }
     errors: { type: Array, default: () => [] },
     zoneCount: { type: Number, default: 1 },
     single: { type: Boolean, default: true },
@@ -29,12 +32,10 @@ const props = defineProps({
     loadingZones: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['changed', 'message']);
+const emit = defineEmits(['apply', 'synced', 'resync', 'message']);
 
 const adding = ref(false);
-const saving = ref(false);
 const formError = ref('');
-const busy = ref('');
 const search = ref('');
 const editingNote = ref('');
 const note = ref('');
@@ -64,6 +65,44 @@ const report = (data) => {
 
 const copiesOf = (group) => group.copies.map(({ account, zone_id, zone_name, rule_id }) => ({ account, zone_id, zone_name, rule_id }));
 
+// Each copy's rule, in the zones the page holds.
+const eachCopy = (all, copies, change) => {
+    for (const copy of copies) {
+        const zone = all.find((z) => z.zone_id === copy.zone_id);
+        const at = zone?.access?.findIndex((r) => r.id === copy.rule_id) ?? -1;
+        if (at >= 0) change(zone.access, at);
+    }
+};
+
+// A rule not at Cloudflare yet, shown and marked until the zone comes back.
+const addTo = (all, zones, rule) => {
+    for (const target of zones) {
+        all.find((z) => z.zone_id === target.zone_id)?.access?.unshift({
+            id: `pending-${Math.random().toString(36).slice(2)}`,
+            target: rule.target,
+            value: rule.value.trim(),
+            mode: rule.mode,
+            notes: rule.notes,
+            scope: 'zone',
+            created_on: new Date().toISOString(),
+            _pending: true,
+        });
+    }
+};
+
+const send = async (request, fallback = 'Cloudflare refused the change.') => {
+    try {
+        const { data } = await request();
+        emit('synced', data.zones);
+        report(data);
+        return data;
+    } catch (e) {
+        emit('message', failure(e, fallback), true);
+        emit('resync');
+        return null;
+    }
+};
+
 const allowMe = () => {
     adding.value = true;
     form.target = props.myIp.includes(':') ? 'ip6' : 'ip';
@@ -73,38 +112,36 @@ const allowMe = () => {
 };
 
 const submit = async () => {
-    saving.value = true;
     formError.value = '';
+    const rule = { ...form };
+    const zones = targets.value;
 
-    try {
-        const { data } = await window.axios.post(route('edge.bulk.access'), { ...form, targets: targets.value });
-        Object.assign(form, { value: '', notes: '' });
-        adding.value = false;
-        report(data);
-        emit('changed');
-    } catch (e) {
-        formError.value = failure(e, 'Cloudflare did not take the rule.');
-    } finally {
-        saving.value = false;
+    Object.assign(form, { value: '', notes: '' });
+    adding.value = false;
+
+    emit('apply', (all) => addTo(all, zones, rule));
+
+    const data = await send(() => window.axios.post(route('edge.bulk.access'), { ...rule, targets: zones }), 'Cloudflare did not take the rule.');
+
+    // Refused outright — most often the value itself: the form comes back
+    // with it, and why.
+    if (!data) {
+        Object.assign(form, rule);
+        adding.value = true;
+        formError.value = 'Not added — see the message above.';
     }
 };
 
-const act = async (group, request) => {
-    busy.value = group.key;
-    try {
-        const { data } = await request();
-        editingNote.value = '';
-        report(data);
-        emit('changed');
-    } catch (e) {
-        emit('message', failure(e, 'Cloudflare refused the change.'), true);
-    } finally {
-        busy.value = '';
-    }
-};
+const update = (group, changes) => {
+    editingNote.value = '';
 
-const update = (group, changes) =>
-    act(group, () =>
+    emit('apply', (all) =>
+        eachCopy(all, group.copies, (list, at) => {
+            list[at] = { ...list[at], ...changes, _pending: true };
+        }),
+    );
+
+    send(() =>
         window.axios.post(route('edge.bulk.access.update'), {
             mode: group.rule.mode,
             notes: group.rule.notes,
@@ -112,17 +149,15 @@ const update = (group, changes) =>
             copies: copiesOf(group),
         }),
     );
+};
 
-const addToRest = (group) =>
-    act(group, () =>
-        window.axios.post(route('edge.bulk.access'), {
-            target: group.rule.target,
-            value: group.rule.value,
-            mode: group.rule.mode,
-            notes: group.rule.notes,
-            targets: group.missing,
-        }),
-    );
+const addToRest = (group) => {
+    const missing = group.missing;
+    const rule = { target: group.rule.target, value: group.rule.value, mode: group.rule.mode, notes: group.rule.notes };
+
+    emit('apply', (all) => addTo(all, missing, rule));
+    send(() => window.axios.post(route('edge.bulk.access'), { ...rule, targets: missing }));
+};
 
 const editNote = (group) => {
     editingNote.value = group.key;
@@ -133,7 +168,9 @@ const remove = async (group) => {
     const where = group.copies.length > 1 ? ` from ${group.copies.length} zones` : '';
     if (!(await confirmDanger(`Delete the rule for ${group.rule.value}${where}?`, 'Cloudflare stops applying it at once.'))) return;
 
-    act(group, () => window.axios.post(route('edge.bulk.access.destroy'), { value: group.rule.value, copies: copiesOf(group) }));
+    const copies = copiesOf(group);
+    emit('apply', (all) => eachCopy(all, copies, (list, at) => list.splice(at, 1)));
+    send(() => window.axios.post(route('edge.bulk.access.destroy'), { value: group.rule.value, copies }));
 };
 
 const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
@@ -207,10 +244,10 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                 </button>
                 <button
                     type="submit"
-                    :disabled="saving || !targets.length"
+                    :disabled="!targets.length"
                     class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >
-                    {{ saving ? 'Saving…' : targets.length > 1 ? `Add to ${targets.length} zones` : 'Add rule' }}
+                    {{ targets.length > 1 ? `Add to ${targets.length} zones` : 'Add rule' }}
                 </button>
             </div>
             <p v-if="formError" class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">{{ formError }}</p>
@@ -236,16 +273,18 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <tr v-for="group in pages.visible.value" :key="group.key" :class="busy === group.key ? 'opacity-50' : ''">
+                        <tr v-for="group in pages.visible.value" :key="group.key">
                             <td class="px-4 py-2.5">
                                 <span class="font-mono text-slate-900">{{ group.rule.value }}</span>
-                                <span class="block text-xs text-slate-400">{{ targetLabel(group.rule.target) }}</span>
+                                <span class="block text-xs text-slate-400">
+                                    {{ targetLabel(group.rule.target) }}<template v-if="group.pending"> · Saving…</template>
+                                </span>
                             </td>
                             <td class="px-4 py-2.5">
                                 <select
                                     v-if="!group.readonly"
                                     :value="group.rule.mode"
-                                    :disabled="Boolean(busy)"
+                                    :disabled="group.pending"
                                     class="rounded-lg border-slate-300 py-1 text-xs shadow-sm"
                                     @change="update(group, { mode: $event.target.value })"
                                 >
@@ -275,7 +314,7 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                                     <button
                                         type="button"
                                         class="block whitespace-nowrap font-medium text-brand-600 hover:underline disabled:opacity-50"
-                                        :disabled="Boolean(busy)"
+                                        :disabled="group.pending"
                                         :title="`Missing on ${group.missing.map((z) => z.zone_name).join(', ')}`"
                                         @click="addToRest(group)"
                                     >
@@ -289,7 +328,7 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                                         v-if="editingNote !== group.key"
                                         type="button"
                                         :class="smallButton"
-                                        :disabled="Boolean(busy)"
+                                        :disabled="group.pending"
                                         @click="editNote(group)"
                                     >
                                         Note
@@ -298,7 +337,7 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                                         type="button"
                                         :class="smallButton"
                                         class="ml-1.5 text-rose-600"
-                                        :disabled="Boolean(busy)"
+                                        :disabled="group.pending"
                                         @click="remove(group)"
                                     >
                                         Delete

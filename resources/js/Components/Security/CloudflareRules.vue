@@ -6,14 +6,19 @@ import EdgeRules from './EdgeRules.vue';
 import NotFoundGuard from './NotFoundGuard.vue';
 import ZoneErrors from './ZoneErrors.vue';
 import { PERMISSION, SECURITY_LEVELS } from './edge';
-import { card, field } from './ui';
+import { ago, card, field } from './ui';
 import { confirmAction } from '@/dialog';
 
 /*
  * Security → Cloudflare: the rules Cloudflare enforces in front of the
  * server — the security level, WAF custom rules, rate limiting rules and IP
- * access rules — read from Cloudflare and changed there, without opening its
- * dashboard.
+ * access rules — changed there without opening its dashboard.
+ *
+ * The page opens on the panel's own copy of Cloudflare, so it costs Cloudflare
+ * nothing; only "Refresh from Cloudflare", or a zone never read before, asks
+ * it. A change shows at once and is sent to Cloudflare behind it: the rows
+ * touched say "Saving…", Cloudflare's answer then takes their place, and a
+ * zone that refused goes back to what it was, with the reason.
  *
  * It opens on every zone that holds a site on this server, across every
  * Cloudflare account connected, with the same rule in several zones shown
@@ -59,28 +64,29 @@ const hasSite = (zoneName) => props.siteDomains.some((d) => d === zoneName || d.
 
 const zoneErrors = ref([]);
 
-const loadAllZones = async () => {
-    loadingZones.value = true;
+// Every account's zones in one request, from the panel's copy; refresh asks
+// Cloudflare for the lists again.
+const loadAllZones = async (refresh = false) => {
+    loadingZones.value = !allZones.value.length;
     zoneErrors.value = [];
-    const lists = await Promise.all(
-        props.accounts.map(async (account) => {
-            try {
-                const { data: body } = await window.axios.get(route('dns.zones', account.id));
-                return (body.zones ?? []).map((z) => ({
-                    account: account.id,
-                    account_label: account.label,
-                    id: z.id,
-                    name: z.name,
-                    has_site: hasSite(z.name),
-                }));
-            } catch (e) {
-                zoneErrors.value.push({ zone: account.label, error: e?.response?.data?.error ?? 'Could not read its zones.' });
-                return [];
-            }
-        }),
-    );
-    allZones.value = lists.flat().sort((a, b) => b.has_site - a.has_site || a.name.localeCompare(b.name));
-    loadingZones.value = false;
+    try {
+        const { data: body } = await window.axios.get(route('edge.zones') + (refresh ? '?refresh=1' : ''));
+        const lists = (body.accounts ?? []).map((account) => {
+            if (account.error) zoneErrors.value.push({ zone: account.label, error: account.error });
+            return (account.zones ?? []).map((z) => ({
+                account: account.id,
+                account_label: account.label,
+                id: z.id,
+                name: z.name,
+                has_site: hasSite(z.name),
+            }));
+        });
+        allZones.value = lists.flat().sort((a, b) => b.has_site - a.has_site || a.name.localeCompare(b.name));
+    } catch (e) {
+        zoneErrors.value.push({ zone: 'Cloudflare', error: e?.response?.data?.error ?? 'Could not read the zones.' });
+    } finally {
+        loadingZones.value = false;
+    }
 };
 
 const siteZones = computed(() => allZones.value.filter((z) => z.has_site));
@@ -103,7 +109,9 @@ const remember = () => {
     window.history.replaceState(window.history.state, '', url);
 };
 
-const load = async () => {
+// The zones' rules: the panel's copy, read from Cloudflare only for a zone
+// it has never read, or for all of them when refresh is asked for.
+const load = async (refresh = false) => {
     const targets = scopeZones.value.map(asTarget);
     if (!targets.length) {
         loaded.value = [];
@@ -114,14 +122,54 @@ const load = async () => {
     error.value = '';
 
     try {
-        const { data: body } = await window.axios.post(route('edge.all'), { targets });
+        const { data: body } = await window.axios.post(route('edge.all'), { targets, refresh: refresh ? '1' : '0' });
         loaded.value = body.zones ?? [];
     } catch (e) {
-        error.value = e?.response?.data?.error ?? 'Could not read the rules from Cloudflare.';
+        error.value = e?.response?.data?.error ?? 'Could not read the rules.';
     } finally {
         loading.value = false;
     }
 };
+
+const refreshing = ref(false);
+
+// The one way the page asks Cloudflare for everything again.
+const refresh = async () => {
+    refreshing.value = true;
+    try {
+        await loadAllZones(true);
+        await load(true);
+        say('Read again from Cloudflare.');
+    } finally {
+        refreshing.value = false;
+    }
+};
+
+// When the copy shown was read from Cloudflare: the oldest of the zones.
+const readAt = computed(() => {
+    const times = loaded.value.map((z) => z.fetched_at).filter(Boolean);
+    return times.length ? Math.min(...times) : null;
+});
+
+// ------------------------------------------------ changes, shown at once
+
+// apply makes a change on the page before Cloudflare has it; the rules it
+// touches are marked _pending, which the rows show as "Saving…".
+const apply = (change) => change(loaded.value);
+
+// synced puts the panel's copy of each zone a change touched in place of the
+// page's — Cloudflare's answer where it took the change, and what was there
+// before where it refused, so a refusal undoes itself.
+const synced = (zones = []) => {
+    const byId = new Map(zones.map((z) => [z.zone_id, z]));
+    loaded.value = loaded.value.map((z) => {
+        const fresh = byId.get(z.zone_id);
+        return fresh ? { ...fresh, account: z.account, zone_name: z.zone_name } : z;
+    });
+};
+
+// resync is for a change the panel refused outright: the copy, not Cloudflare.
+const resync = () => load(false);
 
 const choose = (value) => {
     scope.value = value;
@@ -162,13 +210,14 @@ const ruleGroups = (phase) => {
                 : '';
             const key = [phase, (rule.description ?? '').toLowerCase(), rule.expression, rule.action, limit].join('\u0000');
             if (!groups.has(key)) groups.set(key, { key, rule, copies: [] });
-            groups.get(key).copies.push({ ...target(z), rule_id: rule.id, enabled: rule.enabled });
+            groups.get(key).copies.push({ ...target(z), rule_id: rule.id, enabled: rule.enabled, pending: Boolean(rule._pending) });
         }
     }
 
     const zones = readable(phase);
     return [...groups.values()].map((g) => ({
         ...g,
+        pending: g.copies.some((c) => c.pending),
         enabledCount: g.copies.filter((c) => c.enabled).length,
         missing: zones.filter((z) => !g.copies.some((c) => c.zone_id === z.zone_id)).map(target),
     }));
@@ -183,7 +232,7 @@ const accessGroups = computed(() => {
             const readonly = rule.scope !== 'zone';
             const key = readonly ? `account\u0000${rule.id}` : ['zone', rule.target, rule.value.toLowerCase(), rule.mode].join('\u0000');
             if (!groups.has(key)) groups.set(key, { key, rule, copies: [], readonly });
-            groups.get(key).copies.push({ ...target(z), rule_id: rule.id });
+            groups.get(key).copies.push({ ...target(z), rule_id: rule.id, pending: Boolean(rule._pending) });
         }
     }
 
@@ -191,6 +240,7 @@ const accessGroups = computed(() => {
     return [...groups.values()]
         .map((g) => ({
             ...g,
+            pending: g.copies.some((c) => c.pending),
             missing: g.readonly ? [] : zones.filter((z) => !g.copies.some((c) => c.zone_id === z.zone_id)).map(target),
         }))
         .sort((a, b) => a.readonly - b.readonly);
@@ -231,14 +281,18 @@ const setLevel = async (value) => {
     )
         return;
 
+    // Shown at once; Cloudflare's answer, or the old level back, follows.
+    apply((all) => all.filter((z) => !z.errors?.level).forEach((z) => (z.level = value)));
+
     savingLevel.value = true;
     try {
         const { data: body } = await window.axios.post(route('edge.bulk.level'), { level: value, targets: zones.map(target) });
         const failures = (body.outcomes ?? []).filter((o) => o.status === 'failed');
+        synced(body.zones);
         say(body.message, failures.length > 0, failures);
-        load();
     } catch (e) {
         say(e?.response?.data?.error ?? 'Cloudflare refused the change.', true);
+        resync();
     } finally {
         savingLevel.value = false;
     }
@@ -294,11 +348,12 @@ const setLevel = async (value) => {
                 </label>
                 <button
                     type="button"
-                    :disabled="loading || !scope"
+                    :disabled="refreshing || loading || !scope"
                     class="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-50"
-                    @click="load"
+                    title="Read every zone shown, and the zone lists, from Cloudflare again"
+                    @click="refresh"
                 >
-                    {{ loading ? 'Reading…' : 'Reload' }}
+                    {{ refreshing ? 'Reading Cloudflare…' : 'Refresh from Cloudflare' }}
                 </button>
                 <a
                     v-if="zone"
@@ -310,12 +365,16 @@ const setLevel = async (value) => {
                     Open in Cloudflare ↗
                 </a>
                 <p v-if="loaded.length" class="w-full text-xs text-slate-500">
-                    <template v-if="single">{{ count }} rule{{ count === 1 ? '' : 's' }} on {{ zone?.name }}, as Cloudflare has them now.</template>
+                    <template v-if="single">{{ count }} rule{{ count === 1 ? '' : 's' }} on {{ zone?.name }}.</template>
                     <template v-else>
                         {{ count }} rule{{ count === 1 ? '' : 's' }} across {{ loaded.length }} site domain{{ loaded.length === 1 ? '' : 's' }}:
                         {{ loaded.map((z) => z.zone_name).join(', ') }}. A rule on several of them is shown once, and
                         changes to it go to each.
                     </template>
+                    <span v-if="readAt" class="text-slate-400">
+                        Kept by the panel, last read from Cloudflare {{ ago(readAt) }}; changes made here keep it up to
+                        date. Use Refresh after changing rules in Cloudflare's own dashboard.
+                    </span>
                 </p>
             </div>
 
@@ -394,7 +453,9 @@ const setLevel = async (value) => {
                     :all-zones="allZones"
                     :current="current"
                     :loading-zones="loadingZones"
-                    @changed="load"
+                    @apply="apply"
+                    @synced="synced"
+                    @resync="resync"
                     @message="say"
                 />
 
@@ -408,7 +469,9 @@ const setLevel = async (value) => {
                     :all-zones="allZones"
                     :current="current"
                     :loading-zones="loadingZones"
-                    @changed="load"
+                    @apply="apply"
+                    @synced="synced"
+                    @resync="resync"
                     @message="say"
                 />
 
@@ -421,7 +484,9 @@ const setLevel = async (value) => {
                     :all-zones="allZones"
                     :current="current"
                     :loading-zones="loadingZones"
-                    @changed="load"
+                    @apply="apply"
+                    @synced="synced"
+                    @resync="resync"
                     @message="say"
                 />
             </template>

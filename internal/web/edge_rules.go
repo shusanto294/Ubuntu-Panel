@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -16,9 +15,11 @@ import (
 // The security rules Cloudflare enforces in front of the server — WAF custom
 // rules, rate limiting rules, IP access rules and the zone's security level —
 // read and written through a DNS credential, from Security → Cloudflare. The
-// page talks to these as JSON: every answer is Cloudflare's, read fresh, and a
-// refusal is shown beside the part of the page it concerns rather than as a
-// flash over the whole of it. internal/dns/edge.go is the Cloudflare side.
+// page talks to these as JSON, from the panel's copy of Cloudflare
+// (edge_cache.go), and each write keeps that copy true from Cloudflare's own
+// answer. A refusal is shown beside the part of the page it concerns rather
+// than as a flash over the whole of it. internal/dns/edge.go is the
+// Cloudflare side.
 
 // edgeAccounts are the user's credentials at a host that has edge rules, for
 // the Security page's account picker.
@@ -102,54 +103,45 @@ func (a *App) edgeFailed(w http.ResponseWriter, err error) {
 func (a *App) edgeDone(w http.ResponseWriter, r *http.Request, account *store.DNSAccount, zoneID, what, message string) {
 	a.Log.Info("cloudflare security changed", "account", account.ID, "zone", zoneID, "change", what,
 		"ip", session.ClientIP(r))
-	a.writeJSON(w, http.StatusOK, map[string]any{"message": message})
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"message": message,
+		"zones":   a.zoneCopies(r.Context(), []edgeTarget{{ZoneID: zoneID}}),
+	})
 }
 
-// edgeIndex is everything a zone's security is, read at once. Each part is
-// asked for on its own, so a token that may read the WAF but not the access
-// rules shows the one and says why it cannot show the other.
+// edgeIndex is everything a zone's security is, from the panel's copy, or
+// read from Cloudflare when there is none or ?refresh=1. Each part is asked
+// for on its own, so a token that may read the WAF but not the access rules
+// shows the one and says why it cannot show the other.
 func (a *App) edgeIndex(w http.ResponseWriter, r *http.Request) {
 	zoneID := r.URL.Query().Get("zone_id")
 
-	client, _, ok := a.edgeClient(w, r, zoneID)
+	client, account, ok := a.edgeClient(w, r, zoneID)
 	if !ok {
 		return
 	}
 
-	var (
-		wait                sync.WaitGroup
-		custom, ratelimit   []dns.EdgeRule
-		access              []dns.AccessRule
-		level               string
-		errCustom, errLimit error
-		errAccess, errLevel error
-	)
-
-	wait.Add(4)
-	go func() { defer wait.Done(); _, custom, errCustom = client.EdgeRules(zoneID, dns.PhaseCustom) }()
-	go func() { defer wait.Done(); _, ratelimit, errLimit = client.EdgeRules(zoneID, dns.PhaseRateLimit) }()
-	go func() { defer wait.Done(); access, errAccess = client.AccessRules(zoneID) }()
-	go func() { defer wait.Done(); level, errLevel = client.SecurityLevel(zoneID) }()
-	wait.Wait()
-
-	message := func(err error) string {
-		if err == nil {
-			return ""
+	zone, cached := a.cachedZone(r.Context(), zoneID)
+	if !cached || r.URL.Query().Get("refresh") == "1" {
+		name := zoneID
+		if cached {
+			name = zone.ZoneName
 		}
-		return err.Error()
+		zone = a.readZone(r.Context(), client, edgeTarget{Account: account.ID, ZoneID: zoneID, ZoneName: name})
+	}
+
+	errors := map[string]string{"custom": "", "ratelimit": "", "access": "", "level": ""}
+	for key, message := range zone.Errors {
+		errors[key] = message
 	}
 
 	a.writeJSON(w, http.StatusOK, map[string]any{
-		"custom":    orEmpty(custom),
-		"ratelimit": orEmpty(ratelimit),
-		"access":    orEmpty(access),
-		"level":     level,
-		"errors": map[string]string{
-			"custom":    message(errCustom),
-			"ratelimit": message(errLimit),
-			"access":    message(errAccess),
-			"level":     message(errLevel),
-		},
+		"custom":     zone.Custom,
+		"ratelimit":  zone.RateLimit,
+		"access":     zone.Access,
+		"level":      zone.Level,
+		"errors":     errors,
+		"fetched_at": zone.FetchedAt,
 	})
 }
 
@@ -241,7 +233,9 @@ func (a *App) edgeRuleStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := client.CreateEdgeRule(input["zone_id"], phase, rule); err != nil {
+	set, err := client.AddEdgeRule(input["zone_id"], phase, a.knownRuleset(r.Context(), input["zone_id"], phase), rule)
+	a.keepRuleset(r.Context(), input["zone_id"], phase, set)
+	if err != nil {
 		a.edgeFailed(w, err)
 		return
 	}
@@ -274,7 +268,9 @@ func (a *App) edgeRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := client.UpdateEdgeRule(input["zone_id"], phase, ruleID, rule); err != nil {
+	set, err := client.ChangeEdgeRule(input["zone_id"], phase, a.knownRuleset(r.Context(), input["zone_id"], phase), ruleID, rule)
+	a.keepRuleset(r.Context(), input["zone_id"], phase, set)
+	if err != nil {
 		a.edgeFailed(w, err)
 		return
 	}
@@ -303,7 +299,9 @@ func (a *App) edgeRuleMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := client.MoveEdgeRule(input["zone_id"], phase, ruleID, position); err != nil {
+	set, err := client.PlaceEdgeRule(input["zone_id"], phase, a.knownRuleset(r.Context(), input["zone_id"], phase), ruleID, position)
+	a.keepRuleset(r.Context(), input["zone_id"], phase, set)
+	if err != nil {
 		a.edgeFailed(w, err)
 		return
 	}
@@ -327,7 +325,9 @@ func (a *App) edgeRuleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := client.DeleteEdgeRule(query.Get("zone_id"), phase, ruleID); err != nil {
+	set, err := client.RemoveEdgeRule(query.Get("zone_id"), phase, a.knownRuleset(r.Context(), query.Get("zone_id"), phase), ruleID)
+	a.keepRuleset(r.Context(), query.Get("zone_id"), phase, set)
+	if err != nil && !edgeIsGone(err) {
 		a.edgeFailed(w, err)
 		return
 	}
@@ -365,10 +365,12 @@ func (a *App) edgeAccessStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule := dns.AccessRule{Mode: input["mode"], Target: input["target"], Value: value, Notes: notes}
-	if err := client.CreateAccessRule(input["zone_id"], rule); err != nil {
+	made, err := client.AddAccessRule(input["zone_id"], rule)
+	if err != nil {
 		a.edgeFailed(w, err)
 		return
 	}
+	a.keepAccessRule(r.Context(), input["zone_id"], made)
 
 	a.edgeDone(w, r, account, input["zone_id"], "access rule added: "+rule.Mode+" "+value,
 		"Access rule for "+value+" added.")
@@ -399,9 +401,13 @@ func (a *App) edgeAccessUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := client.UpdateAccessRule(input["zone_id"], ruleID, input["mode"], notes); err != nil {
+		if edgeIsGone(err) {
+			a.dropAccessRule(r.Context(), input["zone_id"], ruleID)
+		}
 		a.edgeFailed(w, err)
 		return
 	}
+	a.changeAccessRule(r.Context(), input["zone_id"], ruleID, input["mode"], notes)
 
 	a.edgeDone(w, r, account, input["zone_id"], "access rule updated: "+ruleID+" "+input["mode"], "Access rule saved.")
 }
@@ -421,10 +427,11 @@ func (a *App) edgeAccessDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := client.DeleteAccessRule(zoneID, ruleID); err != nil {
+	if err := client.DeleteAccessRule(zoneID, ruleID); err != nil && !edgeIsGone(err) {
 		a.edgeFailed(w, err)
 		return
 	}
+	a.dropAccessRule(r.Context(), zoneID, ruleID)
 
 	a.edgeDone(w, r, account, zoneID, "access rule deleted: "+ruleID, "Access rule deleted.")
 }
@@ -453,6 +460,7 @@ func (a *App) edgeLevel(w http.ResponseWriter, r *http.Request) {
 		a.edgeFailed(w, err)
 		return
 	}
+	a.keepLevel(r.Context(), input["zone_id"], input["level"])
 
 	a.edgeDone(w, r, account, input["zone_id"], "security level: "+input["level"], "Security level saved.")
 }

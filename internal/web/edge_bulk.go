@@ -124,9 +124,12 @@ func eachZone(targets []edgeTarget, clients map[int64]*dns.Client, work func(*dn
 	return outcomes
 }
 
-// bulkAnswer is the summary line and the per-zone list. verb is what
+// bulkAnswer is the summary line, the per-zone list, and the panel's copy of
+// each zone touched as it now stands — which the page puts in place of its
+// own, so the result shows without the zones being read again. verb is what
 // happened where it worked: "Added to", "Saved on", "Deleted from".
-func (a *App) bulkAnswer(w http.ResponseWriter, r *http.Request, what, verb string, outcomes []edgeOutcome) {
+func (a *App) bulkAnswer(w http.ResponseWriter, r *http.Request, what, verb string, outcomes []edgeOutcome,
+	targets []edgeTarget) {
 	done, exists, failed := 0, 0, 0
 	for _, outcome := range outcomes {
 		switch outcome.Status {
@@ -154,6 +157,7 @@ func (a *App) bulkAnswer(w http.ResponseWriter, r *http.Request, what, verb stri
 		"message":  strings.Join(parts, ", ") + ".",
 		"failed":   failed,
 		"outcomes": outcomes,
+		"zones":    a.zoneCopies(r.Context(), targets),
 	})
 }
 
@@ -165,6 +169,9 @@ func plural(n int) string {
 }
 
 // edgeBulkRuleStore adds one custom or rate limiting rule to many zones.
+//
+// Whether a zone already has it is answered from the panel's copy when there
+// is one, so each zone costs Cloudflare the one request that adds the rule.
 func (a *App) edgeBulkRuleStore(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
@@ -183,28 +190,36 @@ func (a *App) edgeBulkRuleStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(targets, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		_, existing, err := client.EdgeRules(target.ZoneID, phase)
-		if err != nil {
-			return edgeOutcome{Status: "failed", Error: err.Error()}
+		known := a.knownRuleset(ctx, target.ZoneID, phase)
+		if known == nil {
+			current, err := client.ReadRuleset(target.ZoneID, phase)
+			if err != nil {
+				return edgeOutcome{Status: "failed", Error: err.Error()}
+			}
+			known = &current
 		}
 
 		// The same rule is the same name and the same expression: a rule
 		// renamed or changed since is the operator's, and left beside it.
-		for _, have := range existing {
+		for _, have := range known.Rules {
 			if strings.EqualFold(have.Description, rule.Description) && have.Expression == rule.Expression {
 				return edgeOutcome{Status: "exists"}
 			}
 		}
 
-		if err := client.CreateEdgeRule(target.ZoneID, phase, rule); err != nil {
+		set, err := client.AddEdgeRule(target.ZoneID, phase, known, rule)
+		a.keepRuleset(ctx, target.ZoneID, phase, set)
+		if err != nil {
 			return edgeOutcome{Status: "failed", Error: err.Error()}
 		}
 
 		return edgeOutcome{Status: "added"}
 	})
 
-	a.bulkAnswer(w, r, "rule added: "+rule.Description, "Added to", outcomes)
+	a.bulkAnswer(w, r, "rule added: "+rule.Description, "Added to", outcomes, targets)
 }
 
 // edgeBulkAccessStore adds one IP access rule to many zones.
@@ -237,38 +252,45 @@ func (a *App) edgeBulkAccessStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule := dns.AccessRule{Mode: input["mode"], Target: input["target"], Value: value, Notes: notes}
+	ctx := r.Context()
 
 	outcomes := eachZone(targets, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		existing, err := client.AccessRules(target.ZoneID)
-		if err != nil {
-			return edgeOutcome{Status: "failed", Error: err.Error()}
-		}
-
 		// Cloudflare allows one rule per address in a zone; one already
 		// there — the zone's own or the account's — is that address handled.
-		for _, have := range existing {
-			if have.Target == rule.Target && strings.EqualFold(have.Value, rule.Value) {
-				if have.Mode == rule.Mode {
-					return edgeOutcome{Status: "exists"}
+		// Asked of the copy; with none, Cloudflare's own refusal of a
+		// duplicate says the same without reading every rule first.
+		if zone, ok := a.cachedZone(ctx, target.ZoneID); ok && zone.Errors["access"] == "" {
+			for _, have := range zone.Access {
+				if have.Target == rule.Target && strings.EqualFold(have.Value, rule.Value) {
+					if have.Mode == rule.Mode {
+						return edgeOutcome{Status: "exists"}
+					}
+					return edgeOutcome{Status: "failed", Error: fmt.Sprintf(
+						"already has a rule for %s that says %s — change that one instead", value, have.Mode)}
 				}
-				return edgeOutcome{Status: "failed", Error: fmt.Sprintf(
-					"already has a rule for %s that says %s — change that one instead", value, have.Mode)}
 			}
 		}
 
-		if err := client.CreateAccessRule(target.ZoneID, rule); err != nil {
+		made, err := client.AddAccessRule(target.ZoneID, rule)
+		if err != nil {
+			if edgeIsDuplicate(err) {
+				return edgeOutcome{Status: "failed", Error: fmt.Sprintf(
+					"already has a rule for %s — Refresh to see it, and change that one instead", value)}
+			}
 			return edgeOutcome{Status: "failed", Error: err.Error()}
 		}
+
+		a.keepAccessRule(ctx, target.ZoneID, made)
 
 		return edgeOutcome{Status: "added"}
 	})
 
-	a.bulkAnswer(w, r, "access rule added: "+rule.Mode+" "+value, "Added to", outcomes)
+	a.bulkAnswer(w, r, "access rule added: "+rule.Mode+" "+value, "Added to", outcomes, targets)
 }
 
 // ------------------------------------------------- reading every zone at once
 
-// edgeZoneRules is one zone's security, as edgeIndex reads it.
+// edgeZoneRules is one zone's security, as the panel keeps a copy of it.
 type edgeZoneRules struct {
 	Account   int64             `json:"account"`
 	ZoneID    string            `json:"zone_id"`
@@ -278,10 +300,21 @@ type edgeZoneRules struct {
 	RateLimit []dns.EdgeRule    `json:"ratelimit"`
 	Access    []dns.AccessRule  `json:"access"`
 	Errors    map[string]string `json:"errors"`
+
+	// The rulesets holding Custom and RateLimit, so a write to one of their
+	// rules goes straight to it.
+	CustomRuleset    string `json:"custom_ruleset"`
+	RateLimitRuleset string `json:"ratelimit_ruleset"`
+
+	// FetchedAt is when Cloudflare was last read for the zone as a whole.
+	FetchedAt int64 `json:"fetched_at"`
 }
 
-// edgeAll reads the rules of many zones — every site's, usually — so the page
-// can show them side by side and change a rule everywhere it is at once.
+// edgeAll answers the rules of many zones — every site's, usually — so the
+// page can show them side by side and change a rule everywhere it is at once.
+//
+// From the panel's copy: Cloudflare is read only for a zone with none, or for
+// every zone asked about when refresh is "1".
 func (a *App) edgeAll(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
@@ -294,34 +327,29 @@ func (a *App) edgeAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	refresh := input["refresh"] == "1"
+	ctx := r.Context()
+
 	zones := make([]edgeZoneRules, len(targets))
 	slots := make(chan struct{}, 4)
 
 	var wait sync.WaitGroup
 	for i, target := range targets {
+		if !refresh {
+			if zone, ok := a.cachedZone(ctx, target.ZoneID); ok {
+				zone.Account, zone.ZoneName = target.Account, target.ZoneName
+				zones[i] = zone
+				continue
+			}
+		}
+
 		wait.Add(1)
 		go func(i int, target edgeTarget) {
 			defer wait.Done()
 			slots <- struct{}{}
 			defer func() { <-slots }()
 
-			client := clients[target.Account]
-			zone := edgeZoneRules{Account: target.Account, ZoneID: target.ZoneID, ZoneName: target.ZoneName, Errors: map[string]string{}}
-
-			var errCustom, errLimit, errAccess, errLevel error
-			_, zone.Custom, errCustom = client.EdgeRules(target.ZoneID, dns.PhaseCustom)
-			_, zone.RateLimit, errLimit = client.EdgeRules(target.ZoneID, dns.PhaseRateLimit)
-			zone.Access, errAccess = client.AccessRules(target.ZoneID)
-			zone.Level, errLevel = client.SecurityLevel(target.ZoneID)
-
-			for key, err := range map[string]error{"custom": errCustom, "ratelimit": errLimit, "access": errAccess, "level": errLevel} {
-				if err != nil {
-					zone.Errors[key] = err.Error()
-				}
-			}
-
-			zone.Custom, zone.RateLimit, zone.Access = orEmpty(zone.Custom), orEmpty(zone.RateLimit), orEmpty(zone.Access)
-			zones[i] = zone
+			zones[i] = a.readZone(ctx, clients[target.Account], target)
 		}(i, target)
 	}
 	wait.Wait()
@@ -357,8 +385,8 @@ func outcomeOf(err error) edgeOutcome {
 }
 
 // edgeBulkRuleUpdate rewrites one custom or rate limiting rule in every zone
-// that has it. Each copy is updated from what Cloudflare holds for it, so what
-// the form does not show survives.
+// that has it. Each copy is updated from what Cloudflare last said about it,
+// so what the form does not show survives.
 func (a *App) edgeBulkRuleUpdate(w http.ResponseWriter, r *http.Request) {
 	input, err := a.input(r)
 	if err != nil {
@@ -377,11 +405,15 @@ func (a *App) edgeBulkRuleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(copies, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		return outcomeOf(client.UpdateEdgeRule(target.ZoneID, phase, target.RuleID, rule))
+		set, err := client.ChangeEdgeRule(target.ZoneID, phase, a.knownRuleset(ctx, target.ZoneID, phase), target.RuleID, rule)
+		a.keepRuleset(ctx, target.ZoneID, phase, set)
+		return outcomeOf(err)
 	})
 
-	a.bulkAnswer(w, r, "rule updated: "+rule.Description, "Saved on", outcomes)
+	a.bulkAnswer(w, r, "rule updated: "+rule.Description, "Saved on", outcomes, copies)
 }
 
 // edgeBulkRuleDestroy removes one custom or rate limiting rule from every
@@ -404,11 +436,20 @@ func (a *App) edgeBulkRuleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(copies, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		return outcomeOf(client.DeleteEdgeRule(target.ZoneID, phase, target.RuleID))
+		set, err := client.RemoveEdgeRule(target.ZoneID, phase, a.knownRuleset(ctx, target.ZoneID, phase), target.RuleID)
+		a.keepRuleset(ctx, target.ZoneID, phase, set)
+
+		// Already gone from Cloudflare is what was asked for.
+		if edgeIsGone(err) {
+			return edgeOutcome{Status: "done"}
+		}
+		return outcomeOf(err)
 	})
 
-	a.bulkAnswer(w, r, "rule deleted: "+input["description"], "Deleted from", outcomes)
+	a.bulkAnswer(w, r, "rule deleted: "+input["description"], "Deleted from", outcomes, copies)
 }
 
 // edgeBulkAccessUpdate changes what one IP access rule does, and its note,
@@ -435,11 +476,20 @@ func (a *App) edgeBulkAccessUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(copies, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		return outcomeOf(client.UpdateAccessRule(target.ZoneID, target.RuleID, input["mode"], notes))
+		err := client.UpdateAccessRule(target.ZoneID, target.RuleID, input["mode"], notes)
+		switch {
+		case err == nil:
+			a.changeAccessRule(ctx, target.ZoneID, target.RuleID, input["mode"], notes)
+		case edgeIsGone(err):
+			a.dropAccessRule(ctx, target.ZoneID, target.RuleID)
+		}
+		return outcomeOf(err)
 	})
 
-	a.bulkAnswer(w, r, "access rule updated: "+input["mode"], "Saved on", outcomes)
+	a.bulkAnswer(w, r, "access rule updated: "+input["mode"], "Saved on", outcomes, copies)
 }
 
 // edgeBulkAccessDestroy removes one IP access rule from every zone that has it.
@@ -455,11 +505,18 @@ func (a *App) edgeBulkAccessDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(copies, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		return outcomeOf(client.DeleteAccessRule(target.ZoneID, target.RuleID))
+		err := client.DeleteAccessRule(target.ZoneID, target.RuleID)
+		if err == nil || edgeIsGone(err) {
+			a.dropAccessRule(ctx, target.ZoneID, target.RuleID)
+			return edgeOutcome{Status: "done"}
+		}
+		return outcomeOf(err)
 	})
 
-	a.bulkAnswer(w, r, "access rule deleted: "+input["value"], "Deleted from", outcomes)
+	a.bulkAnswer(w, r, "access rule deleted: "+input["value"], "Deleted from", outcomes, copies)
 }
 
 // edgeBulkLevel sets the security level of many zones.
@@ -480,9 +537,15 @@ func (a *App) edgeBulkLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	outcomes := eachZone(targets, clients, func(client *dns.Client, target edgeTarget) edgeOutcome {
-		return outcomeOf(client.SetSecurityLevel(target.ZoneID, input["level"]))
+		err := client.SetSecurityLevel(target.ZoneID, input["level"])
+		if err == nil {
+			a.keepLevel(ctx, target.ZoneID, input["level"])
+		}
+		return outcomeOf(err)
 	})
 
-	a.bulkAnswer(w, r, "security level: "+input["level"], "Set on", outcomes)
+	a.bulkAnswer(w, r, "security level: "+input["level"], "Set on", outcomes, targets)
 }

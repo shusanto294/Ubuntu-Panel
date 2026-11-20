@@ -424,6 +424,15 @@ var schema = []string{
 	`CREATE INDEX IF NOT EXISTS notfound_blocks_expires ON notfound_blocks(expires_at)`,
 	`CREATE INDEX IF NOT EXISTS notfound_blocks_ip ON notfound_blocks(ip, zone_id)`,
 
+	// What the panel last read from Cloudflare for the Security page: each
+	// account's zones, and each zone's rules. Pages open on this rather than
+	// asking Cloudflare; see internal/web/edge_cache.go.
+	`CREATE TABLE IF NOT EXISTS edge_cache (
+		key        TEXT PRIMARY KEY,
+		body       TEXT NOT NULL,
+		fetched_at INTEGER NOT NULL
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS ip_countries (
 		ip         TEXT PRIMARY KEY,
 		country    TEXT NOT NULL,

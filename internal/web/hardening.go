@@ -408,6 +408,8 @@ func (a *App) securityCloudflareAttack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.keepLevel(r.Context(), zoneID, level)
+
 	if on {
 		previous["_on_"+site.Domain] = "1"
 	} else {

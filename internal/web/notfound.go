@@ -393,9 +393,10 @@ func (a *App) blockEverywhere(ctx context.Context, hit notfound.Hit, target, val
 		go func(zone zoneAnswer) {
 			defer func() { <-slots; wg.Done() }()
 
-			ruleID, err := client.CreateAccessRuleID(zone.zoneID, dns.AccessRule{
+			rule, err := client.AddAccessRule(zone.zoneID, dns.AccessRule{
 				Mode: settings.Action, Target: target, Value: value, Notes: notes,
 			})
+			ruleID := rule.ID
 			if err != nil {
 				// One already there — made by hand, an allow rule, or another
 				// server's panel — is left alone.
@@ -412,6 +413,10 @@ func (a *App) blockEverywhere(ctx context.Context, hit notfound.Hit, target, val
 
 				return
 			}
+
+			// Into the panel's copy too, so the Cloudflare tab lists it
+			// without reading the zone again.
+			a.keepAccessRule(ctx, zone.zoneID, rule)
 
 			a.Store.AddNotFoundBlock(ctx, &store.NotFoundBlock{
 				IP:        value,
@@ -582,7 +587,9 @@ func (a *App) findSiteZones(ctx context.Context) []zoneAnswer {
 			continue
 		}
 
-		zones, err := dns.New(a.Store, account).Zones()
+		// The same list the Cloudflare tab keeps: no request at all when it
+		// has been read before.
+		zones, _, err := a.accountZones(ctx, account, false)
 		if err != nil {
 			a.Log.Warn("404 protection could not list a Cloudflare account's zones", "account", account.ID, "error", err)
 			continue
@@ -731,6 +738,8 @@ func (a *App) liftNotFoundBlock(ctx context.Context, block *store.NotFoundBlock)
 			}
 		}
 	}
+
+	a.dropAccessRule(ctx, block.ZoneID, block.RuleID)
 
 	return a.Store.DeleteNotFoundBlock(ctx, block.ID)
 }

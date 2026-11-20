@@ -247,6 +247,7 @@ func (a *App) routes() *router {
 	rt.post("/edge/bulk/rules", "edge.bulk.rules", authenticated, a.edgeBulkRuleStore)
 	rt.post("/edge/bulk/access", "edge.bulk.access", authenticated, a.edgeBulkAccessStore)
 	rt.post("/edge/all", "edge.all", authenticated, a.edgeAll)
+	rt.get("/edge/zones", "edge.zones", authenticated, a.edgeZones)
 	rt.post("/edge/bulk/rules/update", "edge.bulk.rules.update", authenticated, a.edgeBulkRuleUpdate)
 	rt.post("/edge/bulk/rules/delete", "edge.bulk.rules.destroy", authenticated, a.edgeBulkRuleDestroy)
 	rt.post("/edge/bulk/access/update", "edge.bulk.access.update", authenticated, a.edgeBulkAccessUpdate)
