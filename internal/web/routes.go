@@ -95,6 +95,7 @@ func (a *App) routes() *router {
 	// pages and one address's. They lived under /logs, and still answer there.
 	rt.get("/analytics", "analytics.index", authenticated, a.analyticsIndex)
 	rt.get("/analytics/slice", "analytics.slice", authenticated, a.analyticsSlice)
+	rt.get("/analytics/period", "analytics.period", authenticated, a.analyticsPeriod)
 	rt.get("/analytics/ip/{ip}", "analytics.ip", authenticated, a.logsIP)
 	rt.get("/analytics/{section}", "analytics.stats", authenticated, a.logsStatsPage)
 	rt.get("/logs/stats/{section}", "", authenticated, a.analyticsMoved(func(r *http.Request) string {

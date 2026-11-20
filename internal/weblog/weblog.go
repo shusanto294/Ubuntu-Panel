@@ -385,6 +385,18 @@ type Analyzer struct {
 	// site it fronts and has far better ways to tell a visitor from a bot.
 	Proxied map[string]bool
 
+	// Feed is how many of the newest requests the feed keeps: 0 is maxRecent.
+	// Everything puts every request in it — stylesheets, scripts and images
+	// too — rather than only pages and attacks, and FeedStatus narrows it to
+	// the answered ("ok", under 400) or the refused and failed ("errors").
+	Feed       int
+	Everything bool
+	FeedStatus string
+
+	// AllPaths keeps every path in the report rather than the busiest two
+	// hundred: a page that lists them all, a page at a time.
+	AllPaths bool
+
 	sites    map[string]*siteTotals
 	ips      map[string]*ipTotals
 	paths    map[string]*pathTotals
@@ -433,6 +445,7 @@ type pathTotals struct {
 	requests   int
 	notFound   int
 	errors     int
+	failed     int
 	dynamic    bool
 	threat     string
 	ips        map[string]bool
@@ -580,7 +593,7 @@ func (a *Analyzer) Add(site string, entry Entry) {
 
 	// The feed is what a visitor opens, and what attacks it: a page's
 	// stylesheets and images would push the pages themselves out of it.
-	if dynamic || threat != "" {
+	if a.inFeed(entry.Status, dynamic || threat != "") {
 		a.remember(Request{
 			At: entry.Time.Unix(), Site: site, Method: entry.Method, Path: entry.Path,
 			Status: entry.Status, IP: entry.IP, Threat: threat, agent: entry.UserAgent,
@@ -664,6 +677,9 @@ func (a *Analyzer) Add(site string, entry Entry) {
 		if entry.Status >= 500 {
 			p.errors++
 		}
+		if entry.Status >= 400 {
+			p.failed++
+		}
 		if len(p.ips) < 1000 {
 			p.ips[entry.IP] = true
 		}
@@ -685,19 +701,43 @@ func (a *Analyzer) Add(site string, entry Entry) {
 	}
 }
 
+// inFeed reports whether a request belongs in the feed: a page or an attack,
+// or anything at all when the feed is every request, of the answers asked for.
+func (a *Analyzer) inFeed(status int, page bool) bool {
+	if !page && !a.Everything {
+		return false
+	}
+
+	switch a.FeedStatus {
+	case "ok":
+		return status < 400
+	case "errors":
+		return status >= 400
+	}
+
+	return true
+}
+
+func (a *Analyzer) feedCap() int {
+	if a.Feed > 0 {
+		return a.Feed
+	}
+	return maxRecent
+}
+
 // remember adds a request to the feed, trimming it back to the newest when it
 // has grown to twice what is kept.
 func (a *Analyzer) remember(request Request) {
 	a.recent = append(a.recent, request)
-	if len(a.recent) >= 2*maxRecent {
+	if len(a.recent) >= 2*a.feedCap() {
 		a.trimRecent()
 	}
 }
 
 func (a *Analyzer) trimRecent() {
 	sort.SliceStable(a.recent, func(i, j int) bool { return a.recent[i].At > a.recent[j].At })
-	if len(a.recent) > maxRecent {
-		a.recent = append([]Request{}, a.recent[:maxRecent]...)
+	if len(a.recent) > a.feedCap() {
+		a.recent = append([]Request{}, a.recent[:a.feedCap()]...)
 	}
 }
 
@@ -833,6 +873,7 @@ type PathStat struct {
 	IPs      int    `json:"ips"`
 	NotFound int    `json:"not_found"`
 	Errors   int    `json:"errors"`
+	Failed   int    `json:"failed"` // answered 400 or above
 	Dynamic  bool   `json:"dynamic"`
 	Threat   string `json:"threat"`
 }
@@ -951,7 +992,7 @@ func (a *Analyzer) Report() Report {
 	for _, p := range a.paths {
 		report.Paths = append(report.Paths, PathStat{
 			Site: p.site, Path: p.path, Requests: p.requests, IPs: len(p.ips),
-			NotFound: p.notFound, Errors: p.errors, Dynamic: p.dynamic,
+			NotFound: p.notFound, Errors: p.errors, Failed: p.failed, Dynamic: p.dynamic,
 			Threat: p.threat,
 		})
 	}
@@ -973,7 +1014,7 @@ func (a *Analyzer) Report() Report {
 		}
 	}
 
-	if len(report.Paths) > 200 {
+	if len(report.Paths) > 200 && !a.AllPaths {
 		report.Paths = report.Paths[:200]
 	}
 

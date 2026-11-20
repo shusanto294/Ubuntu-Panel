@@ -16,6 +16,10 @@ const props = defineProps({
     allHref: { type: String, default: '' },
     title: { type: String, default: 'Latest requests' },
     flat: { type: Boolean, default: false }, // inside another card
+    subtitle: { type: String, default: 'Newest first. Images, scripts and styles are left out.' },
+    filters: { type: Boolean, default: true }, // false when the page filters them itself
+    footer: { type: Boolean, default: true },
+    exact: { type: Boolean, default: false }, // the time of day rather than "3 min ago"
 });
 
 const now = useNow();
@@ -34,7 +38,12 @@ const filtered = computed(() =>
 const visible = computed(() => (props.limit ? filtered.value.slice(0, props.limit) : filtered.value));
 
 // Inside one bar of the chart the rows are minutes apart, so they say when.
-const clock = (at) => new Date(at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// Another day's say which day too.
+const clock = (at) => {
+    const d = new Date(at * 1000);
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+};
 
 const host = (site) => (site === props.unmatched ? 'server IP' : site);
 
@@ -50,9 +59,10 @@ const tag = (r) => {
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
                 <h3 class="font-semibold text-slate-900">{{ title }}</h3>
-                <p class="text-sm text-slate-500">Newest first. Images, scripts and styles are left out.</p>
+                <p v-if="subtitle" class="text-sm text-slate-500">{{ subtitle }}</p>
             </div>
-            <div role="group" aria-label="Filter requests" class="flex gap-1.5">
+            <slot name="actions" />
+            <div v-if="filters" role="group" aria-label="Filter requests" class="flex gap-1.5">
                 <button
                     v-for="[key, label] in FILTERS"
                     :key="key"
@@ -86,7 +96,7 @@ const tag = (r) => {
                 <tbody>
                     <tr v-for="(r, i) in visible" :key="`${r.at}-${r.ip}-${r.path}-${i}`" class="border-t border-slate-100">
                         <td class="whitespace-nowrap px-5 py-2.5 tabular-nums text-slate-500" :title="new Date(r.at * 1000).toLocaleString()">
-                            {{ flat ? clock(r.at) : ago(r.at, now) }}
+                            {{ flat || exact ? clock(r.at) : ago(r.at, now) }}
                         </td>
                         <td class="px-2 py-2.5">
                             <span class="inline-block rounded-md px-1.5 py-0.5 font-mono text-xs font-medium" :class="statusTone(r.status)">
@@ -125,13 +135,13 @@ const tag = (r) => {
         </div>
 
         <div
-            v-if="rows && allHref"
+            v-if="footer && rows && allHref"
             class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm text-slate-600"
         >
             <span class="tabular-nums">{{ number(visible.length) }} of {{ number(total) }} requests</span>
             <Link :href="allHref" class="font-medium text-brand-600 hover:underline">View all requests →</Link>
         </div>
-        <p v-else-if="rows && rows.length" class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+        <p v-else-if="footer && rows && rows.length" class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
             The {{ number(rows.length) }} newest page requests of {{ number(total) }} in the period. Every request is in the
             site's access log under Logs → Server logs.
         </p>

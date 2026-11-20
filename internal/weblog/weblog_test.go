@@ -403,3 +403,50 @@ func TestRecentFeedAndLastSeen(t *testing.T) {
 		t.Errorf("timeline errors = %d 4xx, %d 5xx", clientErrors, serverErrors)
 	}
 }
+
+func TestEverythingFeedAndAllPaths(t *testing.T) {
+	now := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+
+	line := func(minute int, path string, status int) string {
+		return fmt.Sprintf(`1.2.3.4 - - [04/Nov/2026:09:%02d:00 +0000] "GET %s HTTP/1.1" %d 512 "-" "Mozilla/5.0"`,
+			minute, path, status)
+	}
+
+	read := func(set func(*Analyzer)) Report {
+		a := New(now.Add(-time.Hour), now, 1)
+		set(a)
+		for i := 0; i < 300; i++ {
+			a.Line("a.example", line(i%60, fmt.Sprintf("/file-%d.css", i), 200))
+		}
+		a.Line("a.example", line(59, "/.env", 444))
+		a.Line("a.example", line(59, "/.env", 444))
+		a.Line("a.example", line(58, "/", 200))
+		return a.Report()
+	}
+
+	report := read(func(a *Analyzer) { a.Feed = 1000; a.Everything = true; a.AllPaths = true })
+	if len(report.Recent) != 303 {
+		t.Errorf("an everything feed kept %d, want every one of 303", len(report.Recent))
+	}
+	if len(report.Paths) != 302 {
+		t.Errorf("all paths kept %d, want 302", len(report.Paths))
+	}
+	if report.Paths[0].Path != "/.env" || report.Paths[0].Failed != 2 {
+		t.Errorf("the top path = %+v, want /.env failed twice", report.Paths[0])
+	}
+
+	errors := read(func(a *Analyzer) { a.Feed = 1000; a.Everything = true; a.FeedStatus = "errors" })
+	if len(errors.Recent) != 2 || errors.Recent[0].Status != 444 {
+		t.Errorf("the errors feed = %d rows, want the two refused", len(errors.Recent))
+	}
+
+	plain := read(func(*Analyzer) {})
+	if len(plain.Paths) != 200 {
+		t.Errorf("a plain report kept %d paths, want 200", len(plain.Paths))
+	}
+	for _, r := range plain.Recent {
+		if Static(r.Path) {
+			t.Fatalf("a plain feed listed a stylesheet: %+v", r)
+		}
+	}
+}

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import RecentRequests from '@/Components/Analytics/RecentRequests.vue';
+import UrlTable from '@/Components/Analytics/UrlTable.vue';
 import {
     CLASS_BAR,
     CODE_LABEL,
@@ -11,6 +12,8 @@ import {
     THREAT_LABEL,
     ago,
     number,
+    periodHref,
+    spanLabel,
     statusTone,
     useNow,
 } from '@/Components/Analytics/format';
@@ -33,6 +36,8 @@ const props = defineProps({
     unmatched: { type: String, default: '' },
     edgeAccounts: { type: Array, default: () => [] },
     siteDomains: { type: Array, default: () => [] },
+    from: { type: Number, default: 0 }, // the bar that is open, from the address
+    to: { type: Number, default: 0 },
 
     traffic: { type: Object, default: null },
     trustedIps: { type: Object, default: () => ({}) },
@@ -167,14 +172,7 @@ const isPicked = (b) => {
     return b.at <= middle && middle < b.at + barWidth.value;
 };
 
-const pick = async (b) => {
-    if (isPicked(b)) {
-        picked.value = null;
-        return;
-    }
-
-    const from = b.at;
-    const to = b.at + barWidth.value;
+const open = async (from, to) => {
     const seq = ++pickSeq;
     picked.value = { from, to, data: null, loading: true, error: '' };
 
@@ -190,26 +188,57 @@ const pick = async (b) => {
     }
 };
 
-// A new period or site is a new chart.
-watch(() => [props.window, props.site], () => (picked.value = null));
-
-const SHORT_SPANS = ['1h', '24h'];
-const pickedLabel = computed(() => {
-    if (!picked.value) return '';
-    const from = new Date(picked.value.from * 1000);
-    const to = new Date(Math.min(picked.value.to * 1000, Date.now()));
-    const time = { hour: '2-digit', minute: '2-digit' };
-    const day = { weekday: 'short', month: 'short', day: 'numeric' };
-    if (SHORT_SPANS.includes(props.window) && from.toDateString() === to.toDateString()) {
-        const date = from.toDateString() === new Date().toDateString() ? 'Today' : from.toLocaleDateString(undefined, day);
-        return `${date}, ${from.toLocaleTimeString(undefined, time)} – ${to.toLocaleTimeString(undefined, time)}`;
+// The open bar is kept in the address — ?from=…&to=… — so a reload, a
+// bookmark or a link sent on opens the same minutes.
+const remember = (from, to) => {
+    const query = new URLSearchParams({ window: props.window });
+    if (props.site) query.set('site', props.site);
+    if (from && to) {
+        query.set('from', from);
+        query.set('to', to);
     }
-    return `${from.toLocaleString(undefined, { ...day, ...time })} – ${to.toLocaleString(undefined, { ...day, ...time })}`;
+    router.replace({
+        url: `${route('analytics.index')}?${query}`,
+        props: (current) => ({ ...current, from, to }),
+        preserveScroll: true,
+        preserveState: true,
+    });
+};
+
+const pick = (b) => {
+    if (isPicked(b)) {
+        close();
+        return;
+    }
+
+    const from = b.at;
+    const to = b.at + barWidth.value;
+    remember(from, to);
+    open(from, to);
+};
+
+const close = () => {
+    pickSeq++;
+    picked.value = null;
+    remember(0, 0);
+};
+
+onMounted(() => {
+    if (props.from && props.to) open(props.from, props.to);
 });
 
-const pickedPages = computed(() => picked.value?.data?.pages ?? []);
-const allPickedPages = ref(false);
-watch(picked, () => (allPickedPages.value = false));
+// A new period or site is a new chart.
+watch(() => [props.window, props.site], () => {
+    pickSeq++;
+    picked.value = null;
+});
+
+const pickedLabel = computed(() => (picked.value ? spanLabel(picked.value.from, picked.value.to, props.window) : ''));
+
+const pickedHref = (view = '') =>
+    picked.value ? periodHref({ window: props.window, site: props.site, from: picked.value.from, to: picked.value.to, view }) : '';
+
+const PICKED_ROWS = 10;
 
 const AXIS = {
     '1h': ['60 min ago', '30 min ago'],
@@ -495,59 +524,56 @@ const attention = computed(() => {
                         <p v-else-if="picked.loading" class="text-sm text-slate-500">Reading the logs for this time…</p>
                         <p v-else class="text-sm text-rose-700">{{ picked.error }}</p>
                     </div>
-                    <button
-                        type="button"
-                        class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
-                        @click="picked = null"
-                    >
-                        Close
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <Link
+                            :href="pickedHref()"
+                            class="inline-flex h-8 items-center rounded-lg bg-white px-3 text-sm font-medium text-brand-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                        >
+                            Open on its own page →
+                        </Link>
+                        <button
+                            type="button"
+                            class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+                            @click="close"
+                        >
+                            Close
+                        </button>
+                    </div>
                 </div>
 
                 <div v-if="picked.loading" class="space-y-3 p-5">
                     <div v-for="i in 5" :key="i" class="h-5 animate-pulse rounded bg-slate-100" />
                 </div>
-                <div v-else-if="picked.data" class="border-b border-slate-100 px-5 py-4">
-                    <h4 class="text-sm font-semibold text-slate-900">Pages asked for most</h4>
-                    <p v-if="!pickedPages.length" class="mt-2 text-sm text-slate-500">No pages were requested in this time.</p>
-                    <ol v-else class="mt-2.5 space-y-2">
-                        <li
-                            v-for="p in allPickedPages ? pickedPages : pickedPages.slice(0, 8)"
-                            :key="p.site + p.path"
-                            class="flex justify-between gap-3 text-sm"
-                        >
-                            <a
-                                v-if="p.url"
-                                :href="p.url"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="min-w-0 truncate text-slate-900 hover:text-brand-700 hover:underline"
-                                :title="p.site + p.path"
+                <template v-else-if="picked.data">
+                    <div class="border-b border-slate-100">
+                        <div class="flex flex-wrap items-baseline justify-between gap-3 px-5 pb-2 pt-4">
+                            <div>
+                                <h4 class="text-sm font-semibold text-slate-900">Most requested URLs</h4>
+                                <p class="text-xs text-slate-500">Every URL, pages and files alike — blocked ones too.</p>
+                            </div>
+                            <Link
+                                v-if="picked.data.urls_total > PICKED_ROWS"
+                                :href="pickedHref('urls')"
+                                class="text-sm font-medium text-brand-600 hover:underline"
                             >
-                                <span class="text-slate-500">{{ p.site }}</span>{{ p.path }}
-                            </a>
-                            <span v-else class="min-w-0 truncate text-slate-900"><span class="text-slate-500">{{ p.site }}</span>{{ p.path }}</span>
-                            <span class="shrink-0 tabular-nums text-slate-700">{{ number(p.requests) }}</span>
-                        </li>
-                    </ol>
-                    <button
-                        v-if="pickedPages.length > 8"
-                        type="button"
-                        class="mt-3 text-sm font-medium text-brand-600 hover:underline"
-                        @click="allPickedPages = !allPickedPages"
-                    >
-                        {{ allPickedPages ? 'Show fewer' : `Show all ${number(pickedPages.length)} →` }}
-                    </button>
-                </div>
+                                View all {{ number(picked.data.urls_total) }} →
+                            </Link>
+                        </div>
+                        <UrlTable :rows="picked.data.urls.slice(0, PICKED_ROWS)" :unmatched="unmatched" />
+                    </div>
 
-                <RecentRequests
-                    v-if="picked.data"
-                    flat
-                    title="Requests in this time"
-                    :rows="picked.data.recent ?? []"
-                    :total="picked.data.requests ?? 0"
-                    :unmatched="unmatched"
-                />
+                    <RecentRequests
+                        flat
+                        title="Latest requests"
+                        subtitle="Every request in this time, newest first."
+                        :rows="picked.data.recent ?? []"
+                        :total="picked.data.requests ?? 0"
+                        :limit="PICKED_ROWS"
+                        :filters="false"
+                        :unmatched="unmatched"
+                        :all-href="pickedHref('requests')"
+                    />
+                </template>
 
                 <p v-if="picked.data?.partial?.length" class="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
                     Only the newest part of {{ picked.data.partial.map(siteLabel).join(', ') }}'s log is read for this period, so this time may be missing from it.
@@ -560,7 +586,7 @@ const attention = computed(() => {
                 :total="s?.requests ?? 0"
                 :limit="8"
                 :unmatched="unmatched"
-                :all-href="statsHref('latest')"
+                :all-href="periodHref({ window, site, view: 'requests' })"
             />
 
             <!-- Domains and addresses, latest first -->
@@ -705,7 +731,7 @@ const attention = computed(() => {
                     </ol>
                     <div v-if="s" class="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-sm text-slate-600">
                         <span class="tabular-nums">{{ Math.min(LIMIT, pages.length) }} of {{ number(pages.length) }}{{ pages.length >= 100 ? '+' : '' }} pages</span>
-                        <Link :href="statsHref('requests')" class="font-medium text-brand-600 hover:underline">View all →</Link>
+                        <Link :href="periodHref({ window, site, view: 'urls' })" class="font-medium text-brand-600 hover:underline">View all →</Link>
                     </div>
                 </div>
 

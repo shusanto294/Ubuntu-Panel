@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -157,8 +158,9 @@ func (a *App) siteTraffic(ctx context.Context, window trafficWindow, only string
 
 // readTraffic reads the access logs between from and to, with the files and
 // the cap a window reads: the whole window, or one bar of its chart. A read
-// with no cache key — a bar, asked for once — is not kept.
-func (a *App) readTraffic(ctx context.Context, window trafficWindow, only string, from, to time.Time, buckets int, cacheKey string) trafficReport {
+// with no cache key — a bar, asked for once — is not kept. tune sets the
+// analyzer's options before anything is read.
+func (a *App) readTraffic(ctx context.Context, window trafficWindow, only string, from, to time.Time, buckets int, cacheKey string, tune ...func(*weblog.Analyzer)) trafficReport {
 	trafficCache.Lock()
 	if at, ok := trafficCache.at[cacheKey]; ok && cacheKey != "" && time.Since(at) < window.keep {
 		report := trafficCache.reports[cacheKey]
@@ -171,6 +173,9 @@ func (a *App) readTraffic(ctx context.Context, window trafficWindow, only string
 
 	analyzer := weblog.New(from, to, buckets)
 	analyzer.Trusted = a.trustedSet(ctx)
+	for _, set := range tune {
+		set(analyzer)
+	}
 
 	sources := map[string]string{}
 	domains := []string{}
@@ -464,17 +469,7 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 		}
 	}
 
-	// Each site's address, so a page in the list is a link to it.
-	base := map[string]string{}
-	if sites, err := a.Store.Sites(ctx); err == nil {
-		for _, site := range sites {
-			scheme := "http://"
-			if site.SSL {
-				scheme = "https://"
-			}
-			base[site.Domain] = scheme + site.Domain
-		}
-	}
+	base := a.siteBases(ctx)
 
 	sites := []map[string]any{}
 	for _, site := range report.Sites {
@@ -492,26 +487,7 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 		})
 	}
 
-	// The latest requests, each a link to what was asked for when it was a
-	// site's page. A request to the bare IP has nowhere to link to.
-	recent := make([]map[string]any, 0, len(report.Recent))
-	for _, request := range report.Recent {
-		url := ""
-		if base[request.Site] != "" && request.Method == "GET" && request.Status < 400 {
-			url = base[request.Site] + request.Path
-		}
-		recent = append(recent, map[string]any{
-			"at":     request.At,
-			"site":   request.Site,
-			"method": request.Method,
-			"path":   request.Path,
-			"status": request.Status,
-			"ip":     request.IP,
-			"threat": request.Threat,
-			"bot":    request.Bot,
-			"url":    url,
-		})
-	}
+	recent := requestRows(base, report.Recent)
 
 	// The server's IP and hostnames no site has are scanners, not pages.
 	pages := []map[string]any{}
@@ -551,6 +527,46 @@ func (a *App) trafficStats(ctx context.Context, report trafficReport) map[string
 	}
 }
 
+// siteBases are each site's address, so a page in a list is a link to it.
+func (a *App) siteBases(ctx context.Context) map[string]string {
+	base := map[string]string{}
+	if sites, err := a.Store.Sites(ctx); err == nil {
+		for _, site := range sites {
+			scheme := "http://"
+			if site.SSL {
+				scheme = "https://"
+			}
+			base[site.Domain] = scheme + site.Domain
+		}
+	}
+	return base
+}
+
+// requestRows are requests as the pages list them, each a link to what was
+// asked for when it was a site's page. A request to the bare IP has nowhere
+// to link to.
+func requestRows(base map[string]string, requests []weblog.Request) []map[string]any {
+	rows := make([]map[string]any, 0, len(requests))
+	for _, request := range requests {
+		url := ""
+		if base[request.Site] != "" && request.Method == "GET" && request.Status < 400 {
+			url = base[request.Site] + request.Path
+		}
+		rows = append(rows, map[string]any{
+			"at":     request.At,
+			"site":   request.Site,
+			"method": request.Method,
+			"path":   request.Path,
+			"status": request.Status,
+			"ip":     request.IP,
+			"threat": request.Threat,
+			"bot":    request.Bot,
+			"url":    url,
+		})
+	}
+	return rows
+}
+
 // statsSections are the pages the Logs page's boxes open.
 var statsSections = map[string]string{
 	"latest":        "Latest requests",
@@ -567,6 +583,17 @@ var statsSections = map[string]string{
 // reading meanwhile.
 func (a *App) logsStatsPage(w http.ResponseWriter, r *http.Request) {
 	section := r.PathValue("section")
+
+	// The latest requests are the period's page now, which lists every one
+	// of them rather than the newest two hundred.
+	if section == "latest" {
+		query := url.Values{"view": {"requests"}, "window": {r.URL.Query().Get("window")}}
+		if site := r.URL.Query().Get("site"); site != "" {
+			query.Set("site", site)
+		}
+		http.Redirect(w, r, "/analytics/period?"+query.Encode(), http.StatusFound)
+		return
+	}
 
 	title, ok := statsSections[section]
 	if !ok {

@@ -74,3 +74,33 @@ export const THREAT_LABEL = {
     login: 'Login attack',
     probe: 'Scanner',
 };
+
+// What a part of the window is called: "Today, 22:23 – 22:53" for a bar of
+// the chart, or the window itself when it is all of it.
+export const spanLabel = (from, to, window) => {
+    if (!from || !to) return `The ${PERIOD_LABEL[window] ?? window}`;
+    const start = new Date(from * 1000);
+    const end = new Date(Math.min(to * 1000, Date.now()));
+    const time = { hour: '2-digit', minute: '2-digit' };
+    const day = { weekday: 'short', month: 'short', day: 'numeric' };
+    if (['1h', '24h'].includes(window) && start.toDateString() === end.toDateString()) {
+        const date = start.toDateString() === new Date().toDateString() ? 'Today' : start.toLocaleDateString(undefined, day);
+        return `${date}, ${start.toLocaleTimeString(undefined, time)} – ${end.toLocaleTimeString(undefined, time)}`;
+    }
+    return `${start.toLocaleString(undefined, { ...day, ...time })} – ${end.toLocaleString(undefined, { ...day, ...time })}`;
+};
+
+// The address of a part of the window on its own page: view is "" for both
+// lists, "urls" or "requests" for one of them in full.
+export const periodHref = ({ window, site, from, to, view, status, page }) => {
+    const query = new URLSearchParams({ window });
+    if (site) query.set('site', site);
+    if (from && to) {
+        query.set('from', from);
+        query.set('to', to);
+    }
+    if (view) query.set('view', view);
+    if (status) query.set('status', status);
+    if (page > 1) query.set('page', page);
+    return `${route('analytics.period')}?${query}`;
+};
