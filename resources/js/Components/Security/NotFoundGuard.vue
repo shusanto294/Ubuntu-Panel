@@ -1,10 +1,7 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
-import Pagination from '@/Components/Pagination.vue';
-import { usePagination } from '@/Composables/usePagination';
+import { onMounted, reactive, ref } from 'vue';
 import { PERMISSION } from './edge';
-import { ago, card, field, smallButton, when } from './ui';
-import { confirmDanger } from '@/dialog';
+import { ago, card, field } from './ui';
 
 /*
  * 404 protection: a visitor who asks a site for pages that do not exist is
@@ -15,18 +12,18 @@ import { confirmDanger } from '@/dialog';
  * response code, so this server counts the 404s from its own nginx log, and
  * the answer is an IP access rule — which every plan has. The panel takes each
  * rule away again when its time is up.
+ *
+ * The addresses it has blocked are not listed here: they are IP access rules,
+ * and the list under "IP access rules" further down the tab shows them, marked
+ * as 404 protection's, with Remove.
  */
 const status = ref(null);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
 const message = ref('');
-const busy = ref('');
 
-const form = reactive({ enabled: false, action: 'managed_challenge', threshold: 1, hours: 24 });
-
-const blocks = computed(() => status.value?.blocks ?? []);
-const pages = usePagination(blocks, 15);
+const form = reactive({ enabled: false, action: 'managed_challenge', threshold: 10, hours: 24 });
 
 const failure = (e, fallback) => e?.response?.data?.error ?? fallback;
 
@@ -72,32 +69,6 @@ const save = async (enabled = form.enabled) => {
 
 const toggle = () => save(!form.enabled);
 
-const lift = async (block) => {
-    const all = block === 'all';
-    if (
-        all &&
-        !(await confirmDanger(
-            'Remove every 404 rule?',
-            `The ${status.value.total} addresses challenged or blocked for 404s are let through again on every domain now.`,
-            'Remove all',
-        ))
-    )
-        return;
-
-    busy.value = all ? 'all' : block.id;
-    error.value = '';
-    try {
-        const { data } = await window.axios.delete(route('security.notfound.lift', all ? 'all' : block.id));
-        take(data);
-    } catch (e) {
-        if (e?.response?.data?.settings) take(e.response.data);
-        error.value = failure(e, 'Could not remove that rule.');
-    } finally {
-        busy.value = '';
-    }
-};
-
-const actionLabel = (key) => status.value?.actions?.find((a) => a.key === key)?.label ?? key;
 const hoursLabel = (h) =>
     h === 0
         ? 'Until I remove it'
@@ -116,10 +87,11 @@ const hoursLabel = (h) =>
             <div class="max-w-2xl">
                 <h3 class="font-semibold text-slate-900">404 protection</h3>
                 <p class="text-sm text-slate-500">
-                    Challenge or block a visitor at Cloudflare as soon as they ask the sites on this server for pages
-                    that do not exist, which is how scanners hunt for <code>/wp-login.php</code>, <code>/.env</code> and
-                    <code>/phpmyadmin</code>. The address is sent to every one of your domains on Cloudflare at once, so
-                    it cannot move on to the next. Works on the free plan.
+                    Challenge or block an address at Cloudflare only once it behaves like a scanner: asking for a secret
+                    or admin file such as <code>/.env</code>, <code>/.git</code>, a <code>.sql</code> backup or
+                    <code>/phpmyadmin</code>, or for many missing pages in a short time. Visitors who meet a broken link
+                    or mistype an address are never challenged. The address is sent to every one of your domains on
+                    Cloudflare at once, so it cannot move on to the next. Works on the free plan.
                 </p>
             </div>
             <button
@@ -153,8 +125,8 @@ const hoursLabel = (h) =>
                     </select>
                 </label>
                 <label class="block text-sm">
-                    <span class="text-xs font-medium text-slate-700">After how many 404s in 10 minutes, across all sites</span>
-                    <input v-model.number="form.threshold" type="number" min="1" max="100" :class="field" />
+                    <span class="text-xs font-medium text-slate-700">Or after how many missing pages in 10 minutes (5 or more)</span>
+                    <input v-model.number="form.threshold" type="number" min="5" max="100" :class="field" />
                 </label>
                 <label class="block text-sm">
                     <span class="text-xs font-medium text-slate-700">Blocklisted for how long</span>
@@ -177,9 +149,11 @@ const hoursLabel = (h) =>
             </form>
 
             <p class="mt-3 text-xs text-slate-500">
-                Missing images, stylesheets, scripts and fonts are not counted, so a broken image on a page does not
-                challenge everybody who opens it. Search engines' crawlers, proved by their reverse DNS, are never
-                challenged. Each rule is an IP access rule in every zone your sites are in (IPv6 visitors by their /64),
+                A single request for a secret or admin file is enough; ordinary missing pages are counted across all
+                sites and need the number above. Missing images, stylesheets, scripts and fonts are not counted, so a
+                broken image on a page does not challenge everybody who opens it. Never challenged: search engines'
+                crawlers (proved by their reverse DNS), anyone who signed in to this panel in the last 30 days, and this
+                server. Each rule is an IP access rule in every zone your sites are in (IPv6 visitors by their /64),
                 removed again when its time is up, or kept until you remove it here. Changing the length applies to
                 addresses blocklisted from then on. Cloudflare is told in the background, after the 404 has already been
                 answered, so pages load exactly as fast with this on. The Cloudflare token needs {{ PERMISSION.access }}.
@@ -198,73 +172,9 @@ const hoursLabel = (h) =>
                 {{ status.last_error }} <span class="text-xs text-amber-700/80">({{ ago(status.error_at) }})</span>
             </p>
 
-            <div v-if="blocks.length" class="mt-5">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <h4 class="text-sm font-semibold text-slate-800">
-                        Challenged or blocked now ({{ status.total }})
-                    </h4>
-                    <div class="flex items-center gap-2">
-                        <button type="button" :class="smallButton" @click="load">Reload</button>
-                        <button
-                            type="button"
-                            :class="smallButton"
-                            class="text-rose-700"
-                            :disabled="busy === 'all'"
-                            @click="lift('all')"
-                        >
-                            Remove all
-                        </button>
-                    </div>
-                </div>
-                <div class="mt-2 overflow-x-auto rounded-xl ring-1 ring-slate-200">
-                    <table class="w-full text-sm">
-                        <thead class="bg-slate-50 text-left text-xs text-slate-500">
-                            <tr>
-                                <th class="px-4 py-2 font-medium">Address</th>
-                                <th class="px-4 py-2 font-medium">Asked for</th>
-                                <th class="hidden px-4 py-2 font-medium sm:table-cell">Then</th>
-                                <th class="hidden px-4 py-2 font-medium md:table-cell">Since</th>
-                                <th class="px-4 py-2 font-medium">Until</th>
-                                <th class="px-4 py-2"><span class="sr-only">Actions</span></th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100">
-                            <tr v-for="b in pages.visible.value" :key="b.id">
-                                <td class="whitespace-nowrap px-4 py-2 font-mono text-xs text-slate-800">{{ b.ip }}</td>
-                                <td class="max-w-xs break-all px-4 py-2 text-xs text-slate-600">
-                                    {{ b.host }}<span class="text-slate-400">{{ b.path }}</span>
-                                </td>
-                                <td class="hidden whitespace-nowrap px-4 py-2 text-xs sm:table-cell">
-                                    <span :class="b.mode === 'block' ? 'text-rose-700' : 'text-amber-700'">{{ actionLabel(b.mode) }}</span>
-                                    <span class="block text-slate-400">on {{ b.zones }} domain{{ b.zones === 1 ? '' : 's' }}</span>
-                                </td>
-                                <td class="hidden whitespace-nowrap px-4 py-2 text-xs text-slate-500 md:table-cell">{{ ago(b.created_at) }}</td>
-                                <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
-                                    {{ b.expires_at ? when(b.expires_at) : 'Until removed' }}
-                                </td>
-                                <td class="whitespace-nowrap px-4 py-2 text-right">
-                                    <button
-                                        type="button"
-                                        :class="smallButton"
-                                        :disabled="busy === b.id"
-                                        @click="lift(b)"
-                                    >
-                                        {{ busy === b.id ? 'Removing…' : 'Remove' }}
-                                    </button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <Pagination
-                    v-model="pages.page.value"
-                    :pages="pages.pages.value"
-                    :total="pages.total.value"
-                    :per-page="pages.perPage"
-                />
-            </div>
-            <p v-else-if="status.settings.enabled" class="mt-4 text-xs text-slate-500">
-                Nobody is challenged or blocked for 404s right now.
+            <p v-if="status.settings.enabled" class="mt-4 text-xs text-slate-500">
+                {{ status.total ? `${status.total} address${status.total === 1 ? ' is' : 'es are'} challenged or blocked right now.` : 'Nobody is challenged or blocked for 404s right now.' }}
+                The addresses are listed under IP access rules below, marked “404 protection”.
             </p>
         </template>
 

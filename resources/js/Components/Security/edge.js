@@ -181,8 +181,10 @@ export const buildExpression = (conditions, joiner = 'and') => {
 
 // --------------------------------------------------------------- presets
 
+// Every preset acts only on what a person in a browser never does — a flood,
+// repeated login attempts, a secret file, a request with no user agent. None
+// challenges an ordinary visitor for opening a page.
 export const presets = (phase, myIp) => {
-    const notMe = myIp ? ` and not ip.src in {${myIp}}` : '';
 
     if (phase === 'ratelimit') {
         return [
@@ -196,24 +198,20 @@ export const presets = (phase, myIp) => {
                 mitigation_timeout: 10,
             },
             {
+                // High enough that a person clicking quickly through an
+                // image-heavy page, or an editor saving, never reaches it.
                 label: 'Stop floods on the whole site',
                 description: 'Rate limit · every request',
                 expression: 'true',
                 action: 'managed_challenge',
                 period: 10,
-                requests_per_period: 100,
+                requests_per_period: 300,
                 mitigation_timeout: 10,
             },
         ];
     }
 
     return [
-        {
-            label: 'Challenge WordPress logins',
-            description: 'Challenge wp-login and wp-admin',
-            expression: `((http.request.uri.path eq "/wp-login.php") or (starts_with(http.request.uri.path, "/wp-admin") and not http.request.uri.path eq "/wp-admin/admin-ajax.php"))${notMe}`,
-            action: 'managed_challenge',
-        },
         {
             label: 'Block XML-RPC',
             description: 'Block xmlrpc.php',

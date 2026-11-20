@@ -64,3 +64,25 @@ func TestNotFoundBlocksWithNoExpiryAreKept(t *testing.T) {
 		t.Errorf("a permanent rule set the expiry clock to %v", next)
 	}
 }
+
+// A 404 protection rule removed from the IP access rules list is no longer
+// the panel's to list or to take away.
+func TestForgetNotFoundRuleDropsOnlyThatRule(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	for _, zone := range []string{"z1", "z2"} {
+		st.AddNotFoundBlock(ctx, &NotFoundBlock{IP: "203.0.113.9", Host: "a", ZoneID: zone, ZoneName: zone,
+			RuleID: "r-" + zone, Mode: "block", CreatedAt: 1, ExpiresAt: 0})
+	}
+
+	st.ForgetNotFoundRule(ctx, "z1", "r-z1")
+
+	if left, _ := st.NotFoundBlocksFor(ctx, "203.0.113.9"); len(left) != 1 || left[0].ZoneID != "z2" {
+		t.Errorf("left = %+v", left)
+	}
+}

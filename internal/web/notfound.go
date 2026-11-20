@@ -44,6 +44,16 @@ var notFoundActions = map[string]string{
 // somebody removes it on the Security page.
 var notFoundDurations = []int{1, 6, 12, 24, 72, 168, 720, 2160, 0}
 
+// The number of ordinary 404s in the window before an address is acted on.
+// Never fewer than notFoundMinThreshold: one or two missing pages is a broken
+// link or a typo, and a real visitor must never be shown Cloudflare's
+// challenge for it. A scanner's request — /.env, a backup, phpMyAdmin — needs
+// only one (notfound.Suspicious).
+const (
+	notFoundMinThreshold     = 5
+	notFoundDefaultThreshold = 10
+)
+
 type notFoundSettings struct {
 	Enabled   bool   `json:"enabled"`
 	Action    string `json:"action"`
@@ -55,12 +65,14 @@ func (a *App) notFoundSettings() notFoundSettings {
 	settings := notFoundSettings{
 		Enabled:   a.Store.SettingBool(notFoundEnabledKey, false),
 		Action:    a.Store.Setting(notFoundActionKey, "managed_challenge"),
-		Threshold: 1,
+		Threshold: notFoundDefaultThreshold,
 		Hours:     24,
 	}
 
+	// A threshold saved by an older panel, which allowed and defaulted to 1,
+	// is raised to the least that is safe for real visitors.
 	if n, err := strconv.Atoi(a.Store.Setting(notFoundThresholdKey, "")); err == nil && n >= 1 && n <= 100 {
-		settings.Threshold = n
+		settings.Threshold = max(n, notFoundMinThreshold)
 	}
 
 	if n, err := strconv.Atoi(a.Store.Setting(notFoundDurationKey, "")); err == nil && n >= 0 {
@@ -288,7 +300,9 @@ func (a *App) handleNotFound(ctx context.Context, hit notfound.Hit) {
 
 	target, value := notfound.Key(hit.IP)
 
-	if a.notFoundCount(value) < settings.Threshold {
+	// A scanner's request is enough on its own; anything else has to add up
+	// to the threshold first.
+	if count := a.notFoundCount(value); count < settings.Threshold && !notfound.Suspicious(hit.Path) {
 		return
 	}
 
@@ -330,6 +344,13 @@ func (a *App) blockEverywhere(ctx context.Context, hit notfound.Hit, target, val
 	g := notFoundState
 
 	if a.verifiedCrawler(ctx, hit) {
+		return
+	}
+
+	// The owner, from wherever they signed in to the panel lately, is never
+	// challenged on their own sites — however many dead links they test.
+	if a.notFoundTrusted(ctx, hit.IP) {
+		g.counter.Forget(value, notFoundAnyHost)
 		return
 	}
 
@@ -455,6 +476,26 @@ func (a *App) blockEverywhere(ctx context.Context, hit notfound.Hit, target, val
 
 		a.scheduleNotFoundExpiry(context.Background())
 	}
+}
+
+// notFoundTrusted is whether an address is one the panel trusts: signed in to
+// it in the last 30 days, or this server's. Read at most once a minute, and
+// only for an address that has already reached the threshold.
+func (a *App) notFoundTrusted(ctx context.Context, ip string) bool {
+	notFoundTrust.Lock()
+	defer notFoundTrust.Unlock()
+
+	if notFoundTrust.set == nil || time.Since(notFoundTrust.at) > time.Minute {
+		notFoundTrust.set, notFoundTrust.at = a.trustedSet(ctx), time.Now()
+	}
+
+	return notFoundTrust.set[ip]
+}
+
+var notFoundTrust struct {
+	sync.Mutex
+	set map[string]bool
+	at  time.Time
 }
 
 // notFoundAnyHost is the one bucket every site's 404s are counted in.
@@ -800,8 +841,11 @@ func (a *App) notFoundSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if threshold < 1 || threshold > 100 {
-		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "The number of 404s is between 1 and 100."})
+	if threshold < notFoundMinThreshold || threshold > 100 {
+		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error": fmt.Sprintf("The number of 404s is between %d and 100: fewer would challenge visitors who only met a broken link.",
+				notFoundMinThreshold),
+		})
 		return
 	}
 

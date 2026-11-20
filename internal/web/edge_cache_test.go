@@ -79,3 +79,23 @@ func TestChangesToAZoneWithNoCopyMakeNone(t *testing.T) {
 		t.Error("a ruleset was known for a zone never read")
 	}
 }
+
+// An older panel allowed, and defaulted to, a single 404. That is a visitor
+// meeting one broken link, so it is raised to the least that is safe.
+func TestNotFoundThresholdNeverChallengesOneBrokenLink(t *testing.T) {
+	a := cacheApp(t)
+
+	if got := a.notFoundSettings().Threshold; got != notFoundDefaultThreshold {
+		t.Errorf("default threshold = %d, want %d", got, notFoundDefaultThreshold)
+	}
+
+	a.Store.SetSetting(notFoundThresholdKey, "1")
+	if got := a.notFoundSettings().Threshold; got != notFoundMinThreshold {
+		t.Errorf("a saved threshold of 1 reads as %d, want %d", got, notFoundMinThreshold)
+	}
+
+	a.Store.SetSetting(notFoundThresholdKey, "20")
+	if got := a.notFoundSettings().Threshold; got != 20 {
+		t.Errorf("a saved threshold of 20 reads as %d", got)
+	}
+}

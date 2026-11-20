@@ -40,6 +40,10 @@ const (
 
 // MapConfig is the http-level half: a variable that is 1 for a 404 of a page,
 // and a line with the address, the hostname, the path and the user agent.
+//
+// The path is $request_uri — what the visitor asked for. Not $uri: WordPress
+// and Laravel hand every missing page to /index.php, and $uri is the path
+// after that, so every 404 was logged as "/index.php" whatever was asked for.
 // nginx escapes control characters in variables, so a tab cannot be forged.
 //
 // A missing image, stylesheet, script or font is not counted. A page that
@@ -61,7 +65,7 @@ func MapConfig() string {
 		"    default 0;\n" +
 		"}\n" +
 		"\n" +
-		"log_format panel_404 '$remote_addr\\t$host\\t$uri\\t$http_user_agent';\n"
+		"log_format panel_404 '$remote_addr\\t$host\\t$request_uri\\t$http_user_agent';\n"
 }
 
 // GuardConfig is the server-level half. A second access_log beside the site's

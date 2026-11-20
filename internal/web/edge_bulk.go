@@ -511,6 +511,7 @@ func (a *App) edgeBulkAccessDestroy(w http.ResponseWriter, r *http.Request) {
 		err := client.DeleteAccessRule(target.ZoneID, target.RuleID)
 		if err == nil || edgeIsGone(err) {
 			a.dropAccessRule(ctx, target.ZoneID, target.RuleID)
+			a.Store.ForgetNotFoundRule(ctx, target.ZoneID, target.RuleID)
 			return edgeOutcome{Status: "done"}
 		}
 		return outcomeOf(err)

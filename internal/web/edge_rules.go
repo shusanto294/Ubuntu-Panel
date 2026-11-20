@@ -432,6 +432,7 @@ func (a *App) edgeAccessDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.dropAccessRule(r.Context(), zoneID, ruleID)
+	a.Store.ForgetNotFoundRule(r.Context(), zoneID, ruleID)
 
 	a.edgeDone(w, r, account, zoneID, "access rule deleted: "+ruleID, "Access rule deleted.")
 }

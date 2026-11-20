@@ -258,15 +258,16 @@ const sections = [
                     <template #trigger>
                         <button
                             type="button"
-                            class="inline-flex shrink-0 items-center gap-2 rounded-full bg-white py-1.5 pe-3 ps-1.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/5 transition hover:text-slate-900 focus:outline-none"
+                            aria-label="Account menu"
+                            class="inline-flex shrink-0 items-center gap-1 rounded-full bg-white py-1.5 pe-2 ps-1.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-900/5 transition hover:text-slate-900 focus:outline-none"
                         >
+                            <!-- Only the initial: the full name is not shown in the header, where
+                                 anyone looking at the screen or a screenshot would read it. -->
                             <span
+                                aria-hidden="true"
                                 class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold uppercase text-brand-700"
                             >
                                 {{ $page.props.auth.user.name.charAt(0) }}
-                            </span>
-                            <span class="hidden sm:inline">
-                                {{ $page.props.auth.user.name }}
                             </span>
                             <svg
                                 class="h-4 w-4 text-slate-400"

@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import Pagination from '@/Components/Pagination.vue';
 import { usePagination } from '@/Composables/usePagination';
-import { ACCESS_MODES, ACCESS_TARGETS, ACTION_LABEL, ACTION_TONE, PERMISSION } from './edge';
+import { ACCESS_MODES, ACCESS_TARGETS, ACTION_LABEL, PERMISSION } from './edge';
 import { card, field, smallButton, when } from './ui';
 import { confirmDanger } from '@/dialog';
 import ZoneErrors from './ZoneErrors.vue';
@@ -37,8 +37,6 @@ const emit = defineEmits(['apply', 'synced', 'resync', 'message']);
 const adding = ref(false);
 const formError = ref('');
 const search = ref('');
-const editingNote = ref('');
-const note = ref('');
 
 const form = reactive({ target: 'ip', value: '', mode: 'block', notes: '' });
 const targets = ref([]);
@@ -50,7 +48,7 @@ const filtered = computed(() => {
     const q = search.value.trim().toLowerCase();
     if (!q) return props.groups;
     return props.groups.filter((g) =>
-        `${g.rule.value} ${g.rule.notes} ${g.rule.mode} ${g.copies.map((c) => c.zone_name).join(' ')}`.toLowerCase().includes(q),
+        `${g.rule.value} ${g.rule.mode} ${g.copies.map((c) => c.zone_name).join(' ')}`.toLowerCase().includes(q),
     );
 });
 
@@ -133,7 +131,6 @@ const submit = async () => {
 };
 
 const update = (group, changes) => {
-    editingNote.value = '';
 
     emit('apply', (all) =>
         eachCopy(all, group.copies, (list, at) => {
@@ -159,11 +156,6 @@ const addToRest = (group) => {
     send(() => window.axios.post(route('edge.bulk.access'), { ...rule, targets: missing }));
 };
 
-const editNote = (group) => {
-    editingNote.value = group.key;
-    note.value = group.rule.notes;
-};
-
 const remove = async (group) => {
     const where = group.copies.length > 1 ? ` from ${group.copies.length} zones` : '';
     if (!(await confirmDanger(`Delete the rule for ${group.rule.value}${where}?`, 'Cloudflare stops applying it at once.'))) return;
@@ -172,6 +164,28 @@ const remove = async (group) => {
     emit('apply', (all) => eachCopy(all, copies, (list, at) => list.splice(at, 1)));
     send(() => window.axios.post(route('edge.bulk.access.destroy'), { value: group.rule.value, copies }));
 };
+
+// The line under an address: what it is, or — for one 404 protection made —
+// that, and until when. Its note says so, in the words blockEverywhere writes.
+const PROTECTION = /^Ubuntu Panel 404 protection: .* — until (.+)$/;
+
+const origin = (group) => {
+    const notes = group.rule.notes ?? '';
+    if (/^Ubuntu Panel 404 protection: .* — until removed in the panel$/.test(notes)) return '404 protection · until removed';
+
+    const made = PROTECTION.exec(notes);
+    if (!made) return targetLabel(group.rule.target);
+
+    const until = made[1].replace(/ UTC$/, 'Z').replace(' ', 'T');
+    const date = new Date(until);
+    return `404 protection · until ${Number.isNaN(date.getTime()) ? made[1] : when(date.toISOString())}`;
+};
+
+const ACTION_TEXT = {
+    block: 'text-rose-700',
+    whitelist: 'text-emerald-700',
+};
+const actionText = (mode) => ACTION_TEXT[mode] ?? 'text-amber-700';
 
 const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
 </script>
@@ -258,62 +272,56 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                 v-if="groups.length > 10"
                 v-model="search"
                 type="search"
-                placeholder="Search addresses, notes and zones"
+                placeholder="Search addresses and zones"
                 class="mt-4 w-full rounded-lg border-slate-300 text-sm shadow-sm sm:w-72"
             />
             <div class="mt-4 overflow-x-auto rounded-xl ring-1 ring-slate-200">
                 <table class="w-full text-sm">
                     <thead class="bg-slate-50 text-left text-xs text-slate-500">
                         <tr>
-                            <th class="px-4 py-2 font-medium">Matches</th>
+                            <th class="px-4 py-2 font-medium">Address</th>
                             <th class="px-4 py-2 font-medium">Then</th>
-                            <th class="px-4 py-2 font-medium">Note</th>
-                            <th class="px-4 py-2 font-medium">{{ single ? 'Added' : 'Zones' }}</th>
+                            <th class="hidden px-4 py-2 font-medium sm:table-cell">{{ single ? 'Added' : 'Zones' }}</th>
                             <th class="px-4 py-2"><span class="sr-only">Actions</span></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         <tr v-for="group in pages.visible.value" :key="group.key">
-                            <td class="px-4 py-2.5">
-                                <span class="font-mono text-slate-900">{{ group.rule.value }}</span>
-                                <span class="block text-xs text-slate-400">
-                                    {{ targetLabel(group.rule.target) }}<template v-if="group.pending"> · Saving…</template>
+                            <td class="px-4 py-2">
+                                <span class="whitespace-nowrap font-mono text-xs text-slate-800">{{ group.rule.value }}</span>
+                                <span class="block text-[11px] text-slate-400">
+                                    {{ origin(group) }}<template v-if="group.pending"> · Saving…</template>
                                 </span>
                             </td>
-                            <td class="px-4 py-2.5">
+                            <td class="whitespace-nowrap px-4 py-2 text-xs">
                                 <select
                                     v-if="!group.readonly"
                                     :value="group.rule.mode"
                                     :disabled="group.pending"
-                                    class="rounded-lg border-slate-300 py-1 text-xs shadow-sm"
+                                    :aria-label="`What happens to ${group.rule.value}`"
+                                    class="rounded-md border-0 bg-transparent py-0 pl-0 pr-7 text-xs font-medium focus:ring-0"
+                                    :class="actionText(group.rule.mode)"
                                     @change="update(group, { mode: $event.target.value })"
                                 >
                                     <option v-for="m in ACCESS_MODES" :key="m" :value="m">{{ ACTION_LABEL[m] }}</option>
                                 </select>
-                                <span v-else class="rounded-md px-2 py-0.5 text-xs font-medium ring-1" :class="ACTION_TONE[group.rule.mode]">
+                                <span v-else class="font-medium" :class="actionText(group.rule.mode)">
                                     {{ ACTION_LABEL[group.rule.mode] ?? group.rule.mode }}
                                 </span>
                             </td>
-                            <td class="max-w-xs px-4 py-2.5">
-                                <form v-if="editingNote === group.key" class="flex gap-1" @submit.prevent="update(group, { notes: note })">
-                                    <input v-model="note" type="text" maxlength="500" class="w-full rounded-lg border-slate-300 py-1 text-xs shadow-sm" />
-                                    <button type="submit" :class="smallButton">Save</button>
-                                </form>
-                                <span v-else class="block truncate text-xs text-slate-600" :title="group.rule.notes">{{ group.rule.notes || '—' }}</span>
-                            </td>
-                            <td class="px-4 py-2.5 text-xs">
-                                <span v-if="single" class="whitespace-nowrap text-slate-500">{{ when(group.rule.created_on) }}</span>
+                            <td class="hidden whitespace-nowrap px-4 py-2 text-xs sm:table-cell">
+                                <span v-if="single" class="text-slate-500">{{ when(group.rule.created_on) }}</span>
                                 <span v-else-if="group.readonly" class="text-slate-500">every zone on the account</span>
-                                <span v-else-if="!group.missing.length" class="whitespace-nowrap font-medium text-emerald-700" :title="zoneNames(group)">
+                                <span v-else-if="!group.missing.length" class="text-slate-500" :title="zoneNames(group)">
                                     All {{ group.copies.length }}
                                 </span>
-                                <span v-else class="block">
-                                    <span class="whitespace-nowrap font-medium text-amber-700" :title="zoneNames(group)">
+                                <span v-else>
+                                    <span class="text-amber-700" :title="zoneNames(group)">
                                         {{ group.copies.length }} of {{ group.copies.length + group.missing.length }}
                                     </span>
                                     <button
                                         type="button"
-                                        class="block whitespace-nowrap font-medium text-brand-600 hover:underline disabled:opacity-50"
+                                        class="ml-1.5 font-medium text-brand-600 hover:underline disabled:opacity-50"
                                         :disabled="group.pending"
                                         :title="`Missing on ${group.missing.map((z) => z.zone_name).join(', ')}`"
                                         @click="addToRest(group)"
@@ -322,27 +330,16 @@ const zoneNames = (group) => group.copies.map((c) => c.zone_name).join(', ');
                                     </button>
                                 </span>
                             </td>
-                            <td class="whitespace-nowrap px-4 py-2.5 text-right">
-                                <template v-if="!group.readonly">
-                                    <button
-                                        v-if="editingNote !== group.key"
-                                        type="button"
-                                        :class="smallButton"
-                                        :disabled="group.pending"
-                                        @click="editNote(group)"
-                                    >
-                                        Note
-                                    </button>
-                                    <button
-                                        type="button"
-                                        :class="smallButton"
-                                        class="ml-1.5 text-rose-600"
-                                        :disabled="group.pending"
-                                        @click="remove(group)"
-                                    >
-                                        Delete
-                                    </button>
-                                </template>
+                            <td class="whitespace-nowrap px-4 py-2 text-right">
+                                <button
+                                    v-if="!group.readonly"
+                                    type="button"
+                                    :class="smallButton"
+                                    :disabled="group.pending"
+                                    @click="remove(group)"
+                                >
+                                    Remove
+                                </button>
                                 <span v-else class="text-xs text-slate-400" title="Made for the whole Cloudflare account — change it in Cloudflare">
                                     account-wide
                                 </span>

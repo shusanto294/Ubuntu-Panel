@@ -148,6 +148,16 @@ func (s *Store) NextNotFoundExpiry(ctx context.Context) time.Time {
 	return time.Unix(next.Int64, 0)
 }
 
+// ForgetNotFoundRule forgets the block a Cloudflare rule was, once the rule
+// has been deleted some other way — from the IP access rules list — so the
+// panel neither lists it nor tries to delete it again when its time is up.
+func (s *Store) ForgetNotFoundRule(ctx context.Context, zoneID, ruleID string) error {
+	_, err := s.db.ExecContext(ctxOrBackground(ctx),
+		`DELETE FROM notfound_blocks WHERE zone_id = ? AND rule_id = ?`, zoneID, ruleID)
+
+	return err
+}
+
 // DeleteNotFoundBlock forgets one.
 func (s *Store) DeleteNotFoundBlock(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctxOrBackground(ctx), `DELETE FROM notfound_blocks WHERE id = ?`, id)
