@@ -39,7 +39,7 @@ func (a *App) analyticsIndex(w http.ResponseWriter, r *http.Request) {
 		"window":    window.key,
 		"windows":   windows,
 		"site":      site,
-		"sites":     domains,
+		"sites":     a.trafficNames(r.Context()),
 		"unmatched": unmatchedSite,
 
 		// Blocking an address is a Cloudflare IP access rule on the sites'
@@ -104,7 +104,8 @@ func (a *App) analyticsSlice(w http.ResponseWriter, r *http.Request) {
 }
 
 // analyticsSite is the site a page was narrowed to, when it is one the panel
-// has — or the requests no site matched. Anything else is every site.
+// has a log for — a site, a mail hostname — or the requests no site matched.
+// Anything else is every site.
 func (a *App) analyticsSite(ctx context.Context, asked string) string {
 	if asked == "" {
 		return ""
@@ -114,11 +115,9 @@ func (a *App) analyticsSite(ctx context.Context, asked string) string {
 		return asked
 	}
 
-	if sites, err := a.Store.Sites(ctx); err == nil {
-		for _, site := range sites {
-			if site.Domain == asked {
-				return asked
-			}
+	for _, name := range a.trafficNames(ctx) {
+		if name == asked {
+			return asked
 		}
 	}
 

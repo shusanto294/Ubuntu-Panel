@@ -129,9 +129,21 @@ func (a *App) Start(ctx context.Context) {
 			if err := a.Sites.EnsureGuardIncludes(ctx); err != nil {
 				a.Log.Error("could not bring the site vhosts up to date", "error", err)
 			}
+
+			// Requests to real hostnames out of the log the Analytics page
+			// reads as the bare server IP. See sites/accesslog.go.
+			if err := sites.EnsureOwnAccessLogs(); err != nil {
+				a.Log.Error("could not give the vhosts their own access logs", "error", err)
+			}
 		}
 
 		a.EnsureMailConfigured()
+
+		// Autoconfig hostnames written by older versions answered scanners
+		// with a 404; today's close the connection instead.
+		if err := a.Mail.RefreshAutoconfigVhosts(ctx); err != nil {
+			a.Log.Error("could not bring the autoconfig vhosts up to date", "error", err)
+		}
 		a.EnsureWebmailServed()
 		a.EnsureMailCertificates(ctx)
 		a.EnsureMailHostname(ctx)

@@ -418,6 +418,7 @@ func webmailVhost(host, php string, tls, roundcube bool) string {
 			"    listen 80;\n"+
 			"    listen [::]:80;\n"+
 			"    server_name %s;\n"+
+			"    access_log /var/log/nginx/%s-access.log;\n"+
 			"\n"+
 			"    location ^~ /.well-known/acme-challenge/ {\n"+
 			"        root %s;\n"+
@@ -441,7 +442,7 @@ func webmailVhost(host, php string, tls, roundcube bool) string {
 			"\n"+
 			"%s"+
 			"}\n",
-		config.Name, host, host, sites.ACMEWebroot, host, cert, key,
+		config.Name, host, host, host, sites.ACMEWebroot, host, cert, key,
 		host, host, body)
 }
 

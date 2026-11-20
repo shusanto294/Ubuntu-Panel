@@ -70,6 +70,58 @@ func findTrafficWindow(key string) trafficWindow {
 // most scanners knock first.
 const unmatchedSite = "(no site — server IP)"
 
+// trafficSource is one access log the Analytics page reads, under the name
+// it is filed as there.
+type trafficSource struct {
+	Name string
+	Path string
+	Site bool // a site's own, rather than a mail hostname's
+}
+
+// trafficSources are every hostname the server answers that has a log of its
+// own: each site, and each mail domain's webmail (mail.<domain>) and
+// autoconfiguration (autoconfig.<domain>) hostnames. Those last two answer
+// directly rather than through Cloudflare, so scanners find them; their
+// requests are shown under their own names rather than as the bare server IP,
+// which is only nginx's shared log — the default server's.
+func (a *App) trafficSources(ctx context.Context) []trafficSource {
+	sources := []trafficSource{}
+	seen := map[string]bool{}
+
+	add := func(name string, site bool) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		sources = append(sources, trafficSource{Name: name, Path: "/var/log/nginx/" + name + "-access.log", Site: site})
+	}
+
+	if sites, err := a.Store.Sites(ctx); err == nil {
+		for _, site := range sites {
+			add(site.Domain, true)
+		}
+	}
+
+	if domains, err := a.Store.EmailDomains(ctx); err == nil {
+		for _, domain := range domains {
+			add(domain.WebmailHost(), false)
+			add(domain.AutoconfigHost(), false)
+		}
+	}
+
+	return sources
+}
+
+// trafficNames are the names the Analytics page can be narrowed to, sites
+// first.
+func (a *App) trafficNames(ctx context.Context) []string {
+	names := []string{}
+	for _, source := range a.trafficSources(ctx) {
+		names = append(names, source.Name)
+	}
+	return names
+}
+
 // trafficReport is the access logs added up, with the read's own limits.
 type trafficReport struct {
 	weblog.Report
@@ -127,13 +179,13 @@ func (a *App) readTraffic(ctx context.Context, window trafficWindow, only string
 		sources[unmatchedSite] = "/var/log/nginx/access.log"
 	}
 
-	if sites, err := a.Store.Sites(ctx); err == nil {
-		for _, site := range sites {
-			if only != "" && site.Domain != only {
-				continue
-			}
-			sources[site.Domain] = "/var/log/nginx/" + site.Domain + "-access.log"
-			domains = append(domains, site.Domain)
+	for _, source := range a.trafficSources(ctx) {
+		if only != "" && source.Name != only {
+			continue
+		}
+		sources[source.Name] = source.Path
+		if source.Site {
+			domains = append(domains, source.Name)
 		}
 	}
 

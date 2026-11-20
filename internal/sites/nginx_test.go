@@ -535,12 +535,15 @@ func TestGuardRedirectBlockUpgradesAnOldVhost(t *testing.T) {
 	site := wordpress()
 	current := RenderVhost(site, true, false)
 
-	old := strings.Replace(current, "    server_name example.com www.example.com;\n    "+GuardInclude+"\n", "    server_name example.com www.example.com;\n", 1)
+	// Before 2.36.0 the redirect block had neither the guard nor, before
+	// 2.43.0, a log of its own; the two upgrades at start put back both.
+	old := strings.Replace(current, "    server_name example.com www.example.com;\n"+AccessLogLine("example.com")+"    "+GuardInclude+"\n",
+		"    server_name example.com www.example.com;\n", 1)
 	if old == current {
 		t.Fatal("the test could not make a pre-2.36.0 vhost from today's")
 	}
 
-	if got := guardRedirectBlock(old); got != current {
+	if got, _ := AddMissingAccessLogs(guardRedirectBlock(old)); got != current {
 		t.Fatalf("upgraded vhost differs from today's:\n%s", got)
 	}
 

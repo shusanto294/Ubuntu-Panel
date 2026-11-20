@@ -825,6 +825,9 @@ func RenderVhost(site *store.Site, tls, http2 bool) string {
 	out.WriteString("server {\n")
 	out.WriteString("    listen 80;\n    listen [::]:80;\n")
 	fmt.Fprintf(&out, "    server_name %s;\n", names)
+	// The site's own log, so its http:// redirects count as the site's and
+	// not as the server's bare address. See accesslog.go.
+	out.WriteString(AccessLogLine(site.Domain))
 	out.WriteString("    " + GuardInclude + "\n\n")
 
 	acme(&out)

@@ -102,7 +102,8 @@ func autoconfigPath(domain string) string {
 // The exact path matters. Mozilla's clients request `/mail/config-v1.1.xml`
 // with the address in the query string; `location =` matches the path and
 // ignores the query, which is what makes one static file answer every mailbox.
-// Everything else on the hostname is a 404 — it exists to answer one question.
+// Everything else on the hostname is closed without a reply (444) — it exists
+// to answer one question, and the rest is scanners.
 func autoconfigVhost(domain, host string, tls bool) string {
 	cert := sites.DefaultCert + ".crt"
 	key := sites.DefaultCert + ".key"
@@ -119,12 +120,12 @@ func autoconfigVhost(domain, host string, tls bool) string {
 			"        add_header Cache-Control \"public, max-age=3600\";\n"+
 			"    }\n"+
 			"\n"+
+			"    # Anything else is a scanner: closed without a reply, which costs\n"+
+			"    # less than an answer and tells it nothing.\n"+
 			"    location / {\n"+
-			"        default_type text/plain;\n"+
-			"        return 404 \"This hostname answers mail client autoconfiguration "+
-			"for %s and nothing else.\\n\";\n"+
+			"        return 444;\n"+
 			"    }\n",
-		autoconfigPath(domain), domain)
+		autoconfigPath(domain))
 
 	return fmt.Sprintf(
 		"# Managed by %s — mail client autoconfiguration for %s\n"+
@@ -138,6 +139,7 @@ func autoconfigVhost(domain, host string, tls bool) string {
 			"    listen 80;\n"+
 			"    listen [::]:80;\n"+
 			"    server_name %s;\n"+
+			"    access_log /var/log/nginx/%s-access.log;\n"+
 			"\n"+
 			"    location ^~ /.well-known/acme-challenge/ {\n"+
 			"        root %s;\n"+
@@ -151,6 +153,7 @@ func autoconfigVhost(domain, host string, tls bool) string {
 			"    listen 443 ssl;\n"+
 			"    listen [::]:443 ssl;\n"+
 			"    server_name %s;\n"+
+			"    access_log /var/log/nginx/%s-access.log;\n"+
 			"\n"+
 			"    ssl_certificate     %s;\n"+
 			"    ssl_certificate_key %s;\n"+
@@ -158,7 +161,7 @@ func autoconfigVhost(domain, host string, tls bool) string {
 			"\n"+
 			"%s"+
 			"}\n",
-		config.Name, domain, host, sites.ACMEWebroot, body, host, cert, key, body)
+		config.Name, domain, host, host, sites.ACMEWebroot, body, host, host, cert, key, body)
 }
 
 // serveAutoconfig writes the XML, puts a vhost in front of it and gets that
@@ -258,4 +261,61 @@ func (s *Service) serveAutoconfig(ctx context.Context, domainID int64) func(*tas
 
 		return log.String(), nil
 	}
+}
+
+// RefreshAutoconfigVhosts rewrites the autoconfig vhosts an older panel wrote
+// into today's shape — before 2.43.0 they answered every other path with a 404
+// and logged to nginx's shared log, so scanners were answered and counted as
+// the server's bare IP. Whether a vhost has its certificate is read from the
+// file, so the rewrite never names one that is not there. All of them go back
+// if nginx will not have the result.
+func (s *Service) RefreshAutoconfigVhosts(ctx context.Context) error {
+	domains, err := s.Store.EmailDomains(ctx)
+	if err != nil {
+		return err
+	}
+
+	previous := map[string]string{}
+
+	for _, domain := range domains {
+		host := domain.AutoconfigHost()
+		path := "/etc/nginx/sites-available/autoconfig-" + domain.Domain
+
+		current, err := proc.ReadFile(path, true)
+		if err != nil || !strings.HasPrefix(strings.TrimSpace(current), "# Managed by") {
+			continue
+		}
+
+		tls := strings.Contains(current, "/etc/letsencrypt/live/"+host+"/")
+		want := autoconfigVhost(domain.Domain, host, tls)
+
+		if current == want {
+			continue
+		}
+
+		if err := proc.PutFile(path, want, true); err != nil {
+			for path, contents := range previous {
+				proc.PutFile(path, contents, true)
+			}
+			return err
+		}
+		previous[path] = current
+	}
+
+	if len(previous) == 0 {
+		return nil
+	}
+
+	if check := proc.Run("sudo nginx -t 2>&1", time.Minute); !check.OK() {
+		for path, contents := range previous {
+			proc.PutFile(path, contents, true)
+		}
+		return fmt.Errorf("nginx refused the rewritten autoconfig vhosts, so they were put back: %s", check.Output)
+	}
+
+	if !proc.Ok("sudo systemctl reload nginx") {
+		return errors.New("nginx accepted the autoconfig vhosts but would not reload")
+	}
+
+	return nil
 }
