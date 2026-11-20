@@ -192,10 +192,16 @@ func urlRows(base map[string]string, paths []weblog.PathStat) []map[string]any {
 			"ips":      p.IPs,
 			"failed":   p.Failed,
 			"threat":   p.Threat,
+			"at":       p.Last,
+			"status":   p.Status,
+			"ip":       p.IP,
 		})
 	}
 	return rows
 }
+
+// sliceRows is how many URLs and requests a bar opened under the chart sends.
+const sliceRows = 200
 
 // periodPerPage is how many rows a list shows at a time.
 const periodPerPage = 20
@@ -226,8 +232,20 @@ func (a *App) periodSummary(ctx context.Context, report trafficReport, status, v
 		return list(lo, hi), pages, at
 	}
 
-	urls, urlPages, urlPage := cut(len(report.Paths), func(lo, hi int) []map[string]any {
-		return urlRows(base, report.Paths[lo:hi])
+	// A URL is answered when some of its requests were, and an error when
+	// some were refused or failed.
+	paths := report.Paths
+	if status != "" {
+		paths = make([]weblog.PathStat, 0, len(report.Paths))
+		for _, p := range report.Paths {
+			if (status == "ok" && p.Failed < p.Requests) || (status == "errors" && p.Failed > 0) {
+				paths = append(paths, p)
+			}
+		}
+	}
+
+	urls, urlPages, urlPage := cut(len(paths), func(lo, hi int) []map[string]any {
+		return urlRows(base, paths[lo:hi])
 	}, "urls")
 
 	recent, recentPages, recentPage := cut(len(report.Recent), func(lo, hi int) []map[string]any {
@@ -242,7 +260,7 @@ func (a *App) periodSummary(ctx context.Context, report trafficReport, status, v
 		"partial":       report.Partial,
 
 		"urls":       urls,
-		"urls_total": len(report.Paths),
+		"urls_total": len(paths),
 		"urls_pages": urlPages,
 		"urls_page":  urlPage,
 
@@ -319,7 +337,14 @@ func (a *App) analyticsSlice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.WithoutCancel(r.Context())
-	summary := a.periodSummary(ctx, a.periodTraffic(ctx, window, site, from, to, start, end, ""), "", "", 1)
+	report := a.periodTraffic(ctx, window, site, from, to, start, end, "")
+	summary := a.periodSummary(ctx, report, "", "", 1)
+
+	// The card filters its rows to the answered or the errors itself, so it
+	// is given more of them than it shows.
+	base := a.siteBases(ctx)
+	summary["urls"] = urlRows(base, report.Paths[:min(len(report.Paths), sliceRows)])
+	summary["recent"] = requestRows(base, report.Recent[:min(len(report.Recent), sliceRows)])
 	summary["from"] = from
 	summary["to"] = to
 

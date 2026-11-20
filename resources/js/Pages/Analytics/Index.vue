@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import RecentRequests from '@/Components/Analytics/RecentRequests.vue';
-import UrlTable from '@/Components/Analytics/UrlTable.vue';
 import {
     CLASS_BAR,
     CODE_LABEL,
@@ -248,8 +247,8 @@ const spanTone = computed(() => (picked.value ? 'bg-brand-50 text-brand-700' : '
 const spanHref = (view) => (picked.value ? pickedHref(view) : periodHref({ window: props.window, site: props.site, view }));
 
 const urlRows = computed(() => {
-    if (picked.value) return picked.value.data ? picked.value.data.urls.slice(0, ROWS) : picked.value.error ? [] : null;
-    return s.value ? (s.value.urls ?? []).slice(0, ROWS) : null;
+    if (picked.value) return picked.value.data ? picked.value.data.urls : picked.value.error ? [] : null;
+    return s.value ? s.value.urls ?? [] : null;
 });
 const urlTotal = computed(() => (picked.value ? picked.value.data?.urls_total ?? 0 : s.value?.urls_total ?? 0));
 
@@ -532,31 +531,29 @@ const attention = computed(() => {
             </section>
 
             <!-- The URLs and requests of the bar picked, or of the whole period -->
-            <section class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
-                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-                    <div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <h3 class="font-semibold text-slate-900">Most requested URLs</h3>
-                            <span class="rounded-md px-2 py-0.5 text-xs font-medium" :class="spanTone">{{ spanText }}</span>
-                        </div>
-                        <p class="text-sm text-slate-500">Every URL, pages and files alike — blocked ones too. The most asked for first.</p>
-                    </div>
+            <RecentRequests
+                urls
+                title="Most requested URLs"
+                :subtitle="picked ? 'Every URL in this time, pages and files alike. The most asked for first.' : 'Every URL, pages and files alike. The most asked for first.'"
+                :rows="urlRows"
+                :total="urlTotal"
+                :limit="ROWS"
+                :unmatched="unmatched"
+                :badge="spanText"
+                :badge-tone="spanTone"
+                :error="picked?.error ?? ''"
+                :all-href="spanHref('urls')"
+            >
+                <template v-if="picked" #actions>
                     <button
-                        v-if="picked"
                         type="button"
                         class="h-8 rounded-lg bg-white px-3 text-sm font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
                         @click="close"
                     >
                         Show the {{ PERIOD_LABEL[window] }}
                     </button>
-                </div>
-                <p v-if="picked?.error" class="px-5 py-8 text-center text-sm text-rose-700">{{ picked.error }}</p>
-                <UrlTable v-else class="flex-1" :rows="urlRows" :unmatched="unmatched" />
-                <div v-if="urlRows" class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
-                    <span class="tabular-nums">{{ number(urlRows.length) }} of {{ number(urlTotal) }} URLs</span>
-                    <Link :href="spanHref('urls')" class="font-medium text-brand-600 hover:underline">View all →</Link>
-                </div>
-            </section>
+                </template>
+            </RecentRequests>
 
             <RecentRequests
                 :rows="requestRows"
@@ -565,9 +562,9 @@ const attention = computed(() => {
                 :unmatched="unmatched"
                 :badge="spanText"
                 :badge-tone="spanTone"
+                :error="picked?.error ?? ''"
                 :subtitle="picked ? 'Every request in this time, newest first.' : 'Newest first. Images, scripts and styles are left out.'"
                 :all-href="spanHref('requests')"
-                :exact="Boolean(picked)"
             />
 
             <p v-if="picked?.data?.partial?.length" class="text-xs text-slate-500">

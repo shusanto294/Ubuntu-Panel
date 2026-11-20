@@ -447,6 +447,11 @@ type pathTotals struct {
 	errors     int
 	failed     int
 	dynamic    bool
+
+	// The newest request for it: when, what it was answered, and who asked.
+	last       time.Time
+	lastStatus int
+	lastIP     string
 	threat     string
 	ips        map[string]bool
 }
@@ -680,6 +685,9 @@ func (a *Analyzer) Add(site string, entry Entry) {
 		if entry.Status >= 400 {
 			p.failed++
 		}
+		if !entry.Time.Before(p.last) {
+			p.last, p.lastStatus, p.lastIP = entry.Time, entry.Status, entry.IP
+		}
 		if len(p.ips) < 1000 {
 			p.ips[entry.IP] = true
 		}
@@ -875,7 +883,12 @@ type PathStat struct {
 	Errors   int    `json:"errors"`
 	Failed   int    `json:"failed"` // answered 400 or above
 	Dynamic  bool   `json:"dynamic"`
-	Threat   string `json:"threat"`
+
+	// Last, Status and IP are its newest request's time, answer and address.
+	Last   int64  `json:"last"`
+	Status int    `json:"status"`
+	IP     string `json:"ip"`
+	Threat string `json:"threat"`
 }
 
 type ThreatStat struct {
@@ -993,7 +1006,7 @@ func (a *Analyzer) Report() Report {
 		report.Paths = append(report.Paths, PathStat{
 			Site: p.site, Path: p.path, Requests: p.requests, IPs: len(p.ips),
 			NotFound: p.notFound, Errors: p.errors, Failed: p.failed, Dynamic: p.dynamic,
-			Threat: p.threat,
+			Threat: p.threat, Last: p.last.Unix(), Status: p.lastStatus, IP: p.lastIP,
 		})
 	}
 	sort.Slice(report.Paths, func(i, j int) bool {

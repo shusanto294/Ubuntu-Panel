@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import Pagination from '@/Components/Pagination.vue';
 import RecentRequests from '@/Components/Analytics/RecentRequests.vue';
-import UrlTable from '@/Components/Analytics/UrlTable.vue';
 import { number, periodHref, spanLabel } from '@/Components/Analytics/format';
 import { Head, Link, router } from '@inertiajs/vue3';
 
@@ -79,13 +78,13 @@ const siteLabel = (name) => (name === props.unmatched ? 'Server IP' : name);
 const TABS = [
     ['', 'Overview'],
     ['urls', 'Most requested URLs'],
-    ['requests', 'All requests'],
+    ['requests', 'Latest requests'],
 ];
 
 const STATUSES = [
     ['', 'All'],
     ['ok', 'Answered'],
-    ['errors', 'Blocked or failed'],
+    ['errors', 'Errors'],
 ];
 
 const tabCount = (key) => {
@@ -126,7 +125,7 @@ const requestsNote = computed(() => {
                 <Link
                     v-for="[key, name] in TABS"
                     :key="key"
-                    :href="here({ view: key, status: key === 'requests' ? status : '' })"
+                    :href="here({ view: key, status: key ? status : '' })"
                     :only="['view', 'status', 'page', 'period']"
                     preserve-state
                     preserve-scroll
@@ -142,44 +141,58 @@ const requestsNote = computed(() => {
 
             <div class="transition-opacity" :class="loading && p ? 'opacity-60' : ''">
                 <!-- Both lists, the first twenty of each -->
-                <div v-if="!view" class="grid gap-5 xl:grid-cols-2">
-                    <section class="flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
-                        <div class="border-b border-slate-100 px-5 py-4">
-                            <h3 class="font-semibold text-slate-900">Most requested URLs</h3>
-                            <p class="text-sm text-slate-500">Every URL, pages and files alike, the most asked for first.</p>
-                        </div>
-                        <div class="flex-1"><UrlTable :rows="p?.urls ?? null" :unmatched="unmatched" /></div>
-                        <div v-if="p" class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
-                            <span class="tabular-nums">{{ number(p.urls.length) }} of {{ number(p.urls_total) }} URLs</span>
-                            <Link v-if="p.urls_total > p.urls.length" :href="here({ view: 'urls' })" class="font-medium text-brand-600 hover:underline">
-                                View all →
-                            </Link>
-                        </div>
-                    </section>
-
+                <div v-if="!view" class="space-y-5">
+                    <RecentRequests
+                        urls
+                        title="Most requested URLs"
+                        subtitle="Every URL, pages and files alike. The most asked for first."
+                        :rows="p?.urls ?? null"
+                        :total="p?.urls_total ?? 0"
+                        :unmatched="unmatched"
+                        :badge="label"
+                        :all-href="here({ view: 'urls' })"
+                    />
                     <RecentRequests
                         :rows="p?.recent ?? null"
                         :total="p?.requests ?? 0"
                         :unmatched="unmatched"
-                        :filters="false"
+                        :badge="label"
                         :all-href="here({ view: 'requests' })"
-                        exact
                         subtitle="Every request, newest first."
                     />
                 </div>
 
                 <!-- Every URL, a page at a time -->
-                <section v-if="view === 'urls'" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
-                    <div class="border-b border-slate-100 px-5 py-4">
-                        <h3 class="font-semibold text-slate-900">Most requested URLs</h3>
-                        <p class="text-sm text-slate-500">Every URL, pages and files alike, the most asked for first.</p>
-                    </div>
-                    <UrlTable
+                <div v-if="view === 'urls'" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+                    <RecentRequests
+                        flat
+                        urls
+                        title="Most requested URLs"
+                        subtitle="Every URL, pages and files alike. The most asked for first."
                         :rows="p?.urls ?? null"
+                        :total="p?.urls_total ?? 0"
                         :unmatched="unmatched"
-                        :offset="p ? (p.urls_page - 1) * p.per_page : 0"
-                        :skeleton="20"
-                    />
+                        :badge="label"
+                        :filters="false"
+                        :footer="false"
+                        :limit="20"
+                    >
+                        <template #actions>
+                            <div role="group" aria-label="Filter" class="flex gap-1.5">
+                                <button
+                                    v-for="[key, name] in STATUSES"
+                                    :key="key"
+                                    type="button"
+                                    class="h-8 rounded-lg px-3 text-sm font-medium ring-1 transition"
+                                    :class="status === key ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'"
+                                    :aria-pressed="status === key"
+                                    @click="visit({ status: key })"
+                                >
+                                    {{ name }}
+                                </button>
+                            </div>
+                        </template>
+                    </RecentRequests>
                     <Pagination
                         v-if="p"
                         :model-value="p.urls_page"
@@ -188,23 +201,24 @@ const requestsNote = computed(() => {
                         :per-page="p.per_page"
                         @update:model-value="(n) => visit({ page: n })"
                     />
-                </section>
+                </div>
 
                 <!-- Every request, a page at a time -->
                 <div v-if="view === 'requests'" class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
                     <RecentRequests
                         flat
-                        title="All requests"
+                        title="Latest requests"
                         subtitle="Every request, newest first — pages, files, and the ones that were blocked."
                         :rows="p?.recent ?? null"
                         :total="p?.matching ?? 0"
                         :unmatched="unmatched"
+                        :badge="label"
                         :filters="false"
                         :footer="false"
                         :limit="20"
                     >
                         <template #actions>
-                            <div role="group" aria-label="Filter requests" class="flex gap-1.5">
+                            <div role="group" aria-label="Filter" class="flex gap-1.5">
                                 <button
                                     v-for="[key, name] in STATUSES"
                                     :key="key"
