@@ -459,3 +459,8 @@ func SSHPort() int {
 
 	return 22
 }
+
+// CPUCount is the number of processors the kernel reports, at least one.
+func CPUCount() int {
+	return cores()
+}

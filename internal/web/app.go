@@ -120,6 +120,7 @@ func (a *App) Start(ctx context.Context) {
 		a.EnsurePanelAddress()
 
 		a.EnsureNginxHelpers()
+		a.EnsurePHPPools()
 
 		// Vhosts written by older versions get the guard include in every
 		// server block — without it "Cloudflare only" leaves their http://

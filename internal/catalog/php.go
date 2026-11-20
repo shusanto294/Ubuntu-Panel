@@ -2,10 +2,13 @@ package catalog
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/config"
+	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 	"github.com/shusanto294/Ubuntu-Panel/internal/tasks"
 )
@@ -128,14 +131,7 @@ func phpTune(list *tasks.List, version, group string) {
 		return
 	}
 
-	children := ram / 150 // ~60 MB a worker, 40% of RAM
-
-	if children < 2 {
-		children = 2
-	}
-	if children > 12 {
-		children = 12
-	}
+	children := PHPWorkers(ram, int64(system.CPUCount()))
 
 	pool := fmt.Sprintf(
 		"sudo sed -i \"s/^pm.max_children = .*/pm.max_children = %d/; "+
@@ -209,4 +205,99 @@ func InstallPHPVersion(runner *tasks.Runner, version string) error {
 	}
 
 	return nil
+}
+
+// PHPWorkers is how many PHP requests the pool runs at once on a machine
+// with this much memory and this many processors.
+//
+// Memory: about 60 MB a WordPress worker, given 40% of RAM, which leaves the
+// rest to MariaDB, Redis, nginx and the page cache. Processors: a PHP request
+// spends much of its time waiting on the database, so eight workers a core
+// keeps every core busy; past that, more workers only make each request
+// slower. The smaller of the two, and never fewer than two.
+//
+// There used to be a ceiling of 12 on top, whatever the machine — an 8 GB,
+// 4-core server ran the same twelve workers as a 2 GB one, and visitors
+// queued behind them while most of the memory sat unused.
+func PHPWorkers(ramMB, cpus int64) int64 {
+	children := ramMB / 150
+
+	if cpus > 0 && children > cpus*8 {
+		children = cpus * 8
+	}
+
+	if children < 2 {
+		children = 2
+	}
+
+	return children
+}
+
+// legacyPHPWorkers is what panels before 2.41 wrote: PHPWorkers with a
+// ceiling of 12 and no regard for processors.
+func legacyPHPWorkers(ramMB int64) int64 {
+	children := ramMB / 150
+
+	if children < 2 {
+		children = 2
+	}
+
+	if children > 12 {
+		children = 12
+	}
+
+	return children
+}
+
+var (
+	maxChildrenLine = regexp.MustCompile(`(?m)^pm\.max_children\s*=\s*(\d+)\s*$`)
+	panelPoolMark   = regexp.MustCompile(`(?m)^pm\.max_requests\s*=\s*500\s*$`)
+)
+
+// RaisePHPPool brings one version's pool up to PHPWorkers on a machine an
+// older panel sized, and reloads PHP-FPM when it does.
+//
+// Changed only when the pool is plainly the panel's own work: max_requests
+// uncommented at 500, as the panel writes it and Ubuntu does not, and
+// max_children exactly what the old formula gives for this machine. Any other
+// number is somebody's choice and stays.
+func RaisePHPPool(version string) (from, to int64, err error) {
+	path := fmt.Sprintf("/etc/php/%s/fpm/pool.d/www.conf", version)
+
+	pool, err := proc.ReadFile(path, true)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	match := maxChildrenLine.FindStringSubmatch(pool)
+	if match == nil || !panelPoolMark.MatchString(pool) {
+		return 0, 0, nil
+	}
+
+	current, _ := strconv.ParseInt(match[1], 10, 64)
+	ram := system.MemoryMB()
+
+	if ram <= 0 || current != legacyPHPWorkers(ram) {
+		return current, current, nil
+	}
+
+	want := PHPWorkers(ram, int64(system.CPUCount()))
+	if want <= current {
+		return current, current, nil
+	}
+
+	command := fmt.Sprintf("sudo sed -i \"s/^pm.max_children = .*/pm.max_children = %d/\" %s && "+
+		"sudo php-fpm%s -t && sudo systemctl reload php%s-fpm",
+		want, proc.Quote(path), version, version)
+
+	if result := proc.Run(command, 2*time.Minute); !result.OK() {
+		// Put the old number back rather than leave a pool file the running
+		// service has not been proved against.
+		proc.Ok(fmt.Sprintf("sudo sed -i \"s/^pm.max_children = .*/pm.max_children = %d/\" %s",
+			current, proc.Quote(path)))
+
+		return current, current, fmt.Errorf("PHP-FPM %s refused %d workers: %s", version, want, result.Output)
+	}
+
+	return current, want, nil
 }

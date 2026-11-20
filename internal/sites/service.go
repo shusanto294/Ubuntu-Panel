@@ -36,6 +36,11 @@ func (s *Service) WriteSharedConfig(runner *tasks.Runner) error {
 		return err
 	}
 
+	// Ubuntu's 768 connections a worker is what a single burst of traffic
+	// exhausts. A failure here is not a failed install — nginx keeps its stock
+	// limits, and the panel tries again, and logs why, on its next start.
+	_, _ = s.EnsureNginxCapacity()
+
 	command := fmt.Sprintf("sudo mkdir -p %s/.well-known/acme-challenge && sudo chown -R www-data:www-data %s",
 		ACMEWebroot, ACMEWebroot)
 

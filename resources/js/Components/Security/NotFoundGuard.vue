@@ -78,7 +78,7 @@ const lift = async (block) => {
         all &&
         !(await confirmDanger(
             'Remove every 404 rule?',
-            `The ${status.value.total} addresses challenged or blocked for 404s are let through again now.`,
+            `The ${status.value.total} addresses challenged or blocked for 404s are let through again on every domain now.`,
             'Remove all',
         ))
     )
@@ -98,7 +98,16 @@ const lift = async (block) => {
 };
 
 const actionLabel = (key) => status.value?.actions?.find((a) => a.key === key)?.label ?? key;
-const hoursLabel = (h) => (h === 1 ? '1 hour' : h < 24 ? `${h} hours` : h === 24 ? '1 day' : `${h / 24} days`);
+const hoursLabel = (h) =>
+    h === 0
+        ? 'Until I remove it'
+        : h === 1
+          ? '1 hour'
+          : h < 24
+            ? `${h} hours`
+            : h === 24
+              ? '1 day'
+              : `${h / 24} days`;
 </script>
 
 <template>
@@ -107,9 +116,10 @@ const hoursLabel = (h) => (h === 1 ? '1 hour' : h < 24 ? `${h} hours` : h === 24
             <div class="max-w-2xl">
                 <h3 class="font-semibold text-slate-900">404 protection</h3>
                 <p class="text-sm text-slate-500">
-                    Challenge or block a visitor at Cloudflare as soon as they ask any site on this server for pages that
-                    do not exist, which is how scanners hunt for <code>/wp-login.php</code>, <code>/.env</code> and
-                    <code>/phpmyadmin</code>. Covers every site domain on Cloudflare, and works on the free plan.
+                    Challenge or block a visitor at Cloudflare as soon as they ask the sites on this server for pages
+                    that do not exist, which is how scanners hunt for <code>/wp-login.php</code>, <code>/.env</code> and
+                    <code>/phpmyadmin</code>. The address is sent to every one of your domains on Cloudflare at once, so
+                    it cannot move on to the next. Works on the free plan.
                 </p>
             </div>
             <button
@@ -143,11 +153,11 @@ const hoursLabel = (h) => (h === 1 ? '1 hour' : h < 24 ? `${h} hours` : h === 24
                     </select>
                 </label>
                 <label class="block text-sm">
-                    <span class="text-xs font-medium text-slate-700">After how many 404s in 10 minutes</span>
+                    <span class="text-xs font-medium text-slate-700">After how many 404s in 10 minutes, across all sites</span>
                     <input v-model.number="form.threshold" type="number" min="1" max="100" :class="field" />
                 </label>
                 <label class="block text-sm">
-                    <span class="text-xs font-medium text-slate-700">For how long</span>
+                    <span class="text-xs font-medium text-slate-700">Blocklisted for how long</span>
                     <select v-model.number="form.hours" :class="field">
                         <option v-for="h in status.durations" :key="h" :value="h">{{ hoursLabel(h) }}</option>
                     </select>
@@ -169,8 +179,10 @@ const hoursLabel = (h) => (h === 1 ? '1 hour' : h < 24 ? `${h} hours` : h === 24
             <p class="mt-3 text-xs text-slate-500">
                 Missing images, stylesheets, scripts and fonts are not counted, so a broken image on a page does not
                 challenge everybody who opens it. Search engines' crawlers, proved by their reverse DNS, are never
-                challenged. Each rule is an IP access rule in the site's zone (IPv6 visitors by their /64), removed again
-                when its time is up. The Cloudflare token needs {{ PERMISSION.access }}.
+                challenged. Each rule is an IP access rule in every zone your sites are in (IPv6 visitors by their /64),
+                removed again when its time is up, or kept until you remove it here. Changing the length applies to
+                addresses blocklisted from then on. Cloudflare is told in the background, after the 404 has already been
+                answered, so pages load exactly as fast with this on. The Cloudflare token needs {{ PERMISSION.access }}.
             </p>
 
             <p v-if="message" class="mt-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700 ring-1 ring-emerald-200">
@@ -224,9 +236,12 @@ const hoursLabel = (h) => (h === 1 ? '1 hour' : h < 24 ? `${h} hours` : h === 24
                                 </td>
                                 <td class="hidden whitespace-nowrap px-4 py-2 text-xs sm:table-cell">
                                     <span :class="b.mode === 'block' ? 'text-rose-700' : 'text-amber-700'">{{ actionLabel(b.mode) }}</span>
+                                    <span class="block text-slate-400">on {{ b.zones }} domain{{ b.zones === 1 ? '' : 's' }}</span>
                                 </td>
                                 <td class="hidden whitespace-nowrap px-4 py-2 text-xs text-slate-500 md:table-cell">{{ ago(b.created_at) }}</td>
-                                <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-500">{{ when(b.expires_at) }}</td>
+                                <td class="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
+                                    {{ b.expires_at ? when(b.expires_at) : 'Until removed' }}
+                                </td>
                                 <td class="whitespace-nowrap px-4 py-2 text-right">
                                     <button
                                         type="button"

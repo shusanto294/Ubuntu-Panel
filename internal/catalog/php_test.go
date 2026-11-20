@@ -126,3 +126,25 @@ func TestPHPOptionalExtensionsAreAllowedToBeMissing(t *testing.T) {
 		}
 	}
 }
+
+// The pool follows the machine: memory and processors, the smaller of the two,
+// with no fixed ceiling holding a large server to a small one's twelve.
+func TestPHPWorkersScaleWithTheMachine(t *testing.T) {
+	cases := []struct {
+		ram, cpus, want int64
+	}{
+		{512, 1, 3},
+		{1024, 1, 6},
+		{2048, 2, 13},
+		{4096, 2, 16},
+		{8192, 4, 32},
+		{16384, 8, 64},
+		{100, 1, 2},
+	}
+
+	for _, c := range cases {
+		if got := PHPWorkers(c.ram, c.cpus); got != c.want {
+			t.Errorf("PHPWorkers(%d MB, %d cores) = %d, want %d", c.ram, c.cpus, got, c.want)
+		}
+	}
+}

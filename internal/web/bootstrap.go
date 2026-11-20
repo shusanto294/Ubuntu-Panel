@@ -14,6 +14,7 @@ import (
 	"github.com/shusanto294/Ubuntu-Panel/internal/security"
 	"github.com/shusanto294/Ubuntu-Panel/internal/sites"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
+	"github.com/shusanto294/Ubuntu-Panel/internal/system"
 )
 
 // bootstrapSetting is how the panel remembers it has done this. It is a
@@ -282,6 +283,7 @@ func (a *App) EnsureNginxHelpers() {
 
 	a.ensureRealIP()
 	a.ensureCloudflareOnly()
+	a.ensureNginxCapacity()
 
 	const path = "/etc/nginx/conf.d/panel-proxy.conf"
 
@@ -648,5 +650,41 @@ func (a *App) ensureRealIP() {
 
 	if proc.Ok("sudo systemctl reload nginx") {
 		a.Log.Info("sites behind Cloudflare now log their visitors' own addresses")
+	}
+}
+
+// ensureNginxCapacity lifts nginx.conf off Ubuntu's 768 connections a worker
+// on machines installed before the panel wrote it. See sites.TuneNginxMain.
+func (a *App) ensureNginxCapacity() {
+	changed, err := a.Sites.EnsureNginxCapacity()
+	if err != nil {
+		a.Log.Warn("could not raise nginx's connection limits", "error", err)
+
+		return
+	}
+
+	if changed && proc.Ok("sudo systemctl reload nginx") {
+		a.Log.Info("nginx now accepts more connections at once",
+			"worker_connections", sites.WorkerConnections)
+	}
+}
+
+// EnsurePHPPools gives machines installed by an older panel the PHP-FPM pool
+// size this one would have chosen. Before, every pool stopped at 12 workers
+// whatever the machine, so a server with room for fifty queued its visitors
+// behind twelve. See catalog.RaisePHPPool for what counts as the panel's own
+// setting and is therefore safe to change.
+func (a *App) EnsurePHPPools() {
+	for _, version := range system.InstalledPHPVersions() {
+		from, to, err := catalog.RaisePHPPool(version)
+		if err != nil {
+			a.Log.Warn("could not resize the PHP-FPM pool", "php", version, "error", err)
+
+			continue
+		}
+
+		if to > from {
+			a.Log.Info("PHP-FPM can now run more requests at once", "php", version, "from", from, "to", to)
+		}
 	}
 }

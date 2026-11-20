@@ -40,7 +40,9 @@ var notFoundActions = map[string]string{
 	"block":             "Block",
 }
 
-var notFoundDurations = []int{1, 6, 24, 168}
+// notFoundDurations are the lengths a rule can last, in hours. 0 is until
+// somebody removes it on the Security page.
+var notFoundDurations = []int{1, 6, 12, 24, 72, 168, 720, 2160, 0}
 
 type notFoundSettings struct {
 	Enabled   bool   `json:"enabled"`
@@ -61,7 +63,7 @@ func (a *App) notFoundSettings() notFoundSettings {
 		settings.Threshold = n
 	}
 
-	if n, err := strconv.Atoi(a.Store.Setting(notFoundDurationKey, "")); err == nil && n >= 1 {
+	if n, err := strconv.Atoi(a.Store.Setting(notFoundDurationKey, "")); err == nil && n >= 0 {
 		settings.Hours = n
 	}
 
@@ -86,6 +88,14 @@ type notFoundGuard struct {
 	zones   map[string]zoneAnswer
 	crawler map[string]time.Time // addresses verified as search engines
 
+	// Every zone a site on this server is in, worked out at most once an hour
+	// and only when there is an address to send.
+	allZones   []zoneAnswer
+	allZonesAt time.Time
+
+	// How many addresses are being sent to Cloudflare at once.
+	sending chan struct{}
+
 	lastError   string
 	lastErrorAt time.Time
 
@@ -101,6 +111,7 @@ type zoneAnswer struct {
 }
 
 var notFoundState = &notFoundGuard{
+	sending:  make(chan struct{}, 2),
 	inFlight: map[string]bool{},
 	zones:    map[string]zoneAnswer{},
 	crawler:  map[string]time.Time{},
@@ -260,7 +271,11 @@ func (a *App) stopNotFoundWatch() {
 	g.mu.Unlock()
 }
 
-// handleNotFound counts one 404 and, at the threshold, makes the rule.
+// handleNotFound counts one 404 and, at the threshold, hands the address to
+// blockEverywhere.
+//
+// Counted across every site: a scanner walking twenty domains a few missing
+// pages at a time is as much a scanner as one asking a single site for sixty.
 func (a *App) handleNotFound(ctx context.Context, hit notfound.Hit) {
 	settings := a.notFoundSettings()
 	if !settings.Enabled {
@@ -273,93 +288,175 @@ func (a *App) handleNotFound(ctx context.Context, hit notfound.Hit) {
 
 	target, value := notfound.Key(hit.IP)
 
-	if a.notFoundCount(value, hit.Host) < settings.Threshold {
+	if a.notFoundCount(value) < settings.Threshold {
 		return
 	}
 
 	g := notFoundState
-	flight := value + " " + hit.Host
 
 	g.mu.Lock()
-	if g.inFlight[flight] {
+	if g.inFlight[value] || len(g.inFlight) >= notFoundMaxPending {
+		// Already on its way, or a flood bigger than the queue: the count
+		// stands, and the next 404 from this address tries again.
 		g.mu.Unlock()
 		return
 	}
-	g.inFlight[flight] = true
+	g.inFlight[value] = true
 	g.mu.Unlock()
 
-	defer func() {
-		g.mu.Lock()
-		delete(g.inFlight, flight)
-		g.mu.Unlock()
+	// The Cloudflare calls happen off the reading loop, so one address being
+	// sent to thirty zones does not hold up the counting of the next.
+	go func() {
+		defer func() {
+			g.mu.Lock()
+			delete(g.inFlight, value)
+			g.mu.Unlock()
+		}()
+
+		g.sending <- struct{}{}
+		defer func() { <-g.sending }()
+
+		a.blockEverywhere(ctx, hit, target, value, settings)
 	}()
+}
+
+// notFoundMaxPending is how many addresses may be waiting to be sent at once.
+const notFoundMaxPending = 64
+
+// blockEverywhere makes the rule for one address in every Cloudflare zone a
+// site on this server is in — not only the one it was scanning — so it cannot
+// move on to the next domain on the list.
+func (a *App) blockEverywhere(ctx context.Context, hit notfound.Hit, target, value string, settings notFoundSettings) {
+	g := notFoundState
 
 	if a.verifiedCrawler(ctx, hit) {
 		return
 	}
 
-	zone, client, ok := a.notFoundZone(ctx, hit.Host)
-	if !ok {
+	zones := a.notFoundZones(ctx, hit.Host)
+	if len(zones) == 0 {
+		g.fail("%s reached the limit, but none of this server's domains is in a connected Cloudflare account.", value)
 		return
 	}
 
-	if a.Store.NotFoundBlocked(ctx, value, zone.zoneID) {
-		g.counter.Forget(value, hit.Host)
+	pending := []zoneAnswer{}
+	for _, zone := range zones {
+		if !a.Store.NotFoundBlocked(ctx, value, zone.zoneID) {
+			pending = append(pending, zone)
+		}
+	}
+
+	g.counter.Forget(value, notFoundAnyHost)
+
+	if len(pending) == 0 {
 		return
 	}
 
-	expires := time.Now().Add(time.Duration(settings.Hours) * time.Hour)
+	// expiresAt 0 is a rule kept until somebody removes it.
+	expiresAt, until := int64(0), "until removed in the panel"
+	if settings.Hours > 0 {
+		expires := time.Now().Add(time.Duration(settings.Hours) * time.Hour)
+		expiresAt, until = expires.Unix(), "until "+expires.UTC().Format("2006-01-02 15:04")+" UTC"
+	}
 
-	ruleID, err := client.CreateAccessRuleID(zone.zoneID, dns.AccessRule{
-		Mode:   settings.Action,
-		Target: target,
-		Value:  value,
-		Notes: fmt.Sprintf("Ubuntu Panel 404 protection: %s%s — until %s UTC", hit.Host,
-			truncate(hit.Path, 80), expires.UTC().Format("2006-01-02 15:04")),
-	})
-	if err != nil {
-		// One already there — made by hand, an allow rule, or another
-		// server's panel — is left alone, and not asked about again until
-		// the count runs up once more.
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") ||
-			strings.Contains(strings.ToLower(err.Error()), "already exists") {
-			g.counter.Forget(value, hit.Host)
-			return
+	notes := fmt.Sprintf("Ubuntu Panel 404 protection: %s%s — %s", hit.Host, truncate(hit.Path, 80), until)
+
+	clients := map[int64]*dns.Client{}
+	for _, zone := range pending {
+		if clients[zone.accountID] != nil {
+			continue
+		}
+		if account, err := a.Store.FindDNSAccount(ctx, zone.accountID, 0); err == nil {
+			clients[zone.accountID] = dns.New(a.Store, account)
+		}
+	}
+
+	// A few zones at a time: quick for a server with many domains, and far
+	// inside Cloudflare's 1,200 requests in five minutes.
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		made    int
+		refused []string
+		slots   = make(chan struct{}, 4)
+	)
+
+	for _, zone := range pending {
+		client := clients[zone.accountID]
+		if client == nil {
+			continue
 		}
 
-		g.fail("Cloudflare refused a rule for %s on %s: %v", value, zone.zoneName, err)
-		a.Log.Warn("404 protection could not make a rule", "ip", value, "zone", zone.zoneName, "error", err)
+		wg.Add(1)
+		slots <- struct{}{}
 
-		return
+		go func(zone zoneAnswer) {
+			defer func() { <-slots; wg.Done() }()
+
+			ruleID, err := client.CreateAccessRuleID(zone.zoneID, dns.AccessRule{
+				Mode: settings.Action, Target: target, Value: value, Notes: notes,
+			})
+			if err != nil {
+				// One already there — made by hand, an allow rule, or another
+				// server's panel — is left alone.
+				message := strings.ToLower(err.Error())
+				if strings.Contains(message, "duplicate") || strings.Contains(message, "already exists") {
+					return
+				}
+
+				a.Log.Warn("404 protection could not make a rule", "ip", value, "zone", zone.zoneName, "error", err)
+
+				mu.Lock()
+				refused = append(refused, zone.zoneName+": "+err.Error())
+				mu.Unlock()
+
+				return
+			}
+
+			a.Store.AddNotFoundBlock(ctx, &store.NotFoundBlock{
+				IP:        value,
+				Host:      hit.Host,
+				Path:      truncate(hit.Path, 200),
+				AccountID: zone.accountID,
+				ZoneID:    zone.zoneID,
+				ZoneName:  zone.zoneName,
+				RuleID:    ruleID,
+				Mode:      settings.Action,
+				Hits:      settings.Threshold,
+				CreatedAt: time.Now().Unix(),
+				ExpiresAt: expiresAt,
+			})
+
+			mu.Lock()
+			made++
+			mu.Unlock()
+		}(zone)
 	}
 
-	a.Store.AddNotFoundBlock(ctx, &store.NotFoundBlock{
-		IP:        value,
-		Host:      hit.Host,
-		Path:      truncate(hit.Path, 200),
-		AccountID: zone.accountID,
-		ZoneID:    zone.zoneID,
-		ZoneName:  zone.zoneName,
-		RuleID:    ruleID,
-		Mode:      settings.Action,
-		Hits:      settings.Threshold,
-		CreatedAt: time.Now().Unix(),
-		ExpiresAt: expires.Unix(),
-	})
+	wg.Wait()
 
-	g.counter.Forget(value, hit.Host)
+	if len(refused) > 0 {
+		g.fail("Cloudflare refused the rule for %s on %d of %d domains — %s", value, len(refused), len(pending),
+			refused[0])
+	} else {
+		g.mu.Lock()
+		g.lastError = ""
+		g.mu.Unlock()
+	}
 
-	g.mu.Lock()
-	g.lastError = ""
-	g.mu.Unlock()
+	if made > 0 {
+		a.Log.Info("404 protection", "ip", value, "domains", made, "action", settings.Action,
+			"host", hit.Host, "path", hit.Path)
 
-	a.Log.Info("404 protection", "ip", value, "zone", zone.zoneName, "action", settings.Action, "path", hit.Path)
-
-	a.scheduleNotFoundExpiry(context.Background())
+		a.scheduleNotFoundExpiry(context.Background())
+	}
 }
 
-func (a *App) notFoundCount(key, host string) int {
-	return notFoundState.counter.Add(key, host, time.Now())
+// notFoundAnyHost is the one bucket every site's 404s are counted in.
+const notFoundAnyHost = "*"
+
+func (a *App) notFoundCount(key string) int {
+	return notFoundState.counter.Add(key, notFoundAnyHost, time.Now())
 }
 
 // verifiedCrawler is whether the address is a search engine's crawler, proved
@@ -421,6 +518,101 @@ func (a *App) notFoundZone(ctx context.Context, host string) (zoneAnswer, *dns.C
 	}
 
 	return cached, dns.New(a.Store, account), true
+}
+
+// notFoundZones is every Cloudflare zone a rule goes into: the zone of each
+// site on this server, across every connected Cloudflare account, and the
+// zone of the hostname that was asked for, should it be one no site names.
+func (a *App) notFoundZones(ctx context.Context, host string) []zoneAnswer {
+	g := notFoundState
+
+	g.mu.Lock()
+	zones, at := g.allZones, g.allZonesAt
+	g.mu.Unlock()
+
+	if at.IsZero() || time.Since(at) > time.Hour {
+		zones = a.findSiteZones(ctx)
+
+		g.mu.Lock()
+		g.allZones, g.allZonesAt = zones, time.Now()
+		g.mu.Unlock()
+	}
+
+	result := append([]zoneAnswer{}, zones...)
+
+	if own, _, ok := a.notFoundZone(ctx, host); ok {
+		seen := false
+		for _, zone := range result {
+			seen = seen || zone.zoneID == own.zoneID
+		}
+		if !seen {
+			result = append(result, own)
+		}
+	}
+
+	return result
+}
+
+// findSiteZones lists each connected Cloudflare account's zones once and keeps
+// the ones a site's hostname is in. One zone listing per account, rather than
+// one per hostname.
+func (a *App) findSiteZones(ctx context.Context) []zoneAnswer {
+	sites, err := a.Store.Sites(ctx)
+	if err != nil {
+		return nil
+	}
+
+	hostnames := []string{}
+	for _, site := range sites {
+		for _, name := range site.Hostnames() {
+			hostnames = append(hostnames, strings.TrimRight(strings.ToLower(name), "."))
+		}
+	}
+
+	accounts, err := a.Store.EdgeDNSAccounts(ctx)
+	if err != nil {
+		return nil
+	}
+
+	found := []zoneAnswer{}
+	seen := map[string]bool{}
+
+	for _, account := range accounts {
+		if !dns.SupportsEdgeRules(account.Provider) {
+			continue
+		}
+
+		zones, err := dns.New(a.Store, account).Zones()
+		if err != nil {
+			a.Log.Warn("404 protection could not list a Cloudflare account's zones", "account", account.ID, "error", err)
+			continue
+		}
+
+		for _, zone := range zones {
+			name := strings.TrimRight(strings.ToLower(zone.Name), ".")
+			if seen[zone.ID] || !zoneHasSite(name, hostnames) {
+				continue
+			}
+
+			seen[zone.ID] = true
+			found = append(found, zoneAnswer{
+				accountID: account.ID, zoneID: zone.ID, zoneName: name, at: time.Now(),
+			})
+		}
+	}
+
+	return found
+}
+
+// zoneHasSite is whether any of the hostnames is the zone or inside it.
+func zoneHasSite(zone string, hostnames []string) bool {
+	for _, host := range hostnames {
+		if host == zone || strings.HasSuffix(host, "."+zone) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (a *App) findNotFoundZone(ctx context.Context, host string) zoneAnswer {
@@ -546,7 +738,7 @@ func (a *App) liftNotFoundBlock(ctx context.Context, block *store.NotFoundBlock)
 // ------------------------------------------------------------------ pages
 
 func (a *App) notFoundStatus(ctx context.Context) map[string]any {
-	blocks, _ := a.Store.ActiveNotFoundBlocks(ctx, 200)
+	blocks, _ := a.Store.NotFoundAddresses(ctx, 200)
 
 	g := notFoundState
 
@@ -644,7 +836,8 @@ func (a *App) notFoundSave(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, a.notFoundStatus(r.Context()))
 }
 
-// notFoundLift takes one rule away now, or every one with id "all".
+// notFoundLift lets one address through again on every domain now, or every
+// address with id "all".
 func (a *App) notFoundLift(w http.ResponseWriter, r *http.Request) {
 	var blocks []*store.NotFoundBlock
 
@@ -656,7 +849,9 @@ func (a *App) notFoundLift(w http.ResponseWriter, r *http.Request) {
 			a.writeJSON(w, http.StatusNotFound, map[string]any{"error": "That rule is already gone."})
 			return
 		}
-		blocks = []*store.NotFoundBlock{block}
+
+		// The address comes off every domain, as it went on.
+		blocks, _ = a.Store.NotFoundBlocksFor(r.Context(), block.IP)
 	}
 
 	failed := 0
