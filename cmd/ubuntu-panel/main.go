@@ -213,7 +213,7 @@ func run(configPath string) error {
 	defer stopBackground()
 
 	go prune(background, app.Sessions, db, log)
-	go sample(background, db)
+	go sample(background, db, log)
 
 	// Deployments and installs run here, and anything left running when the
 	// panel stopped goes back on the queue.
@@ -253,7 +253,7 @@ func run(configPath string) error {
 // prunes what has aged out of the longest window. CPU and memory are watched
 // every second in between, so the minute is recorded as its average and its
 // peak rather than as whatever the last instant of it happened to be.
-func sample(ctx context.Context, db *store.Store) {
+func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 	var watcher system.Sampler
 
 	second := time.NewTicker(time.Second)
@@ -285,13 +285,16 @@ func sample(ctx context.Context, db *store.Store) {
 			memory, memoryPeak = metrics.MemoryPercent, metrics.MemoryPercent
 		}
 
-		db.RecordMetrics(store.MetricSample{
+		err := db.RecordMetrics(store.MetricSample{
 			CPU: window.CPUAverage, CPUPeak: window.CPUPeak,
 			Memory: memory, MemoryPeak: memoryPeak,
 			Disk: metrics.DiskPercent, Swap: metrics.SwapPercent, Load: metrics.Load[0],
 			MemoryUsed: int64(metrics.MemoryUsed), MemoryTotal: int64(metrics.MemoryTotal),
 			DiskUsed: int64(metrics.DiskUsed), DiskTotal: int64(metrics.DiskTotal),
 		})
+		if err != nil {
+			log.Warn("could not record the minute's metrics", "error", err)
+		}
 
 		if time.Since(pruned) > 6*time.Hour {
 			db.PruneMetrics()

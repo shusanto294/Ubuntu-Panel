@@ -98,8 +98,8 @@ NODE_MIN_MINOR=19
 
 # The go directive in go.mod. A source build needs at least this.
 GO_MIN_MAJOR=1
-GO_MIN_MINOR=24
-GO_INSTALL_VERSION=1.24.4
+GO_MIN_MINOR=26
+GO_INSTALL_VERSION=1.26.5
 
 # ------------------------------------------------------------------ output
 

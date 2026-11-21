@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 
@@ -78,6 +79,17 @@ func Open(path string) (*Store, error) {
 	// a pile of blocked ones, so writes are funnelled through a small pool.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
+
+	// A pooled connection is not kept for long. A connection that comes back
+	// to the pool still holding an open read — which the SQLite driver used to
+	// do when a request was cancelled mid-query — pins the snapshot it took:
+	// the WAL can no longer be checkpointed past it, and every write that
+	// lands on it fails at once with "database is locked (517)", busy_timeout
+	// or not. That ran for hours on a live server: sessions refused, minutes
+	// missing from the graphs. Retiring connections bounds any such leak to
+	// minutes; opening a SQLite connection costs next to nothing.
+	db.SetConnMaxIdleTime(time.Minute)
+	db.SetConnMaxLifetime(10 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		db.Close()

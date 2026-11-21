@@ -74,14 +74,18 @@ type MetricSample struct {
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
 // housekeeper. A CPU percentage of below zero is stored as NULL rather than as
 // a zero the graph would draw a floor at.
-func (s *Store) RecordMetrics(sample MetricSample) {
+//
+// The error is returned for the caller to log: a sample that was not written
+// is a gap in the graph, and a gap with nothing in the log said nothing about
+// why.
+func (s *Store) RecordMetrics(sample MetricSample) error {
 	cpu, cpuPeak := any(nil), any(nil)
 	if sample.CPU >= 0 {
 		cpu = sample.CPU
 		cpuPeak = math.Max(sample.CPU, sample.CPUPeak)
 	}
 
-	s.db.Exec(
+	_, err := s.db.Exec(
 		`INSERT INTO metric_samples
 		    (cpu_percent, cpu_max, memory_percent, memory_max, disk_percent, swap_percent,
 		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at)
@@ -90,6 +94,8 @@ func (s *Store) RecordMetrics(sample MetricSample) {
 		sample.Disk, sample.Swap, sample.MemoryUsed, sample.MemoryTotal,
 		sample.DiskUsed, sample.DiskTotal, sample.Load,
 		time.Now().UTC().Format("2006-01-02 15:04:05"))
+
+	return err
 }
 
 // PruneMetrics deletes samples past the retention window.
