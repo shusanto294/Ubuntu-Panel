@@ -94,6 +94,23 @@ func (a *App) EnsureMailCertificates(ctx context.Context) {
 	}
 }
 
+// EnsureMailCapacity sizes Dovecot for thousands of simultaneous IMAP
+// connections instead of its default 100. Every start, so a mail server set up
+// by an older panel — which dropped every connection past 100, and showed it
+// to clients as a reset TLS handshake — is repaired by updating the panel.
+func (a *App) EnsureMailCapacity(ctx context.Context) {
+	out, err := a.Mail.EnsureCapacity(ctx)
+	if err != nil {
+		a.Log.Error("could not raise the mail server's connection limits", "error", err, "output", out)
+
+		return
+	}
+
+	if out != "" {
+		a.Log.Info("mail capacity", "result", strings.TrimSpace(out))
+	}
+}
+
 // EnsureMailHostname has Postfix greet other servers with the name this
 // server's reverse DNS gives, once that name resolves back to it — so a PTR
 // record fixed at the provider while the panel was down is picked up on start.

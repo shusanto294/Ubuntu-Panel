@@ -563,7 +563,11 @@ func (s *Service) writeConfigs() error {
 			// over 10, so the webmail invites an attachment the server then
 			// bounces.
 			"message_size_limit = 78643200\n"+
-			"mailbox_size_limit = 0\n",
+			"mailbox_size_limit = 0\n"+
+			// No per-client connection cap: an app sending from many
+			// mailboxes through this server is one client (capacity.go).
+			"smtpd_client_connection_count_limit = 0\n"+
+			"default_process_limit = 1000\n",
 		config.Name, hostname)
 
 	return proc.PutFile("/etc/postfix/main.cf.d/ubuntu-panel.cf", postfix, true)
@@ -653,6 +657,12 @@ func (s *Service) Configure(ctx context.Context, userID int64) error {
 
 		"sudo systemctl restart dovecot",
 		"sudo systemctl restart postfix")
+
+	// Out of the box Dovecot drops every IMAP connection past 100, which a
+	// few mail apps and one cold-email tool reach on their own (capacity.go).
+	list.AddFn("Size Dovecot for thousands of IMAP connections", func(*tasks.Runner) (string, error) {
+		return s.EnsureCapacity(ctx)
+	})
 
 	// Submission and smtps, which is how anything sends mail.
 	//
