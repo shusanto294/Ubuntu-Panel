@@ -433,12 +433,13 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 	if site.Type == "laravel" {
 		list.Add("Update dependencies and migrate",
 			fmt.Sprintf(
-				"cd %s && sudo -u www-data COMPOSER_HOME=/tmp/composer composer install "+
+				"sudo -u www-data COMPOSER_HOME=/tmp/composer bash -c %s",
+				proc.Quote(fmt.Sprintf("cd %s && composer install "+
 					"--no-dev --optimize-autoloader --no-interaction && "+
-					"sudo -u www-data php%s artisan migrate --force && "+
-					"sudo -u www-data php%s artisan config:cache && "+
-					"sudo -u www-data php%s artisan route:cache",
-				root, site.PHPVersion, site.PHPVersion, site.PHPVersion))
+					"php%s artisan migrate --force && "+
+					"php%s artisan config:cache && "+
+					"php%s artisan route:cache",
+					root, site.PHPVersion, site.PHPVersion, site.PHPVersion))))
 	}
 
 	if site.IsProxied() {
@@ -515,13 +516,25 @@ func (s *Service) recordCommit(ctx context.Context, siteID int64) func(*tasks.Ru
 			return "Could not read the commit from the checkout.", nil
 		}
 
+		previous := site.LastCommit
+
 		s.Store.SetSiteLastCommit(site.ID, commit)
 
+		serving := "Serving " + commit
 		if subject := LocalSubject(site); subject != "" {
-			return "Serving " + commit + " — " + subject, nil
+			serving += " — " + subject
 		}
 
-		return "Serving " + commit + ".", nil
+		// A pull that found nothing new still rebuilds and restarts, and a
+		// list of green ticks reads the same either way: say which it was.
+		switch {
+		case previous == "":
+			return serving + ".", nil
+		case previous == commit:
+			return "No new commits on the branch. Still " + strings.ToLower(serving[:1]) + serving[1:] + ".", nil
+		default:
+			return "Moved from " + previous + " to " + commit + ". " + serving + ".", nil
+		}
 	}
 }
 

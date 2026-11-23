@@ -812,9 +812,24 @@ const busy = computed(() =>
 // The step list stays up while the work runs, and while the run that failed is
 // still the last thing that happened — that is when the steps are worth
 // reading, because one of them has the ✕ against it.
+// A pull or a restart leaves the site "active" the whole way through, so
+// nothing above notices it: the click redirects back before a worker has even
+// created the task. `following` is the button saying "I started something —
+// keep looking until it shows up and finishes", and the task it finds stays on
+// the page afterwards, so the result can be read.
+const following = ref(null); // { after: id of the newest task at the click, since: ms }
+const followedTask = computed(() => {
+    if (!following.value) return null;
+
+    const task = props.activeTask ?? props.latestTask;
+
+    return task && task.id > following.value.after ? task : null;
+});
+
 const showProgress = computed(
     () =>
         busy.value ||
+        !!followedTask.value ||
         props.activeTask?.status === 'running' ||
         ((props.activeTask ?? props.latestTask)?.status === 'failed' &&
             props.site.status !== 'active'),
@@ -992,6 +1007,56 @@ watch(backupWorking, (value) => {
 const post = (name, extra = {}) =>
     router.post(route(name, props.site.id), extra, { preserveScroll: true });
 
+// For the buttons whose work runs on the queue without changing the site's
+// status: post, then follow the task it starts.
+const postAndFollow = (name) =>
+    router.post(
+        route(name, props.site.id),
+        {},
+        {
+            preserveScroll: true,
+            onSuccess: () => {
+                following.value = {
+                    after: (props.activeTask ?? props.latestTask)?.id ?? 0,
+                    since: Date.now(),
+                };
+                startPolling();
+            },
+        },
+    );
+
+// Stop looking once the followed task has finished — its step list stays up —
+// or when a minute passes with no task at all (the "Starting" note says why).
+watch(
+    () => [followedTask.value?.status, props.activeTask?.status],
+    () => {
+        if (!following.value) return;
+
+        const task = followedTask.value;
+        const done = task && task.status !== 'running';
+        const gaveUp = !task && Date.now() - following.value.since > 60000;
+
+        if ((done || gaveUp) && !busy.value && !backupWorking.value) stopPolling();
+        if (gaveUp) following.value = null;
+    },
+);
+
+const pullFromGitTab = () => {
+    postAndFollow('sites.pull');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+const progressTitle = computed(() => {
+    switch ((props.activeTask ?? props.latestTask)?.action) {
+        case 'site.pull':
+            return `Pulling the latest commit into ${props.site.domain}`;
+        case 'site.restart':
+            return `Restarting ${props.site.domain}`;
+        default:
+            return `Setting up ${props.site.domain}`;
+    }
+});
+
 const destroy = async () => {
     const parts = ['its nginx vhost'];
     if (deleteDNS.value && props.site.has_dns_records)
@@ -1053,14 +1118,15 @@ const destroy = async () => {
                     >
                     <button
                         v-if="site.repository"
-                        @click="post('sites.pull')"
+                        :disabled="!!following && (!followedTask || followedTask.status === 'running')"
+                        @click="postAndFollow('sites.pull')"
                         class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         Pull latest
                     </button>
                     <button
                         v-if="site.is_proxied"
-                        @click="post('sites.restart')"
+                        @click="postAndFollow('sites.restart')"
                         class="rounded-xl bg-white ring-1 ring-slate-900/10 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         Restart app
@@ -1096,7 +1162,7 @@ const destroy = async () => {
             </span>
         </div>
         <div
-            v-else-if="busy && !activeTask && !latestTask"
+            v-else-if="(busy && !activeTask && !latestTask) || (following && !followedTask)"
             class="mb-8 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-5 py-4 text-sm text-brand-900"
         >
             <span class="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
@@ -1114,7 +1180,7 @@ const destroy = async () => {
         <div v-if="showProgress" class="mb-8">
             <TaskProgress
                 :task="activeTask ?? latestTask"
-                :title="`Setting up ${site.domain}`"
+                :title="progressTitle"
                 :subtitle="site.type_label"
             />
         </div>
@@ -3136,7 +3202,12 @@ const destroy = async () => {
             </div>
         </div>
 
-        <SiteGit v-if="!busy && tab === 'git'" :site="site" :git="git" />
+        <SiteGit
+            v-if="!busy && tab === 'git'"
+            :site="site"
+            :git="git"
+            @pull="pullFromGitTab"
+        />
 
         <SiteEnvironment
             v-if="!busy && tab === 'environment'"

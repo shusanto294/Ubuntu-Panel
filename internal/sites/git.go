@@ -816,7 +816,7 @@ func RemoteHead(site *store.Site, branch string) string {
 
 // LocalHead is the commit the working tree is at, short form.
 func LocalHead(site *store.Site) string {
-	result := proc.Run(fmt.Sprintf("cd %s && sudo -u www-data git rev-parse --short HEAD",
+	result := proc.Run(fmt.Sprintf("sudo -u www-data git -C %s rev-parse --short HEAD",
 		proc.Quote(site.RootPath)), 30*time.Second)
 
 	if !result.OK() {
@@ -829,7 +829,7 @@ func LocalHead(site *store.Site) string {
 // LocalSubject is the message of the commit the site is serving.
 func LocalSubject(site *store.Site) string {
 	result := proc.Run(fmt.Sprintf(
-		"cd %s && sudo -u www-data git log -1 --pretty=%%s", proc.Quote(site.RootPath)),
+		"sudo -u www-data git -C %s log -1 --pretty=%%s", proc.Quote(site.RootPath)),
 		30*time.Second)
 
 	if !result.OK() {
@@ -894,11 +894,15 @@ func CloneCommand(site *store.Site, root, branch string) string {
 // nothing had ever fetched. And together, because a site whose credentials
 // changed would otherwise go on using whatever URL the original clone
 // recorded — a key that had since been revoked.
+//
+// `git -C` rather than `cd`: the site directory is closed to everyone but
+// www-data and the site's own accounts (IsolateSite), and a `cd` runs as the
+// panel's user, before sudo — "Permission denied" on every pull of a site
+// that had been deployed.
 func FetchCommand(site *store.Site, root, branch string) string {
 	return fmt.Sprintf(
-		"cd %[1]s && "+
-			"%[2]sgit fetch --depth 1 %[3]s %[4]s && "+
-			"sudo -u www-data git reset --hard %[5]s",
+		"%[2]sgit -C %[1]s fetch --depth 1 %[3]s %[4]s && "+
+			"sudo -u www-data git -C %[1]s reset --hard %[5]s",
 		root, gitAs(site),
 		proc.Quote(CloneURL(site)),
 		proc.Quote(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch)),

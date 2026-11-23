@@ -201,9 +201,14 @@ func RemoveEnvFile(site *store.Site) {
 // sudo resets the environment, so the names are listed for --preserve-env and
 // the values travel in the environment of the shell that runs sudo. The panel's
 // sudoers rule matches ALL, which is what permits keeping them.
+//
+// The `cd` happens inside www-data's shell, not before sudo: the site
+// directory is closed to the panel's own user once IsolateSite has run.
 func asSite(vars []EnvVar, root, tail string) (string, []string) {
+	inside := proc.Quote("cd " + root + " && " + tail)
+
 	if len(vars) == 0 {
-		return fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, tail), nil
+		return fmt.Sprintf("sudo -u www-data HOME=/tmp bash -c %s", inside), nil
 	}
 
 	names := make([]string, 0, len(vars))
@@ -216,8 +221,8 @@ func asSite(vars []EnvVar, root, tail string) (string, []string) {
 
 	sort.Strings(names)
 
-	return fmt.Sprintf("cd %s && sudo --preserve-env=%s -u www-data HOME=/tmp %s",
-		root, strings.Join(names, ","), tail), env
+	return fmt.Sprintf("sudo --preserve-env=%s -u www-data HOME=/tmp bash -c %s",
+		strings.Join(names, ","), inside), env
 }
 
 // siteCommand is a step that runs tail as the site, with its variables.

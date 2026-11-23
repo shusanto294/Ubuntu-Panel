@@ -84,7 +84,9 @@ const test = () =>
         { preserveScroll: true },
     );
 
-const pull = () => router.post(route('sites.pull', props.site.id), {}, { preserveScroll: true });
+// The page owns the pull, so the step list at the top follows it.
+const emit = defineEmits(['pull']);
+const pull = () => emit('pull');
 
 // -------------------------------------------------------------- automation
 

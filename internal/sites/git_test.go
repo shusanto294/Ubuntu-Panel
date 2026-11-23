@@ -358,3 +358,24 @@ func TestWantsCredentials(t *testing.T) {
 		}
 	}
 }
+
+// The site directory is closed to the panel's own user once IsolateSite has
+// run, so anything that enters it has to do so as www-data: a `cd` before the
+// sudo is "Permission denied" on every pull of a deployed site.
+func TestNothingEntersTheSiteDirectoryAsThePanel(t *testing.T) {
+	site := &store.Site{ID: 1, Domain: "example.com", Repository: "https://github.com/o/r.git",
+		EnvVars: "A=1"}
+
+	plain, _ := asSite(nil, "'/var/www/x'", "npm install")
+	withVars, _ := asSite(siteEnv(site), "'/var/www/x'", "npm install")
+
+	for _, command := range []string{
+		FetchCommand(site, "/var/www/example.com", "main"),
+		plain,
+		withVars,
+	} {
+		if !strings.HasPrefix(command, "sudo ") {
+			t.Errorf("runs something as the panel before sudo:\n%s", command)
+		}
+	}
+}
