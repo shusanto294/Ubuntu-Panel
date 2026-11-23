@@ -131,7 +131,7 @@ func (s *Service) CreateDomain(ctx context.Context, domainID int64) error {
 	}
 
 	if !s.IsConfigured() {
-		message := "The mail server is not installed yet — install it from the Services page."
+		message := "The mail server is not installed yet — install it from the button at the top of the Email page."
 		s.Store.SetEmailDomainStatus(domainID, "failed", message)
 
 		return errors.New(message)

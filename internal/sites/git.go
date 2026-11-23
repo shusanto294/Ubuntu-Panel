@@ -9,6 +9,8 @@
 package sites
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -268,6 +270,13 @@ func tokenUsername(host string) string {
 // that tells you nothing. With it the same deployment fails in under a second
 // saying authentication failed.
 func gitAs(site *store.Site) string {
+	return gitAsWith(site, DeployKeyPath(site))
+}
+
+// gitAsWith is gitAs with the deploy key at a path of the caller's choosing —
+// which is how the create form tests a key it generated before the site, and
+// so the site's own key path, existed.
+func gitAsWith(site *store.Site, keyPath string) string {
 	parts := []string{
 		"sudo -u www-data",
 		"GIT_TERMINAL_PROMPT=0",
@@ -292,7 +301,7 @@ func gitAs(site *store.Site) string {
 		parts = append(parts, "GIT_SSH_COMMAND="+proc.Quote(fmt.Sprintf(
 			"ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "+
 				"-o UserKnownHostsFile=%s -o BatchMode=yes -o ConnectTimeout=20",
-			DeployKeyPath(site), KnownHostsPath())))
+			keyPath, KnownHostsPath())))
 	}
 
 	return strings.Join(parts, " ") + " "
@@ -317,7 +326,11 @@ func KnownHostsPath() string { return DeployKeyRoot + "/known_hosts" }
 // which invalidates whatever is at the host — said out loud by the caller,
 // because the site then cannot pull until the new one is added.
 func GenerateDeployKey(site *store.Site) (string, error) {
-	path := DeployKeyPath(site)
+	return generateKeyAt(DeployKeyPath(site), "ubuntu-panel:"+site.Domain)
+}
+
+// generateKeyAt makes a key pair at path and returns its public half.
+func generateKeyAt(path, comment string) (string, error) {
 
 	// Readable by www-data, because that is the user git runs as, and
 	// root-owned so a site cannot overwrite its own key or anybody else's.
@@ -337,7 +350,7 @@ func GenerateDeployKey(site *store.Site) (string, error) {
 		"sudo chmod 710 " + proc.Quote(DeployKeyRoot),
 		"sudo rm -f " + proc.Quote(path) + " " + proc.Quote(path+".pub"),
 		fmt.Sprintf("sudo ssh-keygen -t ed25519 -N '' -C %s -f %s",
-			proc.Quote("ubuntu-panel:"+site.Domain), proc.Quote(path)),
+			proc.Quote(comment), proc.Quote(path)),
 		"sudo chown root:www-data " + proc.Quote(path) + " " + proc.Quote(path+".pub"),
 		"sudo chmod 640 " + proc.Quote(path),
 		"sudo chmod 644 " + proc.Quote(path+".pub"),
@@ -360,6 +373,148 @@ func GenerateDeployKey(site *store.Site) (string, error) {
 	}
 
 	return strings.TrimSpace(public), nil
+}
+
+// ------------------------------------------------------ keys before the site
+
+// The create form offers a deploy key before the site exists, so the key
+// cannot live at the site's path yet: it is made under a random id, shown so
+// it can be added to the repository and tested, and moved to the site's path
+// once the site is created. One the form was abandoned with is swept a day
+// later by the next one generated.
+
+// ValidPendingKeyID reports whether id is one GeneratePendingDeployKey could
+// have returned. It reaches a path, so nothing else is accepted.
+func ValidPendingKeyID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+
+	return true
+}
+
+// PendingDeployKeyPath is where a key made before its site lives.
+func PendingDeployKeyPath(id string) string {
+	return DeployKeyRoot + "/pending-" + id
+}
+
+// GeneratePendingDeployKey makes a key for a site that does not exist yet and
+// returns its id and public half.
+func GeneratePendingDeployKey(domain string) (string, string, error) {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", "", err
+	}
+
+	id := hex.EncodeToString(random)
+
+	proc.Ok("sudo find " + proc.Quote(DeployKeyRoot) +
+		" -maxdepth 1 -name 'pending-*' -mmin +1440 -delete 2>/dev/null")
+
+	comment := "ubuntu-panel"
+	if domain = strings.TrimSpace(domain); domain != "" &&
+		!strings.ContainsAny(domain, " \t\n'\"\\") {
+		comment += ":" + domain
+	}
+
+	public, err := generateKeyAt(PendingDeployKeyPath(id), comment)
+	if err != nil {
+		return "", "", err
+	}
+
+	return id, public, nil
+}
+
+// AdoptPendingDeployKey moves a key made on the create form to the site it was
+// made for and returns its public half.
+func AdoptPendingDeployKey(id string, site *store.Site) (string, error) {
+	if !ValidPendingKeyID(id) {
+		return "", errors.New("that is not a deploy key the panel made")
+	}
+
+	from := PendingDeployKeyPath(id)
+
+	public, err := proc.ReadFile(from+".pub", true)
+	if err != nil {
+		return "", errors.New("the deploy key generated on the form is gone — " +
+			"generate a new one on the site's Git tab")
+	}
+
+	to := DeployKeyPath(site)
+
+	if result := proc.Run("sudo mv -f "+proc.Quote(from)+" "+proc.Quote(to)+" && "+
+		"sudo mv -f "+proc.Quote(from+".pub")+" "+proc.Quote(to+".pub"), time.Minute); !result.OK() {
+		return "", fmt.Errorf("could not move the deploy key into place: %s", result.Output)
+	}
+
+	return strings.TrimSpace(public), nil
+}
+
+// RepositoryForAuth is the repository in the form an authentication method
+// can use: SSH for a deploy key, https for a token.
+//
+// People paste the https URL from the browser and then pick a deploy key,
+// which can only ever be refused over https — so the URL is turned into the
+// SSH one for the same repository rather than left to fail. The reverse for a
+// token. Anything not recognisably host/owner/repo is left as it was.
+func RepositoryForAuth(repository, method string) string {
+	repository = strings.TrimSpace(repository)
+
+	switch method {
+	case AuthKey:
+		parsed, err := url.Parse(repository)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return repository
+		}
+
+		path := strings.Trim(parsed.Path, "/")
+		if path == "" {
+			return repository
+		}
+
+		return "git@" + parsed.Hostname() + ":" + path
+
+	case AuthToken:
+		rest := strings.TrimPrefix(repository, "ssh://")
+
+		if strings.HasPrefix(repository, "ssh://") {
+			// ssh://git@host[:port]/path
+			hostPart, path, found := strings.Cut(rest, "/")
+			if !found {
+				return repository
+			}
+
+			_, host, _ := strings.Cut(hostPart, "@")
+			host, _, _ = strings.Cut(host, ":")
+
+			if host == "" || path == "" {
+				return repository
+			}
+
+			return "https://" + host + "/" + path
+		}
+
+		if strings.HasPrefix(repository, "git@") || isSCPLike(repository) {
+			hostPart, path, found := strings.Cut(repository, ":")
+			if !found || path == "" {
+				return repository
+			}
+
+			if _, host, ok := strings.Cut(hostPart, "@"); ok {
+				hostPart = host
+			}
+
+			return "https://" + hostPart + "/" + strings.TrimPrefix(path, "/")
+		}
+	}
+
+	return repository
 }
 
 // RemoveDeployKey takes a site's key away with the site.
@@ -390,6 +545,12 @@ type Access struct {
 	// than quoting git, because git's own words for "this repository is
 	// private and you sent nothing" are about a repository not existing.
 	Message string `json:"message"`
+
+	// NeedsCredentials is set when the panel sent nothing and the remote
+	// wanted something — a private repository, or an SSH URL, which no host
+	// serves anonymously. It is what makes the create form ask for a deploy
+	// key or a token, and only then.
+	NeedsCredentials bool `json:"needs_credentials"`
 }
 
 // CheckAccess asks the remote whether the panel can read it, without cloning.
@@ -400,6 +561,11 @@ type Access struct {
 // is created turns a deployment that fails on its fourth step — with a vhost
 // and a database already made — into a sentence under the form field.
 func CheckAccess(site *store.Site, branch string) Access {
+	return CheckAccessWith(site, branch, DeployKeyPath(site))
+}
+
+// CheckAccessWith is CheckAccess with the deploy key at keyPath.
+func CheckAccessWith(site *store.Site, branch, keyPath string) Access {
 	repository := strings.TrimSpace(site.Repository)
 
 	if repository == "" {
@@ -420,7 +586,7 @@ func CheckAccess(site *store.Site, branch string) Access {
 	// and the translation below reads it as a key the remote refused, which
 	// sends somebody to the repository's settings to look for a key that is
 	// not there to be found.
-	if RepoAuthOf(site) == AuthKey && !proc.Exists(DeployKeyPath(site), true) {
+	if RepoAuthOf(site) == AuthKey && !proc.Exists(keyPath, true) {
 		check.Message = "This site is set to use a deploy key and does not have one yet. " +
 			"Generate it on the Git tab, then add its public half to the repository."
 
@@ -431,11 +597,12 @@ func CheckAccess(site *store.Site, branch string) Access {
 	// that has thousands, and no --exit-code: a repository with no branch of
 	// this name still answered, and that is a different failure from one that
 	// refused.
-	result := proc.Run(gitAs(site)+"git ls-remote --heads "+
+	result := proc.Run(gitAsWith(site, keyPath)+"git ls-remote --heads "+
 		proc.Quote(CloneURL(site)), 90*time.Second)
 
 	if !result.OK() {
 		check.Message = explainGitFailure(site, result.Output)
+		check.NeedsCredentials = RepoAuthOf(site) == AuthNone && wantsCredentials(result.Output)
 
 		return check
 	}
@@ -558,6 +725,25 @@ func explainGitFailure(site *store.Site, output string) string {
 	}
 
 	return explanation
+}
+
+// wantsCredentials reports whether git's failure is the remote asking for a
+// credential — or, the way GitHub answers anybody who cannot see a private
+// repository, saying there is no such repository.
+func wantsCredentials(output string) bool {
+	lower := strings.ToLower(output)
+
+	for _, sign := range []string{
+		"terminal prompts disabled", "could not read username", "authentication failed",
+		"invalid username or password", "permission denied (publickey)",
+		"repository not found", "not found",
+	} {
+		if strings.Contains(lower, sign) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // firstGitLine is the most useful line of git's output, which is rarely the

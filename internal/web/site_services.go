@@ -68,7 +68,7 @@ func (a *App) awaitSiteServices(ctx context.Context, job *store.Job, siteID int6
 
 	if len(failed) > 0 {
 		reason := fmt.Sprintf("%s could not be installed, so the site was not deployed. "+
-			"The Services page has the install's console and a Retry; deploy the site again after.",
+			"Logs has the install's console; deploying the site again tries the install again.",
 			strings.Join(failed, " and "))
 		a.Store.SetSiteStatus(site.ID, "failed", reason)
 

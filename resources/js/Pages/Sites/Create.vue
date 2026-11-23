@@ -33,6 +33,9 @@ const form = useForm({
     ssl: true,
     repository: '',
     branch: 'main',
+    repo_auth: 'none',
+    repo_token: '',
+    repo_key_id: '',
     start_command: '',
     build_command: '',
     wp_title: '',
@@ -172,6 +175,139 @@ const rootPreview = computed(() => {
     const dir = (form.web_directory ?? '').replace(/^\/+|\/+$/g, '');
     return `${props.sitesRoot}/${form.domain || 'example.com'}${dir ? '/' + dir : ''}`;
 });
+
+// ------------------------------------------------------------ the repository
+//
+// Asked as it is typed. A public repository needs nothing more; a private one
+// is only discovered by asking, and then — and only then — the form asks how
+// the panel should sign in to it. Without this, a private repository was found
+// out by the deployment, after the site already existed.
+
+const repo = ref({ status: 'idle', message: '', cloneUrl: '' });
+const isPrivate = ref(false);
+const deployKey = ref({ publicKey: '', generating: false, error: '' });
+const keyCopied = ref(false);
+
+const repoNeeded = computed(() => !isManaged.value && form.repository.trim() !== '');
+
+let checkTimer = null;
+let checkSequence = 0;
+
+const checkRepository = async () => {
+    clearTimeout(checkTimer);
+    const sequence = ++checkSequence;
+
+    if (!repoNeeded.value) {
+        repo.value = { status: 'idle', message: '', cloneUrl: '' };
+        isPrivate.value = false;
+        form.repo_auth = 'none';
+        return;
+    }
+
+    if (form.repo_auth === 'key' && !form.repo_key_id) {
+        repo.value = {
+            status: 'waiting',
+            message: 'Generate a deploy key and add it to the repository.',
+            cloneUrl: '',
+        };
+        return;
+    }
+
+    if (form.repo_auth === 'token' && !form.repo_token.trim()) {
+        repo.value = { status: 'waiting', message: 'Paste an access token.', cloneUrl: '' };
+        return;
+    }
+
+    repo.value = { ...repo.value, status: 'checking' };
+
+    try {
+        const { data } = await window.axios.post(route('sites.repository.check'), {
+            repository: form.repository,
+            branch: form.branch,
+            repo_auth: form.repo_auth,
+            repo_token: form.repo_token,
+            repo_key_id: form.repo_key_id,
+        });
+
+        if (sequence !== checkSequence) return;
+
+        let status = 'error';
+
+        if (data.ok && data.found) {
+            status = 'ok';
+        } else if (data.needs_credentials) {
+            // Private. A deploy key is the one to suggest: read-only, one
+            // repository, and nothing to copy out of an account's settings.
+            isPrivate.value = true;
+            if (form.repo_auth === 'none') form.repo_auth = 'key';
+            status = 'private';
+        }
+
+        repo.value = { status, message: data.message, cloneUrl: data.repository ?? '' };
+    } catch (error) {
+        if (sequence !== checkSequence) return;
+
+        repo.value = {
+            status: 'error',
+            message: 'The panel could not check the repository. You can still create the site; it is checked again then.',
+            cloneUrl: '',
+        };
+    }
+};
+
+const scheduleCheck = (delay = 700) => {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(checkRepository, delay);
+};
+
+// A different repository starts again as a public one: it may well be, and a
+// deploy key that is not on it would be refused even if it were.
+watch(
+    () => form.repository,
+    () => {
+        isPrivate.value = false;
+        form.repo_auth = 'none';
+    },
+);
+watch(() => [form.repository, form.branch, form.type], () => scheduleCheck());
+watch(() => form.repo_token, () => form.repo_auth === 'token' && scheduleCheck());
+watch(() => form.repo_auth, () => scheduleCheck(0));
+
+const generateDeployKey = async () => {
+    deployKey.value = { ...deployKey.value, generating: true, error: '' };
+
+    try {
+        const { data } = await window.axios.post(route('sites.repository.key'), {
+            domain: form.domain,
+        });
+
+        deployKey.value = { publicKey: data.public_key, generating: false, error: '' };
+        form.repo_key_id = data.key_id;
+        keyCopied.value = false;
+        checkRepository();
+    } catch (error) {
+        deployKey.value = {
+            ...deployKey.value,
+            generating: false,
+            error: error.response?.data?.error ?? 'The panel could not generate a key.',
+        };
+    }
+};
+
+const copyKey = async () => {
+    try {
+        await navigator.clipboard.writeText(deployKey.value.publicKey);
+        keyCopied.value = true;
+    } catch {
+        keyCopied.value = false;
+    }
+};
+
+// What stops the form: a repository the panel cannot read yet. Checked again
+// on the server, so this is the courtesy and that is the rule.
+const repoBlocking = computed(
+    () => repoNeeded.value && !['ok', 'error'].includes(repo.value.status),
+);
 
 const submit = () => form.post(route('sites.store'));
 </script>
@@ -373,9 +509,37 @@ const submit = () => form.post(route('sites.store'));
                             class="mt-1 block w-full"
                             placeholder="https://github.com/you/app.git"
                         />
-                        <p class="mt-1 text-xs text-slate-500">
-                            Cloned over HTTPS as www-data. Private repositories
-                            need a token in the URL.
+                        <p
+                            v-if="!repoNeeded"
+                            class="mt-1 text-xs text-slate-500"
+                        >
+                            Public or private. If it is private, the panel asks
+                            how to sign in to it.
+                        </p>
+                        <p
+                            v-else-if="repo.status === 'checking'"
+                            class="mt-1 text-xs text-slate-500"
+                        >
+                            Checking the repository…
+                        </p>
+                        <p
+                            v-else-if="repo.status === 'ok'"
+                            class="mt-1 text-xs text-emerald-700"
+                        >
+                            ✓ {{ repo.message }}
+                        </p>
+                        <p
+                            v-else-if="isPrivate"
+                            class="mt-1 text-xs text-amber-700"
+                        >
+                            This repository is private. Choose how the panel
+                            signs in to it below.
+                        </p>
+                        <p
+                            v-else-if="repo.status === 'error' && !isPrivate"
+                            class="mt-1 text-xs text-rose-700"
+                        >
+                            {{ repo.message }}
                         </p>
                         <InputError
                             class="mt-2"
@@ -391,6 +555,131 @@ const submit = () => form.post(route('sites.store'));
                             class="mt-1 block w-full"
                         />
                     </div>
+                </div>
+
+                <!-- Credentials: only for a repository that turned out to be private -->
+                <div
+                    v-if="repoNeeded && isPrivate"
+                    class="mt-5 rounded-xl border border-amber-200 bg-amber-50/50 p-4"
+                >
+                    <p class="text-sm font-medium text-slate-800">
+                        Private repository access
+                    </p>
+
+                    <div class="mt-3 flex flex-wrap gap-4">
+                        <label class="flex items-center gap-2 text-sm text-slate-700">
+                            <input
+                                type="radio"
+                                value="key"
+                                v-model="form.repo_auth"
+                                class="text-brand-600 focus:ring-brand-500"
+                            />
+                            Deploy key (recommended)
+                        </label>
+                        <label class="flex items-center gap-2 text-sm text-slate-700">
+                            <input
+                                type="radio"
+                                value="token"
+                                v-model="form.repo_auth"
+                                class="text-brand-600 focus:ring-brand-500"
+                            />
+                            Access token
+                        </label>
+                    </div>
+                    <InputError class="mt-2" :message="form.errors.repo_auth" />
+
+                    <!-- deploy key -->
+                    <div v-if="form.repo_auth === 'key'" class="mt-4">
+                        <template v-if="!deployKey.publicKey">
+                            <p class="text-xs text-slate-600">
+                                The panel makes an SSH key for this site. You add
+                                its public half to the repository; it can read that
+                                one repository and nothing else.
+                            </p>
+                            <button
+                                type="button"
+                                :disabled="deployKey.generating"
+                                class="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+                                @click="generateDeployKey"
+                            >
+                                {{ deployKey.generating ? 'Generating…' : 'Generate deploy key' }}
+                            </button>
+                            <p v-if="deployKey.error" class="mt-2 text-xs text-rose-700">
+                                {{ deployKey.error }}
+                            </p>
+                        </template>
+
+                        <template v-else>
+                            <InputLabel value="Public key — add this to the repository" />
+                            <div
+                                class="mt-1 break-all rounded-xl bg-slate-900 p-3 font-mono text-xs text-slate-100"
+                            >
+                                {{ deployKey.publicKey }}
+                            </div>
+                            <div class="mt-2 flex flex-wrap items-center gap-4">
+                                <button
+                                    type="button"
+                                    class="text-xs font-medium text-brand-600 hover:underline"
+                                    @click="copyKey"
+                                >
+                                    {{ keyCopied ? 'Copied' : 'Copy the public key' }}
+                                </button>
+                                <button
+                                    type="button"
+                                    :disabled="repo.status === 'checking'"
+                                    class="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+                                    @click="checkRepository"
+                                >
+                                    {{ repo.status === 'checking' ? 'Checking…' : "I've added it — check again" }}
+                                </button>
+                            </div>
+                            <p class="mt-3 text-xs text-slate-600">
+                                On GitHub: the repository → Settings → Deploy keys →
+                                Add deploy key. Paste the key; leave “Allow write
+                                access” off. (GitLab: Settings → Repository → Deploy
+                                keys.)
+                            </p>
+                            <p
+                                v-if="repo.cloneUrl && repo.cloneUrl !== form.repository.trim()"
+                                class="mt-2 text-xs text-slate-500"
+                            >
+                                A deploy key works over SSH, so the panel will
+                                clone <code>{{ repo.cloneUrl }}</code>.
+                            </p>
+                        </template>
+                    </div>
+
+                    <!-- token -->
+                    <div v-else-if="form.repo_auth === 'token'" class="mt-4">
+                        <InputLabel for="repo_token" value="Access token" />
+                        <TextInput
+                            id="repo_token"
+                            type="password"
+                            v-model="form.repo_token"
+                            class="mt-1 block w-full"
+                            autocomplete="off"
+                            placeholder="github_pat_…"
+                        />
+                        <InputError class="mt-2" :message="form.errors.repo_token" />
+                        <p class="mt-1 text-xs text-slate-600">
+                            On GitHub: Settings → Developer settings → Fine-grained
+                            tokens, with read-only “Contents” access to this
+                            repository. Stored encrypted.
+                        </p>
+                    </div>
+
+                    <p
+                        v-if="repo.status === 'ok'"
+                        class="mt-3 text-xs font-medium text-emerald-700"
+                    >
+                        ✓ The panel can read the repository.
+                    </p>
+                    <p
+                        v-else-if="repo.status === 'error'"
+                        class="mt-3 text-xs text-rose-700"
+                    >
+                        {{ repo.message }}
+                    </p>
                 </div>
 
                 <div
@@ -618,11 +907,18 @@ const submit = () => form.post(route('sites.store'));
 
             <div class="flex items-center gap-3">
                 <button
-                    :disabled="form.processing"
+                    :disabled="form.processing || repoBlocking"
                     class="rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                     Create site
                 </button>
+                <span v-if="repoBlocking" class="text-xs text-slate-500">
+                    {{
+                        repo.status === 'checking' || repo.status === 'idle'
+                            ? 'Waiting for the repository check…'
+                            : 'The panel needs to be able to read the repository first.'
+                    }}
+                </span>
                 <Link
                     :href="route('sites.index')"
                     class="text-sm text-slate-600 hover:underline"

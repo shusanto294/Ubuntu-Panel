@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -77,6 +78,9 @@ func (a *App) databasesIndex(w http.ResponseWriter, r *http.Request) {
 		"availableEngines": a.availableEngines(),
 		"engines":          engineLabels(),
 		"phpMyAdmin":       a.Store.ServiceInstalled("phpmyadmin"),
+		// Where it is not installed, whether it is on its way: the button that
+		// installs it lives on this page now that there is no Services page.
+		"phpMyAdminStatus": a.serviceStatus(r.Context(), "phpmyadmin"),
 		// Two ways in, and they are different links.
 		//
 		// The header one signs itself in as the panel's own MariaDB
@@ -627,4 +631,15 @@ func (a *App) databasesUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inertia.Back(w, r, "/databases")
+}
+
+// serviceStatus is one catalogue entry's install status, as the pages show it.
+func (a *App) serviceStatus(ctx context.Context, key string) string {
+	for _, app := range a.Catalog.Requirements(ctx, []string{key}) {
+		if status, ok := app["status"].(string); ok {
+			return status
+		}
+	}
+
+	return ""
 }

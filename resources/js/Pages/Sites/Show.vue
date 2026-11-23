@@ -1085,7 +1085,7 @@ const destroy = async () => {
                 {{ site.type_label }} site needs {{ installing.length === 1 ? 'it' : 'them' }}.
                 The deployment starts by itself when {{ installing.length === 1 ? 'it is' : 'they are' }}
                 ready; on a small server this takes a few minutes.
-                <Link :href="route('services.index')" class="font-medium underline">Watch on Services</Link>
+                <Link :href="route('logs.index')" class="font-medium underline">Watch in Logs</Link>
             </span>
         </div>
         <div

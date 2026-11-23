@@ -331,7 +331,7 @@ func TestRouteManifestReachesTheFrontend(t *testing.T) {
 	// link.
 	for _, name := range []string{
 		"dashboard", "logout", "profile.edit", "sites.index", "databases.index",
-		"email.index", "terminal", "services.index", "dns.index", "logs.index",
+		"email.index", "terminal", "services.install", "dns.index", "logs.index",
 		"settings",
 	} {
 		if _, ok := page.Props.Ziggy.Routes[name]; !ok {

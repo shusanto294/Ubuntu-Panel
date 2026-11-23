@@ -698,7 +698,7 @@ func (a *App) refuseMigration(ctx context.Context, m *store.Migration, hello *mi
 		}
 	} else {
 		if m.Kind == "mail" && !hello.MailConfigured {
-			return "The new server has no mail server set up. Install Mail on its Services page first."
+			return "The new server has no mail server set up. Update the panel there — it then installs what a move needs by itself — or open its Email page and install the mail server, then move this again."
 		}
 
 		if site == nil {
@@ -706,16 +706,16 @@ func (a *App) refuseMigration(ctx context.Context, m *store.Migration, hello *mi
 		}
 
 		if !hello.Services["nginx"] {
-			return "The new server has no nginx. Install it on its Services page first."
+			return "The new server has no nginx. Update the panel there — it then installs what a move needs by itself — and move this again."
 		}
 
 		if database, _, _ := a.Sites.MigrationDatabase(ctx, site); database != nil && !hello.Services[database.Engine] {
-			return fmt.Sprintf("%s's database is %s, which the new server does not have. Install it on its Services page first.",
+			return fmt.Sprintf("%s's database is %s, which the new server does not have. Update the panel there — it then installs what a move needs by itself — and move this again.",
 				site.Domain, config.EngineLabel(database.Engine))
 		}
 
 		if site.IsProxied() && !hello.Services["node"] {
-			return "The new server has no Node.js. Install it on its Services page first."
+			return "The new server has no Node.js. Update the panel there — it then installs what a move needs by itself — and move this again."
 		}
 	}
 
@@ -1406,7 +1406,7 @@ func (a *App) awaitMigrationServices(ctx context.Context, job *store.Job, migrat
 
 	if len(failed) > 0 {
 		reason := fmt.Sprintf("%s could not be installed on this server, so %s was not set up. "+
-			"The Services page has the install's console and a Retry; move it again after.",
+			"Logs has the install's console; moving it again tries the install again.",
 			strings.Join(failed, " and "), m.Name)
 		a.Store.SetMigrationStatus(m.ID, "failed", reason)
 

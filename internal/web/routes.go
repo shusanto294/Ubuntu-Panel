@@ -71,20 +71,19 @@ func (a *App) routes() *router {
 	rt.get("/system/update/status", "system.update.status", authenticated, a.updateStatusEndpoint)
 	rt.post("/system/update/automatic", "system.update.automatic", authenticated, a.updateAutomatic)
 
-	// Apps.
+	// Services.
 	//
-	// The route *names* stay `services.*`: they are what the Vue pages call
-	// route() with.
-	rt.get("/services", "services.index", authenticated, a.servicesIndex)
-	rt.post("/services/detect", "services.detect", authenticated, a.servicesDetect)
+	// There is no Services page any more: what a site, a database or a mail
+	// domain needs is installed when it is asked for, and the pages that need
+	// something offer to install it where they stand (RequiredApps.vue). These
+	// two routes are what those buttons post to.
 	rt.post("/services/install", "services.install-many", authenticated, a.servicesInstallMany)
 	rt.post("/services/{service}/install", "services.install", authenticated, a.servicesInstallOne)
-	rt.post("/services/{service}/retry", "services.retry", authenticated, a.servicesRetry)
-	rt.post("/services/{service}/uninstall", "services.uninstall", authenticated, a.servicesUninstall)
 
-	// The page was called Apps for a while, so a bookmark or an open tab
-	// there does not 404.
-	rt.get("/apps", "services.index-legacy", authenticated, a.servicesIndex)
+	// The page's old addresses — /apps was its name for a while — go to the
+	// dashboard rather than 404, for a bookmark or an open tab.
+	rt.get("/services", "services.gone", authenticated, a.servicesGone)
+	rt.get("/apps", "services.gone-legacy", authenticated, a.servicesGone)
 
 	// Logs. Every queued job writes a task, and this is where they are read —
 	// the pages that start the work show a line of progress and link here
@@ -113,6 +112,8 @@ func (a *App) routes() *router {
 	rt.get("/sites", "sites.index", authenticated, a.sitesIndex)
 	rt.get("/sites/create", "sites.create", authenticated, a.sitesCreate)
 	rt.post("/sites", "sites.store", authenticated, a.sitesStore)
+	rt.post("/sites/repository/check", "sites.repository.check", authenticated, a.sitesRepositoryCheck)
+	rt.post("/sites/repository/key", "sites.repository.key", authenticated, a.sitesRepositoryKey)
 	rt.get("/sites/{site}", "sites.show", authenticated, a.sitesShow)
 	rt.delete("/sites/{site}", "sites.destroy", authenticated, a.sitesDestroy)
 	rt.post("/sites/{site}/dns-sync", "sites.dns-sync", authenticated, a.sitesSyncDNS)

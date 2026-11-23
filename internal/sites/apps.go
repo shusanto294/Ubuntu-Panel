@@ -107,7 +107,7 @@ func (s *Service) ensureNodeRuntime(ctx context.Context, siteID int64) func(*tas
 		if after := nodeMajor(); after < minimum {
 			return "", fmt.Errorf(
 				"%s needs Node.js %d or later and this machine still has %d after the upgrade. "+
-					"Install a newer Node.js from the Services page, then redeploy.",
+					"The log above has the install's output; redeploy to try again.",
 				site.TypeLabel(), minimum, after)
 		}
 

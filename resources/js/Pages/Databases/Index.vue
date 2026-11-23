@@ -7,7 +7,7 @@ import StatusBadge from '@/Components/StatusBadge.vue';
 import TaskStatus from '@/Components/TaskStatus.vue';
 import { isBusyStatus, useLiveRefresh } from '@/Composables/useLiveRefresh';
 import { usePagination } from '@/Composables/usePagination';
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 
 const props = defineProps({
     databases: Array,
@@ -19,9 +19,28 @@ const props = defineProps({
     // itself in and shows every database; the one on a database's own page
     // stops at the login form instead.
     phpMyAdminAll: { type: String, default: '/phpmyadmin/' },
+    phpMyAdminStatus: { type: String, default: '' },
     mongodb: Boolean,
     activeTask: { type: Object, default: null },
 });
+
+// phpMyAdmin is installed from here: it is the one optional piece of this page
+// that nothing installs by itself.
+const phpMyAdminInstalling = computed(() =>
+    ['queued', 'installing'].includes(props.phpMyAdminStatus),
+);
+const phpMyAdminPosting = ref(false);
+
+const installPhpMyAdmin = () => {
+    phpMyAdminPosting.value = true;
+    router.post(
+        route('services.install', 'phpmyadmin'),
+        {},
+        { preserveScroll: true, onFinish: () => (phpMyAdminPosting.value = false) },
+    );
+};
+
+useLiveRefresh(phpMyAdminInstalling, ['phpMyAdmin', 'phpMyAdminStatus']);
 
 const busy = computed(
     () =>
@@ -149,6 +168,22 @@ const copy = async (text, which) => {
                         <AppIcon app-key="phpmyadmin" size="sm" bare />
                         phpMyAdmin
                     </a>
+                    <button
+                        v-else-if="availableEngines.includes('mysql')"
+                        type="button"
+                        :disabled="phpMyAdminInstalling || phpMyAdminPosting"
+                        @click="installPhpMyAdmin"
+                        class="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                        <AppIcon app-key="phpmyadmin" size="sm" bare />
+                        {{
+                            phpMyAdminInstalling
+                                ? 'Installing phpMyAdmin…'
+                                : phpMyAdminStatus === 'failed'
+                                  ? 'Retry phpMyAdmin install'
+                                  : 'Install phpMyAdmin'
+                        }}
+                    </button>
 
                     <button
                         v-if="mongodb"

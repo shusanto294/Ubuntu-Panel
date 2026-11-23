@@ -347,7 +347,7 @@ const catchUp = (m) => router.post(route('migrate.catch-up', m.id), {}, { preser
                         <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Mail domains</p>
                         <p v-if="!mailDomains.length" class="mt-2 text-sm text-slate-500">There are no mail domains on this server.</p>
                         <p v-else-if="!mailReady" class="mt-2 text-sm text-amber-700">
-                            The other server has no mail server. Install Mail on its Services page, then connect again.
+                            The other server has no mail server. Install it from that panel’s Email page, then connect again.
                         </p>
                         <ul class="mt-2 space-y-1">
                             <li v-for="domain in mailDomains" :key="domain.id">

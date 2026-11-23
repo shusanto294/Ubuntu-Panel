@@ -14,7 +14,20 @@ const props = defineProps({
     engines: Object,
 });
 
-const engineOptions = computed(() => props.availableEngines ?? []);
+// Every engine this machine has, and every one the panel can install — so an
+// engine that is not here yet is a choice on this form rather than a trip to
+// somewhere else first.
+const installable = computed(() => props.requirements.map((app) => app.key));
+
+const engineOptions = computed(() =>
+    Object.keys(props.engines ?? {}).filter(
+        (engine) =>
+            (props.availableEngines ?? []).includes(engine) ||
+            installable.value.includes(engine),
+    ),
+);
+
+const isInstalled = (engine) => (props.availableEngines ?? []).includes(engine);
 
 const form = useForm({
     engine: props.availableEngines?.[0] ?? 'mysql',
@@ -41,11 +54,12 @@ const submit = () => form.post(route('databases.store'));
         </template>
 
         <RequiredApps
-            v-if="!engineOptions.length"
+            v-if="!isInstalled(form.engine)"
             :apps="requirements"
-            :need="['mysql']"
+            :need="[form.engine]"
+            :refresh="['requirements', 'availableEngines']"
             class="mb-6 max-w-2xl"
-            note="A database needs an engine to live in. MariaDB is the one WordPress and most Laravel sites expect; PostgreSQL and MongoDB are on the Services page if you would rather."
+            note="A database needs its engine on this machine first. Install it here; the form unlocks itself when it lands."
         />
 
         <form
@@ -64,7 +78,7 @@ const submit = () => form.post(route('databases.store'));
                         :key="engine"
                         :value="engine"
                     >
-                        {{ engines[engine] }}
+                        {{ engines[engine] }}{{ isInstalled(engine) ? '' : ' — not installed yet' }}
                     </option>
                 </select>
                 <InputError class="mt-2" :message="form.errors.engine" />
@@ -113,7 +127,7 @@ const submit = () => form.post(route('databases.store'));
             </div>
 
             <div class="flex items-center gap-3 border-t border-slate-100 pt-6">
-                <PrimaryButton :disabled="form.processing || !engineOptions.length">
+                <PrimaryButton :disabled="form.processing || !isInstalled(form.engine)">
                     Create database
                 </PrimaryButton>
                 <Link

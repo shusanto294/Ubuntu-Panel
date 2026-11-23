@@ -295,12 +295,12 @@ if (admin.getUser("%[1]s")) {
 				return errors.New("MongoDB has authentication enabled and the password the panel " +
 					"has for " + MongoAdmin + " is not accepted, so it cannot create anything. " +
 					"Someone changed that password outside the panel, or the panel's application " +
-					"key was replaced. Take MongoDB's own credentials from Services → show " +
-					"credentials, then on the server:\n" +
+					"key was replaced. Take the password the panel has from Databases → " +
+					"MongoDB Compass, then on the server:\n" +
 					"  sudo mongosh admin --eval 'db.updateUser(\"" + MongoAdmin + "\", " +
 					"{pwd: \"THE PASSWORD THE PANEL SHOWS\"})'\n" +
-					"and redeploy. If nothing can log in at all, reinstall MongoDB from the " +
-					"Services page.")
+					"and redeploy. If nothing can log in at all, MongoDB has to be removed and " +
+					"installed again on the server.")
 			}
 
 			return fmt.Errorf("could not create the MongoDB administrator: %s", result.Output)

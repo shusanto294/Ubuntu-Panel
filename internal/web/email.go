@@ -174,7 +174,7 @@ func (a *App) emailStoreDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !sess.HasErrors() && !a.Mail.IsConfigured() {
-		sess.Error("domain", "The mail server is not installed yet — install it from the Services page.")
+		sess.Error("domain", "The mail server is not installed yet — install it from the button at the top of this page.")
 	}
 
 	if sess.HasErrors() {

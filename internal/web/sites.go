@@ -170,12 +170,52 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The repository, asked before anything exists: whether the panel can read
+	// it with the credential the form chose, and whether the branch is there.
+	// The form has already checked as it was typed; this is the same question
+	// asked again by the side that acts on the answer.
+	request := repositoryRequestFrom(input)
+
+	if site.Repository != "" {
+		checked, _, access, field, refusal := repositoryAccess(request)
+
+		if refusal != "" {
+			sess.Error(field, refusal)
+			inertia.Back(w, r, "/sites/create")
+
+			return
+		}
+
+		if !access.OK || !access.Found {
+			sess.Error("repository", access.Message)
+			inertia.Back(w, r, "/sites/create")
+
+			return
+		}
+
+		site.Repository = checked.Repository
+		site.RepoAuth = checked.RepoAuth
+		site.RepoToken = checked.RepoToken
+	}
+
 	id, err := a.Store.CreateSite(r.Context(), site)
 	if err != nil || id <= 0 {
 		a.Log.Error("could not create the site record", "error", err)
 		a.failBack(w, r, "Could not create the site record.")
 
 		return
+	}
+
+	if site.Repository != "" && site.RepoAuth == sites.AuthKey {
+		site.ID = id
+
+		if public, err := sites.AdoptPendingDeployKey(request.KeyID, site); err != nil {
+			// The deployment's own access check will say the key is missing,
+			// and the Git tab can generate another — so logged, not fatal.
+			a.Log.Error("could not move the form's deploy key to the site", "site", id, "error", err)
+		} else {
+			a.Store.SetSiteDeployKey(id, public)
+		}
 	}
 
 	if _, err := a.Queue.PushID(queue.SiteDeploy, "site", id); err != nil {
@@ -798,7 +838,7 @@ func (a *App) sitesCache(w http.ResponseWriter, r *http.Request) {
 		a.Queue.Push(queue.SiteCache, map[string]any{"site": id, "mode": mode, "ttl": input["ttl"]})
 
 		sess.Flash("success", "Installing Redis first. The cache is turned on as soon as it is "+
-			"ready — the Services page shows the install.")
+			"ready — Logs shows the install.")
 		inertia.Back(w, r, "/sites")
 
 		return

@@ -312,3 +312,49 @@ func TestGitFailuresAreTranslatedIntoSomethingActionable(t *testing.T) {
 
 // testNow is a fixed instant, so a schedule test does not depend on the clock.
 func testNow() time.Time { return time.Unix(1_770_000_000, 0).UTC() }
+
+func TestRepositoryForAuth(t *testing.T) {
+	cases := []struct{ in, method, want string }{
+		{"https://github.com/owner/repo.git", AuthKey, "git@github.com:owner/repo.git"},
+		{"https://github.com/owner/repo", AuthKey, "git@github.com:owner/repo"},
+		{"git@github.com:owner/repo.git", AuthKey, "git@github.com:owner/repo.git"},
+		{"git@github.com:owner/repo.git", AuthToken, "https://github.com/owner/repo.git"},
+		{"ssh://git@gitlab.com:2222/group/repo.git", AuthToken, "https://gitlab.com/group/repo.git"},
+		{"https://github.com/owner/repo.git", AuthToken, "https://github.com/owner/repo.git"},
+		{"https://github.com/owner/repo.git", AuthNone, "https://github.com/owner/repo.git"},
+		{"git@github.com:owner/repo.git", AuthNone, "git@github.com:owner/repo.git"},
+	}
+
+	for _, c := range cases {
+		if got := RepositoryForAuth(c.in, c.method); got != c.want {
+			t.Errorf("RepositoryForAuth(%q, %q) = %q, want %q", c.in, c.method, got, c.want)
+		}
+	}
+}
+
+func TestValidPendingKeyID(t *testing.T) {
+	for id, want := range map[string]bool{
+		"0123456789abcdef0123456789abcdef": true,
+		"0123456789ABCDEF0123456789abcdef": false,
+		"../../etc/passwd0123456789abcdef": false,
+		"0123456789abcdef":                 false,
+		"":                                 false,
+	} {
+		if got := ValidPendingKeyID(id); got != want {
+			t.Errorf("ValidPendingKeyID(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestWantsCredentials(t *testing.T) {
+	for output, want := range map[string]bool{
+		"fatal: could not read Username for 'https://github.com': terminal prompts disabled":   true,
+		"remote: Repository not found.\nfatal: repository 'https://github.com/a/b/' not found": true,
+		"git@github.com: Permission denied (publickey).":                                       true,
+		"fatal: unable to access 'https://x/': Could not resolve host: x":                      false,
+	} {
+		if got := wantsCredentials(output); got != want {
+			t.Errorf("wantsCredentials(%q) = %v, want %v", output, got, want)
+		}
+	}
+}

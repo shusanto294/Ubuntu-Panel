@@ -123,25 +123,9 @@ func (a *App) firstActiveTask(r *http.Request, kinds ...string) map[string]any {
 	return nil
 }
 
-// appTaskActions are the provision tasks this page drives. The type also
-// carries the panel's own domain change, which belongs to Settings.
-var appTaskActions = []string{"services.install", "services.uninstall"}
-
-// servicesIndex is the Services page.
-func (a *App) servicesIndex(w http.ResponseWriter, r *http.Request) {
-	a.Catalog.SyncRows()
-
-	a.Render.Render(w, r, "System/Services", inertia.Props{
-		"system":   a.systemSummary(r.Context()),
-		"services": a.Catalog.Summary(r.Context()),
-		"activeTask": a.Store.TaskConsole(r.Context(),
-			a.Store.LatestTaskByActions(r.Context(), "provision", appTaskActions, true), 0),
-		// The console of an install that has just finished, and only just: a
-		// finished task stops being news, and the page should look like a
-		// catalogue again rather than like something is happening.
-		"latestTask": a.Store.TaskConsole(r.Context(),
-			a.Store.RecentTaskID(r.Context(), "provision", appTaskActions, store.RecentTaskWindow), 0),
-	})
+// servicesGone answers the Services page's old addresses.
+func (a *App) servicesGone(w http.ResponseWriter, r *http.Request) {
+	inertia.Redirect(w, r, "/")
 }
 
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
@@ -346,12 +330,6 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 
 // ------------------------------------------------------------------- apps
 
-func (a *App) servicesDetect(w http.ResponseWriter, r *http.Request) {
-	a.Catalog.Detect(nil)
-
-	a.okBack(w, r, "Re-checked what is installed on this machine.")
-}
-
 func (a *App) servicesInstallOne(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	key := r.PathValue("service")
@@ -370,7 +348,7 @@ func (a *App) servicesInstallOne(w http.ResponseWriter, r *http.Request) {
 
 	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
 
-	inertia.Back(w, r, "/services")
+	inertia.Back(w, r, "/")
 }
 
 func (a *App) servicesInstallMany(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +362,10 @@ func (a *App) servicesInstallMany(w http.ResponseWriter, r *http.Request) {
 
 	keys := []string{}
 
-	for _, key := range listInput(input, "keys") {
+	// `services` is what RequiredApps sends; `keys` is the older name. Reading
+	// only `keys` meant an "Install all" there installed the core set instead
+	// of what the page asked for.
+	for _, key := range append(listInput(input, "services"), listInput(input, "keys")...) {
 		if catalog.Exists(key) {
 			keys = append(keys, key)
 		}
@@ -407,41 +388,7 @@ func (a *App) servicesInstallMany(w http.ResponseWriter, r *http.Request) {
 
 	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
 
-	inertia.Back(w, r, "/services")
-}
-
-func (a *App) servicesRetry(w http.ResponseWriter, r *http.Request) {
-	user := userFrom(r.Context())
-	key := r.PathValue("service")
-
-	if !catalog.Exists(key) {
-		a.notFoundError(w, r, "No such service.")
-		return
-	}
-
-	a.Catalog.Queue([]string{key}, true)
-	a.Queue.PushID(queue.ServicesInstall, "user", user.ID)
-
-	inertia.Back(w, r, "/services")
-}
-
-func (a *App) servicesUninstall(w http.ResponseWriter, r *http.Request) {
-	user := userFrom(r.Context())
-	key := r.PathValue("service")
-
-	if !catalog.Exists(key) {
-		a.notFoundError(w, r, "No such service.")
-		return
-	}
-
-	if blocker := a.Catalog.UninstallBlocker(r.Context(), key); blocker != "" {
-		a.failBack(w, r, blocker)
-		return
-	}
-
-	a.Queue.Push(queue.ServicesUninstall, map[string]any{"key": key, "user": user.ID})
-
-	inertia.Back(w, r, "/services")
+	inertia.Back(w, r, "/")
 }
 
 // ------------------------------------------------------------- panel port

@@ -203,7 +203,7 @@ func (a *App) reconcilePanelUpdate(ctx context.Context) string {
 			if _, err := a.Queue.PushID(queue.ServicesUpgrade, "user", 0); err == nil {
 				a.Store.SetSetting(appsUpgradedSetting, strconv.FormatInt(time.Now().Unix(), 10))
 				result.Message += " The server's services are being brought up to date in the " +
-					"background; the Services page has the console."
+					"background; Logs has the console."
 			}
 		}
 

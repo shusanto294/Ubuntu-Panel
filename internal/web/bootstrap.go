@@ -276,7 +276,7 @@ func (a *App) BootstrapApps(ctx context.Context) {
 	a.Store.SetSetting(bootstrapSetting, "1")
 
 	a.Log.Info("installing the services a server needs", "count", queued, "selection", choice,
-		"watch", "the Services page, or journalctl -u ubuntu-panel -f")
+		"watch", "Logs, or journalctl -u ubuntu-panel -f")
 }
 
 // EnsureNginxHelpers keeps the shared nginx configuration in step with the
@@ -575,8 +575,8 @@ func (a *App) reportApps(ctx context.Context, progress func(string)) {
 	}
 
 	if len(failed) > 0 {
-		progress(fmt.Sprintf("Did not install: %s — the Services page has the console, "+
-			"and a Retry button beside each", strings.Join(failed, ", ")))
+		progress(fmt.Sprintf("Did not install: %s — Logs has the console, and each is "+
+			"tried again when a site, database or mail domain needs it", strings.Join(failed, ", ")))
 	}
 }
 
