@@ -541,6 +541,11 @@ var migrations = []string{
 	`ALTER TABLE metric_samples DROP COLUMN cpu_spike`,
 	`ALTER TABLE metric_samples DROP COLUMN memory_usage`,
 	`ALTER TABLE metric_samples DROP COLUMN disk_usage`,
+
+	// A Node site's environment variables, as the operator wrote them
+	// (KEY=value lines), encrypted. They are written outside the site's
+	// directory before every build and start — see sites/env.go.
+	`ALTER TABLE sites ADD COLUMN env_vars TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

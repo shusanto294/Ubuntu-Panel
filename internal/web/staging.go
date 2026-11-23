@@ -246,6 +246,12 @@ func (a *App) prepareStagingSite(ctx context.Context, user *store.User, source *
 	staging.CacheMode = "off"
 	staging.CacheEnabled = false
 
+	// Nor the environment variables. A Node app's database is wherever its
+	// MONGODB_URI or DATABASE_URL says, not a copy the panel made — so a copy
+	// that arrived with production's variables would be a staging site writing
+	// to production's data. The copy's own Environment tab is where its
+	// variables go.
+
 	return staging, nil
 }
 

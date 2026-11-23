@@ -95,6 +95,9 @@ type Site struct {
 	RepoDeployKey string
 	WebhookSecret string // decrypted
 
+	// EnvVars is the site's environment, as KEY=value lines — decrypted.
+	EnvVars string
+
 	// AutoPull is the polling interval: "off", or a key from
 	// sites.PullSchedules. AutoPullNextAt is the Unix second it is next due.
 	AutoPull       string
@@ -126,7 +129,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode,
 	backup_schedule, backup_keep, backup_next_at, staging_of,
 	repo_auth, repo_token, repo_deploy_key, webhook_secret, auto_pull,
-	auto_pull_next_at, last_commit, created_at, backup_destination`
+	auto_pull_next_at, last_commit, created_at, backup_destination, env_vars`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -143,7 +146,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	var cacheEnabled, backupKeep, backupNextAt, stagingOf nullInt
 	var repoAuth, repoToken, repoDeployKey, webhookSecret, autoPull, lastCommit text
 	var autoPullNextAt nullInt
-	var backupDestination text
+	var backupDestination, envVars text
 
 	err := row.Scan(&site.ID, &userID, &dnsAccountID, &databaseID, &site.Domain,
 		&site.Type, &aliases, &site.RootPath, &site.WebDirectory, &site.PHPVersion,
@@ -154,7 +157,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
 		&backupSchedule, &backupKeep, &backupNextAt, &stagingOf,
 		&repoAuth, &repoToken, &repoDeployKey, &webhookSecret, &autoPull,
-		&autoPullNextAt, &lastCommit, &site.CreatedAt, &backupDestination)
+		&autoPullNextAt, &lastCommit, &site.CreatedAt, &backupDestination, &envVars)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -192,6 +195,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 	site.AutoPullNextAt = autoPullNextAt.Int64
 	site.LastCommit = lastCommit.String()
 	site.BackupDestination = orDefault(backupDestination.String(), "local")
+	site.EnvVars = s.decrypt(envVars.String())
 
 	// A site from before the choice existed has the page cache or nothing, and
 	// says so rather than reading as "off" with the cache running.
@@ -860,6 +864,26 @@ func (s *Store) SetSiteWebhookSecret(id int64, secret string) error {
 
 	_, err = s.db.Exec(`UPDATE sites SET webhook_secret = ?, updated_at = datetime('now')
 	                    WHERE id = ?`, nullText(encrypted), id)
+
+	return err
+}
+
+// SetSiteEnvVars stores a site's environment variables, encrypted.
+func (s *Store) SetSiteEnvVars(id int64, vars string) error {
+	if strings.TrimSpace(vars) == "" {
+		_, err := s.db.Exec(`UPDATE sites SET env_vars = NULL, updated_at = datetime('now')
+		                     WHERE id = ?`, id)
+
+		return err
+	}
+
+	encrypted, err := s.encrypt(vars)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`UPDATE sites SET env_vars = ?, updated_at = datetime('now')
+	                    WHERE id = ?`, encrypted, id)
 
 	return err
 }

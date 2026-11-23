@@ -329,6 +329,13 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 	props["accessUsers"] = inertia.Lazy(func() any { return a.Sites.AccessUsers(site) })
 	props["staging"] = inertia.Lazy(func() any { return a.stagingProps(r.Context(), site) })
 	props["git"] = inertia.Lazy(func() any { return a.gitProps(r.Context(), site) })
+	props["environment"] = inertia.Lazy(func() any {
+		if !envEditable(site) {
+			return nil
+		}
+
+		return map[string]any{"vars": site.EnvVars}
+	})
 	props["cronJobs"] = inertia.Lazy(func() any { return a.Sites.CronJobs(site) })
 	props["certificate"] = inertia.Lazy(func() any { return a.certificateSummary(site) })
 

@@ -8,6 +8,7 @@ import FolderTree from '@/Components/FolderTree.vue';
 import TaskProgress from '@/Components/TaskProgress.vue';
 import SiteStaging from '@/Components/SiteStaging.vue';
 import SiteGit from '@/Components/SiteGit.vue';
+import SiteEnvironment from '@/Components/SiteEnvironment.vue';
 import { usePagination } from '@/Composables/usePagination';
 import { formatRelative } from '@/time';
 import { Head, Link, router } from '@inertiajs/vue3';
@@ -36,6 +37,7 @@ const props = defineProps({
     cache: { type: Object, default: () => ({}) },
     staging: { type: Object, default: () => ({}) },
     git: { type: Object, default: () => ({}) },
+    environment: { type: Object, default: null },
 });
 
 const deleteFiles = ref(true);
@@ -60,6 +62,11 @@ const tabs = computed(() => {
     // WordPress or Nextcloud site is installed by the panel and has no git
     // remote to talk about.
     if (!props.site.managed) entries.push({ key: 'git', label: 'Git' });
+
+    // A Node app's configuration: secrets, database URLs, API keys.
+    if (props.site.is_proxied && !props.site.managed) {
+        entries.push({ key: 'environment', label: 'Environment' });
+    }
 
     entries.push({ key: 'database', label: 'Database' });
     entries.push({ key: 'ssl', label: 'SSL/TLS' });
@@ -3130,6 +3137,12 @@ const destroy = async () => {
         </div>
 
         <SiteGit v-if="!busy && tab === 'git'" :site="site" :git="git" />
+
+        <SiteEnvironment
+            v-if="!busy && tab === 'environment'"
+            :site="site"
+            :environment="environment ?? {}"
+        />
 
         <SiteStaging
             v-if="!busy && tab === 'staging'"

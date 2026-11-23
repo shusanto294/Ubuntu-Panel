@@ -102,9 +102,19 @@ func wrap(command string) string {
 
 // Run executes a command and waits for it.
 func Run(command string, timeout time.Duration) Result {
+	return RunEnv(command, timeout, nil)
+}
+
+// RunEnv is Run with extra environment variables, as KEY=value.
+//
+// They reach the command through its environment rather than its command line,
+// which is the point: a site's secrets passed this way are not in `ps`, not in
+// the task console the command is echoed into, and not in the error a failure
+// is summarised as.
+func RunEnv(command string, timeout time.Duration, extra []string) Result {
 	var buffer bytes.Buffer
 
-	result := Stream(command, timeout, func(chunk []byte) {
+	result := StreamEnv(command, timeout, extra, func(chunk []byte) {
 		if buffer.Len() < maxOutput {
 			buffer.Write(chunk)
 		}
@@ -119,6 +129,12 @@ func Run(command string, timeout time.Duration) Result {
 // arrives. Used by the task runner so the browser sees a deployment happen
 // rather than waiting for it to finish.
 func Stream(command string, timeout time.Duration, sink func(chunk []byte)) Result {
+	return StreamEnv(command, timeout, nil, sink)
+}
+
+// StreamEnv is Stream with extra environment variables; see RunEnv.
+func StreamEnv(command string, timeout time.Duration, extra []string,
+	sink func(chunk []byte)) Result {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -127,7 +143,7 @@ func Stream(command string, timeout time.Duration, sink func(chunk []byte)) Resu
 	defer cancel()
 
 	cmd := exec.Command("/bin/bash", "-c", wrap(command))
-	cmd.Env = environment()
+	cmd.Env = append(environment(), extra...)
 	cmd.Dir = "/"
 
 	// Its own process group, so a timeout kills the whole tree rather than

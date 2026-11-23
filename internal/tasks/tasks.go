@@ -142,6 +142,24 @@ func (r *Runner) Must(command string, timeout time.Duration) error {
 	return failure(command, result.Code, result.Output)
 }
 
+// MustEnv is Must with extra environment variables, which are not echoed:
+// only the command is. See proc.RunEnv.
+func (r *Runner) MustEnv(command string, timeout time.Duration, env []string) error {
+	r.Write("$ " + proc.Redact(command) + "\n")
+
+	result := proc.RunEnv(command, timeout, env)
+
+	if result.Output != "" {
+		r.Write(result.Output + "\n")
+	}
+
+	if result.OK() {
+		return nil
+	}
+
+	return failure(command, result.Code, result.Output)
+}
+
 // GroupSkipped reports whether an earlier step established that this group
 // cannot succeed.
 func (r *Runner) GroupSkipped(group string) bool { return group != "" && r.skipped[group] }

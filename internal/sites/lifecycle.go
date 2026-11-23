@@ -134,13 +134,11 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 				omit = ""
 			}
 
-			list.Add("Install dependencies",
-				fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install%s --no-audit --no-fund",
-					root, omit))
+			list.AddFn("Install dependencies", s.siteCommand(ctx, site.ID, root,
+				fmt.Sprintf("npm install%s --no-audit --no-fund", omit)))
 
 			if site.BuildCommand != "" {
-				list.Add("Build the application",
-					fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, site.BuildCommand))
+				list.AddFn("Build the application", s.siteCommand(ctx, site.ID, root, site.BuildCommand))
 			}
 		}
 
@@ -295,6 +293,7 @@ func (s *Service) Destroy(ctx context.Context, siteID int64, deleteFiles, delete
 	if site.RepoDeployKey != "" || proc.Exists(DeployKeyPath(site), true) {
 		list.AddFn("Remove the deploy key", func(runner *tasks.Runner) (string, error) {
 			RemoveDeployKey(site)
+			RemoveEnvFile(site)
 
 			return "The deploy key is gone from this server. It is still listed on the " +
 				"repository until somebody removes it there — it can no longer be used " +
@@ -447,13 +446,17 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 			omit = ""
 		}
 
-		list.Add("Reinstall dependencies",
-			fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp npm install%s --no-audit --no-fund",
-				root, omit))
+		list.AddFn("Reinstall dependencies", s.siteCommand(ctx, site.ID, root,
+			fmt.Sprintf("npm install%s --no-audit --no-fund", omit)))
 
 		if site.BuildCommand != "" {
-			list.Add("Rebuild", fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, site.BuildCommand))
+			list.AddFn("Rebuild", s.siteCommand(ctx, site.ID, root, site.BuildCommand))
 		}
+
+		// Written again before the restart, and the unit with it: a site
+		// deployed before the panel had environment variables has a unit
+		// that does not name the file yet.
+		list.AddFn("Write the environment", s.refreshServiceEnv(ctx, site.ID))
 
 		service := site.ServiceName()
 

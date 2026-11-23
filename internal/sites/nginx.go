@@ -902,6 +902,9 @@ func RenderUnit(site *store.Site) string {
 			"Environment=PORT=%d\n"+
 			"Environment=HOST=127.0.0.1\n"+
 			"EnvironmentFile=-%s/.env\n"+
+			// Second, so what is set on the site's Environment tab wins over a
+			// .env in the directory. Optional: most sites have none.
+			"EnvironmentFile=-%s\n"+
 			"ExecStart=/bin/bash -lc '%s'\n"+
 			"%s"+
 			"StandardOutput=append:/var/log/%s.log\n"+
@@ -910,7 +913,7 @@ func RenderUnit(site *store.Site) string {
 			"[Install]\n"+
 			"WantedBy=multi-user.target\n",
 		config.Name, site.Domain, site.TypeLabel(),
-		site.RootPath, site.AppPort, site.RootPath, start, restart,
+		site.RootPath, site.AppPort, site.RootPath, EnvFilePath(site), start, restart,
 		service, service)
 }
 
