@@ -55,6 +55,13 @@ type siteRequest struct {
 	AdminEmail    string
 	AdminPassword string
 	Title         string
+
+	// A Node site's configuration, set up before its first deployment:
+	// variables as KEY=value lines, a Redis of its own, and a database
+	// ("mongodb" or "mysql") whose URL is handed to it.
+	EnvVars     string
+	Redis       bool
+	AppDatabase string
 }
 
 // siteProblem is a refusal with the form field it belongs to, so the create
@@ -169,6 +176,25 @@ func (a *App) prepareSite(ctx context.Context, user *store.User, in siteRequest)
 	if meta.Managed && site.Repository != "" {
 		return nil, problem("repository",
 			meta.Label+" is installed by the panel itself, so it takes no repository.")
+	}
+
+	// A Node app's configuration. Refused rather than ignored for any other
+	// type: the panel would accept settings it then does nothing with.
+	if strings.TrimSpace(in.EnvVars) != "" || in.Redis || in.AppDatabase != "" {
+		if !meta.Proxied || meta.Managed {
+			return nil, problem("env_vars", "Environment variables, Redis and a database URL are "+
+				"for Node.js, Next.js and Nuxt sites.")
+		}
+
+		if _, err := sites.ParseEnv(in.EnvVars); err != nil {
+			return nil, problem("env_vars", err.Error())
+		}
+
+		if in.AppDatabase != "" && !sites.ValidAppDatabaseEngine(in.AppDatabase) {
+			return nil, problem("app_database", "Pick MongoDB or MariaDB, or no database.")
+		}
+
+		site.EnvVars = strings.TrimSpace(in.EnvVars)
 	}
 
 	if meta.Proxied {

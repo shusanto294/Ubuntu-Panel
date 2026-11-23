@@ -26,6 +26,10 @@ const (
 	SiteRestart = "site.restart"
 	SitePull    = "site.pull"
 
+	// SiteConnect puts a running Node site's Redis or database in place and
+	// restarts it with them, installing what is missing first.
+	SiteConnect = "site.connect"
+
 	// SiteCertificate asks certbot for a site's certificate on its own,
 	// without rebuilding the application to get there.
 	SiteCertificate = "site.certificate"

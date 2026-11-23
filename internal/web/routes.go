@@ -121,6 +121,7 @@ func (a *App) routes() *router {
 	rt.post("/sites/{site}/pull", "sites.pull", authenticated, a.sitesPull)
 	rt.post("/sites/{site}/restart", "sites.restart", authenticated, a.sitesRestart)
 	rt.post("/sites/{site}/env", "sites.env", authenticated, a.sitesEnv)
+	rt.post("/sites/{site}/connections", "sites.connections", authenticated, a.sitesConnections)
 	rt.post("/sites/{site}/logs/clear", "sites.logs.clear", authenticated, a.sitesLogsClear)
 
 	// Databases

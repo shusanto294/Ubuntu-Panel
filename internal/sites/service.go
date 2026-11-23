@@ -866,7 +866,7 @@ func (s *Service) createSystemdUnit(ctx context.Context, siteID int64) func(*tas
 			return "", errors.New("site vanished")
 		}
 
-		if err := WriteEnvFile(site); err != nil {
+		if err := writeEnvFile(site, s.envFor(ctx, site)); err != nil {
 			return "", err
 		}
 

@@ -36,6 +36,9 @@ const form = useForm({
     repo_auth: 'none',
     repo_token: '',
     repo_key_id: '',
+    env_vars: '',
+    connect_redis: false,
+    app_database: '',
     start_command: '',
     build_command: '',
     wp_title: '',
@@ -135,6 +138,10 @@ const needed = computed(() => {
     if (typeConfig.value?.database) keys.push('mysql');
     if (form.type === 'laravel') keys.push('composer');
     if (form.type === 'wordpress') keys.push('wpcli');
+    if (isProxied.value && !isManaged.value) {
+        if (form.connect_redis) keys.push('redis');
+        if (form.app_database && !keys.includes(form.app_database)) keys.push(form.app_database);
+    }
 
     return keys;
 });
@@ -308,6 +315,18 @@ const copyKey = async () => {
 const repoBlocking = computed(
     () => repoNeeded.value && !['ok', 'error'].includes(repo.value.status),
 );
+
+// A .env file read into the variables, appended to anything already typed.
+const envFile = ref(null);
+
+const loadEnvFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const text = (await file.text()).trim();
+    form.env_vars = form.env_vars.trim() ? `${form.env_vars.trim()}\n${text}` : text;
+    event.target.value = '';
+};
 
 const submit = () => form.post(route('sites.store'));
 </script>
@@ -903,6 +922,76 @@ const submit = () => form.post(route('sites.store'));
                     The certificate will be issued through Cloudflare DNS
                     validation, so the proxy can stay on.
                 </p>
+            </div>
+
+            <!-- App configuration: Node sites only -->
+            <div
+                v-if="isProxied && !isManaged"
+                class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 p-6"
+            >
+                <h3 class="font-semibold text-slate-800">App configuration</h3>
+                <p class="mt-1 text-sm text-slate-500">
+                    Set up before the first build, so it builds and starts with
+                    them. All of this can be changed later on the site's
+                    Environment tab.
+                </p>
+
+                <div class="mt-4 grid gap-6 sm:grid-cols-2">
+                    <label class="flex items-start gap-3">
+                        <Checkbox v-model:checked="form.connect_redis" class="mt-0.5" />
+                        <span>
+                            <span class="block text-sm font-medium text-slate-700">Connect Redis</span>
+                            <span class="block text-xs text-slate-500">
+                                Installed if it is not here, with a database of its
+                                own. The app gets <code>REDIS_URL</code>, password
+                                included.
+                            </span>
+                        </span>
+                    </label>
+
+                    <div>
+                        <InputLabel for="app_database" value="Database" />
+                        <select
+                            id="app_database"
+                            v-model="form.app_database"
+                            class="mt-1 block w-full rounded-lg border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        >
+                            <option value="">None</option>
+                            <option value="mongodb">MongoDB — sets MONGODB_URI</option>
+                            <option value="mysql">MariaDB — sets DATABASE_URL</option>
+                        </select>
+                        <InputError class="mt-2" :message="form.errors.app_database" />
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <div class="flex items-center justify-between gap-3">
+                        <InputLabel for="env_vars" value="Environment variables" />
+                        <button
+                            type="button"
+                            class="text-xs font-medium text-brand-600 hover:underline"
+                            @click="envFile?.click()"
+                        >
+                            Load a .env file
+                        </button>
+                        <input ref="envFile" type="file" class="hidden" @change="loadEnvFile" />
+                    </div>
+                    <textarea
+                        id="env_vars"
+                        v-model="form.env_vars"
+                        rows="8"
+                        spellcheck="false"
+                        autocomplete="off"
+                        class="mt-1 block w-full rounded-xl border-slate-300 font-mono text-xs shadow-sm focus:border-brand-500 focus:ring-brand-500"
+                        placeholder="APP_SECRET=…&#10;ENCRYPTION_KEY=…&#10;NEXT_PUBLIC_SITE_URL=https://example.com"
+                    />
+                    <InputError class="mt-2" :message="form.errors.env_vars" />
+                    <p class="mt-1 text-xs text-slate-500">
+                        One <code>NAME=value</code> per line, as in a .env file.
+                        Stored encrypted. Leave out <code>REDIS_URL</code> and the
+                        database URL if you connect them above — the panel sets those.
+                    </p>
+                </div>
             </div>
 
             <div class="flex items-center gap-3">

@@ -98,6 +98,9 @@ type Site struct {
 	// EnvVars is the site's environment, as KEY=value lines — decrypted.
 	EnvVars string
 
+	// RedisDB is the Redis database this site was given, or 0 for none.
+	RedisDB int
+
 	// AutoPull is the polling interval: "off", or a key from
 	// sites.PullSchedules. AutoPullNextAt is the Unix second it is next due.
 	AutoPull       string
@@ -129,7 +132,7 @@ const siteColumns = `id, user_id, dns_account_id, database_id, domain, type, ali
 	php_settings, cache_enabled, cache_ttl, cache_mode, tls_mode,
 	backup_schedule, backup_keep, backup_next_at, staging_of,
 	repo_auth, repo_token, repo_deploy_key, webhook_secret, auto_pull,
-	auto_pull_next_at, last_commit, created_at, backup_destination, env_vars`
+	auto_pull_next_at, last_commit, created_at, backup_destination, env_vars, redis_db`
 
 type siteScanner interface {
 	Scan(dest ...any) error
@@ -157,7 +160,7 @@ func (s *Store) scanSite(row siteScanner) (*Site, error) {
 		&site.DNSProxied, &phpSettings, &cacheEnabled, &cacheTTL, &cacheMode, &tlsMode,
 		&backupSchedule, &backupKeep, &backupNextAt, &stagingOf,
 		&repoAuth, &repoToken, &repoDeployKey, &webhookSecret, &autoPull,
-		&autoPullNextAt, &lastCommit, &site.CreatedAt, &backupDestination, &envVars)
+		&autoPullNextAt, &lastCommit, &site.CreatedAt, &backupDestination, &envVars, &site.RedisDB)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -886,6 +889,32 @@ func (s *Store) SetSiteEnvVars(id int64, vars string) error {
 	                    WHERE id = ?`, encrypted, id)
 
 	return err
+}
+
+// SetSiteRedisDB stores the Redis database a site was given; 0 disconnects.
+func (s *Store) SetSiteRedisDB(id int64, db int) {
+	s.db.Exec(`UPDATE sites SET redis_db = ?, updated_at = datetime('now') WHERE id = ?`, db, id)
+}
+
+// UsedRedisDBs are the Redis databases sites already have.
+func (s *Store) UsedRedisDBs(ctx context.Context) map[int]bool {
+	used := map[int]bool{}
+
+	rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+		`SELECT redis_db FROM sites WHERE redis_db > 0 AND deleted_at IS NULL`)
+	if err != nil {
+		return used
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var db int
+		if rows.Scan(&db) == nil {
+			used[db] = true
+		}
+	}
+
+	return used
 }
 
 // SetSiteAutoPull stores the polling interval and when it is next due.

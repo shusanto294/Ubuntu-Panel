@@ -29,7 +29,7 @@ import (
 
 // siteApps is everything any site type can want, so the create form can offer
 // to install whatever the chosen type is missing without another round trip.
-var siteApps = []string{"nginx", "php", "composer", "certbot", "mysql", "wpcli", "node"}
+var siteApps = []string{"nginx", "php", "composer", "certbot", "mysql", "wpcli", "node", "redis", "mongodb"}
 
 func (a *App) sitesIndex(w http.ResponseWriter, r *http.Request) {
 	sites, err := a.Store.Sites(r.Context())
@@ -154,6 +154,9 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		AdminEmail:    input["wp_admin_email"],
 		AdminPassword: input["wp_admin_password"],
 		Title:         input["wp_title"],
+		EnvVars:       input["env_vars"],
+		Redis:         boolInput(input, "connect_redis", false),
+		AppDatabase:   strings.TrimSpace(input["app_database"]),
 	})
 
 	if err != nil {
@@ -206,9 +209,28 @@ func (a *App) sitesStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if site.Repository != "" && site.RepoAuth == sites.AuthKey {
-		site.ID = id
+	site.ID = id
 
+	// The app's configuration, before the deployment that is about to read it.
+	if site.EnvVars != "" {
+		if err := a.Store.SetSiteEnvVars(id, site.EnvVars); err != nil {
+			a.Log.Error("could not store the site's environment", "site", id, "error", err)
+		}
+	}
+
+	if boolInput(input, "connect_redis", false) && site.IsProxied() && !site.IsManaged() {
+		if _, err := a.Sites.ConnectRedis(r.Context(), site); err != nil {
+			a.Log.Error("could not connect Redis", "site", id, "error", err)
+		}
+	}
+
+	if engine := strings.TrimSpace(input["app_database"]); engine != "" && site.IsProxied() && !site.IsManaged() {
+		if _, err := a.Sites.CreateAppDatabase(r.Context(), site, engine); err != nil {
+			a.Log.Error("could not create the app's database", "site", id, "error", err)
+		}
+	}
+
+	if site.Repository != "" && site.RepoAuth == sites.AuthKey {
 		if public, err := sites.AdoptPendingDeployKey(request.KeyID, site); err != nil {
 			// The deployment's own access check will say the key is missing,
 			// and the Git tab can generate another — so logged, not fatal.
@@ -334,7 +356,7 @@ func (a *App) sitesShow(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		return map[string]any{"vars": site.EnvVars}
+		return a.environmentProps(r.Context(), site)
 	})
 	props["cronJobs"] = inertia.Lazy(func() any { return a.Sites.CronJobs(site) })
 	props["certificate"] = inertia.Lazy(func() any { return a.certificateSummary(site) })

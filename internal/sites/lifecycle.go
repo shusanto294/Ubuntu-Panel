@@ -134,6 +134,11 @@ func (s *Service) recipe(ctx context.Context, site *store.Site) *tasks.List {
 				omit = ""
 			}
 
+			// The database and Redis the app connects to, before anything
+			// that might use them: a build that prerenders from the database
+			// needs it to exist.
+			s.connectionSteps(list, site)
+
 			list.AddFn("Install dependencies", s.siteCommand(ctx, site.ID, root,
 				fmt.Sprintf("npm install%s --no-audit --no-fund", omit)))
 
@@ -445,6 +450,8 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 		if site.BuildCommand != "" {
 			omit = ""
 		}
+
+		s.connectionSteps(list, site)
 
 		list.AddFn("Reinstall dependencies", s.siteCommand(ctx, site.ID, root,
 			fmt.Sprintf("npm install%s --no-audit --no-fund", omit)))

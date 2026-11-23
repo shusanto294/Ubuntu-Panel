@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +50,20 @@ func siteServices(kind string, ssl bool) []string {
 	return keys
 }
 
+// servicesForSite is what this site needs: its type's services, and the Redis
+// or database engine it is connected to.
+func (a *App) servicesForSite(ctx context.Context, site *store.Site) []string {
+	keys := siteServices(site.Type, site.SSL)
+
+	for _, key := range a.Sites.ConnectionServices(ctx, site) {
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+
+	return keys
+}
+
 // serviceWait is how often a deployment waiting for its services looks again.
 const serviceWait = 10 * time.Second
 
@@ -64,7 +79,7 @@ func (a *App) awaitSiteServices(ctx context.Context, job *store.Job, siteID int6
 		return nil
 	}
 
-	failed, err := a.awaitServices(ctx, job, siteServices(site.Type, site.SSL), site.UserID, site.Domain)
+	failed, err := a.awaitServices(ctx, job, a.servicesForSite(ctx, site), site.UserID, site.Domain)
 
 	if len(failed) > 0 {
 		reason := fmt.Sprintf("%s could not be installed, so the site was not deployed. "+
@@ -168,7 +183,7 @@ func (a *App) installingFor(ctx context.Context, site *store.Site) []string {
 	rows, _ := a.Store.Services(ctx)
 	names := []string{}
 
-	for _, key := range catalog.WithDependencies(siteServices(site.Type, site.SSL)) {
+	for _, key := range catalog.WithDependencies(a.servicesForSite(ctx, site)) {
 		if row := rows[key]; row != nil && (row.Status == store.ServiceQueued || row.Status == store.ServiceInstalling) {
 			names = append(names, label(key))
 		}

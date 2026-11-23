@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/config"
 	"github.com/shusanto294/Ubuntu-Panel/internal/inertia"
 	"github.com/shusanto294/Ubuntu-Panel/internal/queue"
 	"github.com/shusanto294/Ubuntu-Panel/internal/session"
@@ -64,7 +66,7 @@ func (a *App) sitesEnv(w http.ResponseWriter, r *http.Request) {
 
 	site.EnvVars = vars
 
-	if err := sites.ApplyEnv(site); err != nil {
+	if err := a.Sites.ApplyEnv(r.Context(), site); err != nil {
 		a.failBack(w, r, "Saved, but they could not be put in place: "+err.Error())
 		return
 	}
@@ -96,4 +98,107 @@ func (a *App) sitesEnv(w http.ResponseWriter, r *http.Request) {
 	a.Queue.PushID(queue.SiteRestart, "site", site.ID)
 	a.okBack(w, r, "Saved "+count+" and restarting the app with them. Values the build "+
 		"bakes in, such as NEXT_PUBLIC_…, need Save and rebuild.")
+}
+
+// environmentProps is what the Environment tab renders from.
+func (a *App) environmentProps(ctx context.Context, site *store.Site) map[string]any {
+	var database map[string]any
+
+	if site.DatabaseID > 0 {
+		if row, err := a.Store.FindDatabase(ctx, site.DatabaseID); err == nil {
+			database = map[string]any{
+				"id":           row.ID,
+				"name":         row.Name,
+				"engine":       row.Engine,
+				"engine_label": config.EngineLabel(row.Engine),
+				"status":       row.Status,
+			}
+		}
+	}
+
+	engines := []map[string]string{}
+	for _, engine := range sites.AppDatabaseEngines {
+		engines = append(engines, map[string]string{"key": engine, "label": config.EngineLabel(engine)})
+	}
+
+	return map[string]any{
+		"vars":     site.EnvVars,
+		"managed":  a.Sites.ManagedEnv(ctx, site),
+		"redis":    site.RedisDB > 0,
+		"redis_db": site.RedisDB,
+		"database": database,
+		"engines":  engines,
+	}
+}
+
+// sitesConnections connects or disconnects Redis, or gives the site a
+// database, and then puts it in place: installs what is missing, provisions,
+// writes the environment and restarts — or deploys again, for a site whose
+// deployment failed.
+func (a *App) sitesConnections(w http.ResponseWriter, r *http.Request) {
+	site, err := a.Store.FindSite(r.Context(), routeID(r, "site"))
+	if err != nil || site.Status == "deleting" {
+		a.notFoundError(w, r, "No such site.")
+		return
+	}
+
+	if !envEditable(site) {
+		a.failBack(w, r, "Connections are for Node.js, Next.js and Nuxt sites.")
+		return
+	}
+
+	input, err := a.input(r)
+	if err != nil {
+		a.badRequest(w, r, err)
+		return
+	}
+
+	message := ""
+
+	switch strings.TrimSpace(input["action"]) {
+	case "redis":
+		db, err := a.Sites.ConnectRedis(r.Context(), site)
+		if err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		message = "Connecting Redis (database " + itoa(int64(db)) + "). REDIS_URL is set for the app."
+
+	case "redis-off":
+		a.Sites.DisconnectRedis(site)
+		message = "Redis disconnected. REDIS_URL is no longer set; the data in its database was left alone."
+
+	case "database":
+		engine := strings.TrimSpace(input["engine"])
+
+		if site.DatabaseID > 0 {
+			a.failBack(w, r, "This site already has a database.")
+			return
+		}
+
+		if _, err := a.Sites.CreateAppDatabase(r.Context(), site, engine); err != nil {
+			a.failBack(w, r, err.Error())
+			return
+		}
+
+		message = "Creating a " + config.EngineLabel(engine) + " database for the app."
+
+	default:
+		a.failBack(w, r, "That is not something this form does.")
+		return
+	}
+
+	switch site.Status {
+	case "pending", "deploying":
+		// The deployment that is coming, or running, reads them.
+	case "failed":
+		a.Queue.PushID(queue.SiteDeploy, "site", site.ID)
+		message += " Deploying the site again with it."
+	default:
+		a.Queue.PushID(queue.SiteConnect, "site", site.ID)
+		message += " The app restarts with it when it is ready."
+	}
+
+	a.okBack(w, r, message)
 }

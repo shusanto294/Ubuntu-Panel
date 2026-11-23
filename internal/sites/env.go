@@ -159,11 +159,10 @@ func renderEnvFile(vars []EnvVar) string {
 	return out.String()
 }
 
-// WriteEnvFile puts the site's variables where its service reads them, or
+// writeEnvFile puts the variables where the site's service reads them, or
 // removes the file when there are none.
-func WriteEnvFile(site *store.Site) error {
+func writeEnvFile(site *store.Site, vars []EnvVar) error {
 	path := EnvFilePath(site)
-	vars := siteEnv(site)
 
 	if len(vars) == 0 {
 		proc.Ok("sudo rm -f " + proc.Quote(path))
@@ -202,9 +201,7 @@ func RemoveEnvFile(site *store.Site) {
 // sudo resets the environment, so the names are listed for --preserve-env and
 // the values travel in the environment of the shell that runs sudo. The panel's
 // sudoers rule matches ALL, which is what permits keeping them.
-func asSite(site *store.Site, root, tail string) (string, []string) {
-	vars := siteEnv(site)
-
+func asSite(vars []EnvVar, root, tail string) (string, []string) {
 	if len(vars) == 0 {
 		return fmt.Sprintf("cd %s && sudo -u www-data HOME=/tmp %s", root, tail), nil
 	}
@@ -234,7 +231,7 @@ func (s *Service) siteCommand(ctx context.Context, siteID int64, root, tail stri
 			return "", errors.New("site vanished")
 		}
 
-		command, env := asSite(site, root, tail)
+		command, env := asSite(s.envFor(ctx, site), root, tail)
 
 		if len(env) > 0 {
 			runner.Writef("With the site's %d environment variable(s).\n", len(env))
@@ -253,11 +250,11 @@ func (s *Service) refreshServiceEnv(ctx context.Context, siteID int64) func(*tas
 			return "", errors.New("site vanished")
 		}
 
-		if err := ApplyEnv(site); err != nil {
+		if err := s.ApplyEnv(ctx, site); err != nil {
 			return "", err
 		}
 
-		if n := len(siteEnv(site)); n > 0 {
+		if n := len(s.envFor(ctx, site)); n > 0 {
 			return fmt.Sprintf("%d environment variable(s) in place for the service.", n), nil
 		}
 
@@ -267,8 +264,8 @@ func (s *Service) refreshServiceEnv(ctx context.Context, siteID int64) func(*tas
 
 // ApplyEnv writes the site's variables and makes sure its unit reads them.
 // It does not restart the service; the caller decides when.
-func ApplyEnv(site *store.Site) error {
-	if err := WriteEnvFile(site); err != nil {
+func (s *Service) ApplyEnv(ctx context.Context, site *store.Site) error {
+	if err := writeEnvFile(site, s.envFor(ctx, site)); err != nil {
 		return err
 	}
 

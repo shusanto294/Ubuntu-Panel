@@ -226,6 +226,34 @@ func (a *App) registerJobs() {
 		return a.Sites.Restore(ctx, payload.Backup)
 	})
 
+	a.Queue.Handle(queue.SiteConnect, func(ctx context.Context, job *store.Job) error {
+		var payload sitePayload
+
+		if err := decode(job, &payload); err != nil {
+			return err
+		}
+
+		site, err := a.Store.FindSite(ctx, payload.Site)
+		if err != nil {
+			return nil
+		}
+
+		// Not awaitSiteServices: that marks the site failed when an install
+		// fails, and this site is live — Redis not installing is a connection
+		// that did not happen, not a site that stopped working.
+		failed, err := a.awaitServices(ctx, job, a.Sites.ConnectionServices(ctx, site),
+			site.UserID, site.Domain)
+		if len(failed) > 0 {
+			return fmt.Errorf("%s could not be installed, so it was not connected. "+
+				"Logs has the install's console", strings.Join(failed, " and "))
+		}
+		if err != nil {
+			return err
+		}
+
+		return a.Sites.ApplyConnections(ctx, payload.Site)
+	})
+
 	a.Queue.Handle(queue.SitePull, func(ctx context.Context, job *store.Job) error {
 		var payload sitePayload
 

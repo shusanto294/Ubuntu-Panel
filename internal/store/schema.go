@@ -546,6 +546,10 @@ var migrations = []string{
 	// (KEY=value lines), encrypted. They are written outside the site's
 	// directory before every build and start — see sites/env.go.
 	`ALTER TABLE sites ADD COLUMN env_vars TEXT`,
+
+	// The Redis database a Node site was given, 1-15; 0 is not connected.
+	// Database 0 is where the WordPress object caches live, under prefixes.
+	`ALTER TABLE sites ADD COLUMN redis_db INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

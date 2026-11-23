@@ -67,7 +67,7 @@ func TestRenderEnvFileEscapes(t *testing.T) {
 func TestAsSiteKeepsValuesOffTheCommandLine(t *testing.T) {
 	site := &store.Site{EnvVars: "B_SECRET=hunter2\nA_KEY=xyz"}
 
-	command, env := asSite(site, "'/var/www/x'", "npm run build")
+	command, env := asSite(siteEnv(site), "'/var/www/x'", "npm run build")
 
 	if strings.Contains(command, "hunter2") || strings.Contains(command, "xyz") {
 		t.Errorf("a value reached the command line: %s", command)
@@ -81,7 +81,7 @@ func TestAsSiteKeepsValuesOffTheCommandLine(t *testing.T) {
 		t.Errorf("env = %#v", env)
 	}
 
-	plain, none := asSite(&store.Site{}, "'/var/www/x'", "npm run build")
+	plain, none := asSite(nil, "'/var/www/x'", "npm run build")
 	if none != nil || strings.Contains(plain, "preserve-env") {
 		t.Errorf("a site with no variables changed its command: %s", plain)
 	}
