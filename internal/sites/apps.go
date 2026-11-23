@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shusanto294/Ubuntu-Panel/internal/catalog"
 	"github.com/shusanto294/Ubuntu-Panel/internal/crypto"
 	"github.com/shusanto294/Ubuntu-Panel/internal/proc"
 	"github.com/shusanto294/Ubuntu-Panel/internal/store"
@@ -88,11 +89,19 @@ func (s *Service) ensureNodeRuntime(ctx context.Context, siteID int64) func(*tas
 		runner.Writef("Node.js %d is older than %s needs (%d). Installing Node.js %d.\n",
 			current, site.TypeLabel(), minimum, install)
 
-		if err := runner.Must(fmt.Sprintf(
-			"curl -fsSL https://deb.nodesource.com/setup_%d.x | sudo -E bash - && "+
-				"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs", install),
-			15*time.Minute); err != nil {
-			return "", err
+		steps := append(catalog.NodeRepository(strconv.Itoa(install)),
+			// Tolerant of another repository failing: the NodeSource lists are
+			// fetched either way, and they are the only ones this needs.
+			"(sudo DEBIAN_FRONTEND=noninteractive apt-get update -y || "+
+				"echo \"apt-get update reported errors; continuing\")",
+			catalog.ReplaceDistroNode,
+			"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs",
+			catalog.NodeCheck(strconv.Itoa(install)))
+
+		for _, step := range steps {
+			if err := runner.Must(step, 15*time.Minute); err != nil {
+				return "", err
+			}
 		}
 
 		if after := nodeMajor(); after < minimum {

@@ -97,10 +97,85 @@ func (s *Service) removePackagesFor(key string) string {
 
 // waitForApt is the first step of anything that installs: dpkg allows one
 // writer, and on a freshly booted machine that writer is unattended-upgrades.
+//
+// It also (re)writes the panel's apt drop-in, so a server set up before a line
+// was added to it gets that line on its next install rather than never.
 func waitForApt(list *tasks.List) {
 	list.Add("Wait for apt locks",
 		"while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do "+
-			"echo \"waiting for another apt process…\"; sleep 3; done; echo \"apt is free\"")
+			"echo \"waiting for another apt process…\"; sleep 3; done; echo \"apt is free\"",
+		aptDropIn)
+}
+
+// aptDropIn is the panel's apt configuration.
+//
+// The lock timeout tells apt to wait for unattended-upgrades rather than fail.
+//
+// The Label line is there because a repository renaming itself makes every
+// `apt-get update` on the machine fail — including the ones inside other
+// vendors' setup scripts. ppa:ondrej/php did exactly that ("PPA for PHP" →
+// "PPA for PHP (deprecated)"), and NodeSource's script gave up on its update,
+// never added its repository, and Ubuntu's own Node.js 18 — which has no npm —
+// was installed in its place. A Label is cosmetic; the fields that say whose
+// archive this is (Origin, Suite, Codename) still have to be confirmed by hand.
+const aptDropIn = "printf '// Managed by Ubuntu Panel\\n" +
+	"DPkg::Lock::Timeout \"600\";\\n" +
+	"Acquire::AllowReleaseInfoChange::Label \"true\";\\n' | " +
+	"sudo tee /etc/apt/apt.conf.d/99-ubuntu-panel > /dev/null"
+
+// NodeRepository is the shell that points apt at NodeSource for one major
+// version of Node.js.
+//
+// Written out here rather than piped from NodeSource's setup script: the
+// script runs its own `apt-get update`, gives up when any other repository on
+// the machine fails one, and exits 0 when it does — so the step looked like it
+// worked, the repository was never added, and apt went on to install Ubuntu's
+// Node.js 18 without npm. These four lines are all the script does that
+// matters, and each of them either works or fails visibly.
+//
+// The pin is the script's own: NodeSource's nodejs wins over Ubuntu's whatever
+// the version numbers say.
+func NodeRepository(version string) []string {
+	return []string{
+		"sudo install -d -m 0755 /etc/apt/keyrings",
+		// pipefail: without it a curl that failed hands gpg nothing, and
+		// gpg writes an empty keyring and reports success.
+		"set -o pipefail; curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | " +
+			"sudo gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg",
+		fmt.Sprintf("echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/nodesource.gpg] "+
+			"https://deb.nodesource.com/node_%s.x nodistro main\" | "+
+			"sudo tee /etc/apt/sources.list.d/nodesource.list", version),
+		"printf 'Package: nodejs\\nPin: origin deb.nodesource.com\\nPin-Priority: 600\\n' | " +
+			"sudo tee /etc/apt/preferences.d/nodejs > /dev/null",
+	}
+}
+
+// ReplaceDistroNode removes a Node.js that came from Ubuntu rather than
+// NodeSource.
+//
+// Ubuntu splits Node.js into nodejs, libnode, nodejs-doc and a separate npm,
+// and NodeSource ships one nodejs package holding all of it. Upgrading across
+// that split leaves npm missing or trips over files both claim; removing
+// Ubuntu's set first is what makes the install below a clean one. A NodeSource
+// build is left alone.
+const ReplaceDistroNode = "if dpkg-query -W -f='${Status}' nodejs 2>/dev/null | grep -q 'ok installed' && " +
+	"! dpkg-query -W -f='${Version}' nodejs | grep -q nodesource; then " +
+	"echo \"Node.js $(node -v 2>/dev/null) is Ubuntu's own build; replacing it with NodeSource's.\"; " +
+	"pkgs=''; for p in nodejs nodejs-doc libnode-dev npm; do " +
+	"dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'ok installed' && pkgs=\"$pkgs $p\"; done; " +
+	"sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y $pkgs; " +
+	"else echo 'No conflicting Node.js installed.'; fi"
+
+// NodeCheck fails unless node and npm are both on PATH and node is at least
+// the major version that was asked for — the three ways an install that
+// "succeeded" has turned out not to.
+func NodeCheck(version string) string {
+	return fmt.Sprintf("node -v && "+
+		"{ npm -v || { echo 'npm is missing: this Node.js did not come from NodeSource. "+
+		"Check the \"Add the Node.js repository\" step above.'; exit 1; }; } && "+
+		"{ test \"$(node -v | sed 's/^v//; s/\\..*//')\" -ge %s || "+
+		"{ echo \"Node.js %s was asked for and $(node -v) is what is installed.\"; "+
+		"apt-cache policy nodejs | head -n 4; exit 1; }; }", version, version)
 }
 
 // preSteps are repositories, keys and debconf answers: before any apt install.
@@ -115,9 +190,8 @@ func (s *Service) preSteps(list *tasks.List, key string) {
 				"| sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list").Group(key)
 
 	case "node":
-		list.Add("Add the Node.js repository",
-			fmt.Sprintf("curl -fsSL https://deb.nodesource.com/setup_%s.x | sudo -E bash -",
-				s.Store.NodeVersion())).Group(key)
+		list.Add("Add the Node.js repository", NodeRepository(s.Store.NodeVersion())...).Group(key)
+		list.Add("Set aside Ubuntu's own Node.js", ReplaceDistroNode).Group(key)
 
 	case "mail":
 		// Postfix asks for this at install time and never again. A better name
@@ -212,8 +286,7 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 		// covers the apt runs inside NodeSource's setup script too.
 		list.Add("Prepare the web root and apt",
 			"sudo mkdir -p /var/www",
-			"printf '// Managed by Ubuntu Panel\\nDPkg::Lock::Timeout \"600\";\\n' | "+
-				"sudo tee /etc/apt/apt.conf.d/99-ubuntu-panel > /dev/null").Group(key)
+			aptDropIn).Group(key)
 
 	case "nginx":
 		list.AddFn("Refuse unknown hostnames", func(runner *tasks.Runner) (string, error) {
@@ -347,7 +420,7 @@ func (s *Service) configureSteps(list *tasks.List, key string) {
 		}).Group(key)
 
 	case "node":
-		list.Add("Check Node.js", "node -v && npm -v").Group(key)
+		list.Add("Check Node.js", NodeCheck(s.Store.NodeVersion())).Group(key)
 		list.Add("Install package managers", "sudo npm install -g pnpm yarn --silent").
 			Optional().Group(key)
 

@@ -155,7 +155,10 @@ var Entries = []Entry{
 		Key: "node", Label: "Node.js", Group: "runtime",
 		Description: "Needed for Node.js and Next.js sites.",
 		Default:     true, Requires: []string{"base"},
-		Detect: "command -v node", Version: "node -v 2>/dev/null",
+		// npm as well as node: Ubuntu's own nodejs package has no npm, and a
+		// machine with only that is one no Node.js site can deploy on — it
+		// should read as not installed so Install is offered again.
+		Detect: "command -v node && command -v npm", Version: "node -v 2>/dev/null",
 		RemovePackages: "nodejs", Removable: true,
 		Keywords: "javascript npm next react runtime", SizeHint: "~90 MB",
 	},
