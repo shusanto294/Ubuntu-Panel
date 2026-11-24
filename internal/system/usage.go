@@ -31,6 +31,9 @@ type UsageShare struct {
 	Count   int     `json:"n"`            // processes
 	Percent float64 `json:"pct"`          // of the whole machine
 	MB      float64 `json:"mb,omitempty"` // memory held, for the memory list
+	// Spike marks a CPU list taken at the minute's busiest second rather than
+	// averaged over the minute; its lines add up to that second's CPU.
+	Spike bool `json:"spike,omitempty"`
 }
 
 // MinuteUsage is a minute's biggest users. CPU is nil for the first minute
@@ -43,6 +46,16 @@ type MinuteUsage struct {
 // usageTop is how many lines each list keeps.
 const usageTop = 5
 
+// A second at or above spikeFloor percent CPU, and spikeStep points above the
+// last one read this minute, gets the process table read so the graph can name
+// what caused it — at most spikeReads times a minute. An idle server never
+// pays for this.
+const (
+	spikeFloor = 10
+	spikeStep  = 5
+	spikeReads = 5
+)
+
 type usageProc struct {
 	ticks uint64
 	start string // start time, so a reused pid is not mistaken for the old process
@@ -53,15 +66,55 @@ type usageProc struct {
 
 // UsageReader remembers the last minute's process table to compare against.
 type UsageReader struct {
-	prev map[int]usageProc
+	prev map[int]usageProc // at the minute's start
 	at   time.Time
+
+	last   map[int]usageProc // at the latest read, minute or spike
+	lastAt time.Time
+
+	services map[string]string
+	rate     map[string]float64 // ticks a second each line used last minute: its background
+
+	spike      []UsageShare
+	spikePct   float64
+	spikeCount int
+}
+
+type usageGroup struct {
+	share UsageShare
+	ticks float64
+	mb    float64
+}
+
+// tally puts processes on their lines: the CPU ticks each used since then,
+// and the memory each holds now.
+func tally(now, then map[int]usageProc, services map[string]string) map[string]*usageGroup {
+	groups := map[string]*usageGroup{}
+	for pid, p := range now {
+		name, site := usageLabel(p, services)
+
+		g := groups[name]
+		if g == nil {
+			g = &usageGroup{share: UsageShare{Name: name, Site: site}}
+			groups[name] = g
+		}
+		g.share.Count++
+		g.mb += p.rssMB
+
+		if before, ok := then[pid]; ok && before.start == p.start && p.ticks >= before.ticks {
+			g.ticks += float64(p.ticks - before.ticks)
+		}
+	}
+	return groups
 }
 
 // Read takes the minute. services maps a systemd unit (without .service) to
-// the site domain it runs, for the Node sites.
+// the site domain it runs, for the Node sites. When a spike was read during
+// the minute, the CPU list is what caused it, since that is what the graph's
+// line shows; otherwise it is each line's average over the minute.
 func (u *UsageReader) Read(services map[string]string) MinuteUsage {
 	now := time.Now()
-	current := readUsageProcs(u.prev)
+	current := readUsageProcs(u.last)
 	elapsed := now.Sub(u.at).Seconds()
 
 	var memory Metrics
@@ -69,38 +122,21 @@ func (u *UsageReader) Read(services map[string]string) MinuteUsage {
 	totalMB := memory.MemoryTotal / (1 << 20)
 	machine := float64(cores()) * elapsed
 
-	type group struct {
-		share UsageShare
-		cpu   float64
-		mb    float64
-	}
-	groups := map[string]*group{}
-
-	for pid, p := range current {
-		name, site := usageLabel(p, services)
-
-		g := groups[name]
-		if g == nil {
-			g = &group{share: UsageShare{Name: name, Site: site}}
-			groups[name] = g
-		}
-		g.share.Count++
-		g.mb += p.rssMB
-
-		if then, ok := u.prev[pid]; ok && then.start == p.start && p.ticks >= then.ticks {
-			g.cpu += float64(p.ticks - then.ticks)
-		}
-	}
+	groups := tally(current, u.prev, services)
 
 	result := MinuteUsage{Memory: []UsageShare{}}
 	if u.prev != nil && machine > 0 {
 		result.CPU = []UsageShare{}
 	}
 
-	for _, g := range groups {
-		if result.CPU != nil && g.cpu > 0 {
+	rate := map[string]float64{}
+	for name, g := range groups {
+		if elapsed > 0 {
+			rate[name] = g.ticks / elapsed
+		}
+		if result.CPU != nil && g.ticks > 0 {
 			share := g.share
-			share.Percent = round(min(100, g.cpu/clockTicks/machine*100))
+			share.Percent = round(min(100, g.ticks/clockTicks/machine*100))
 			if share.Percent > 0 {
 				result.CPU = append(result.CPU, share)
 			}
@@ -115,10 +151,69 @@ func (u *UsageReader) Read(services map[string]string) MinuteUsage {
 
 	result.CPU = topShares(result.CPU)
 	result.Memory = topShares(result.Memory)
+	if u.spike != nil {
+		result.CPU = u.spike
+	}
 
-	u.prev, u.at = current, now
+	u.prev, u.at, u.last, u.lastAt = current, now, current, now
+	u.services, u.rate = services, rate
+	u.spike, u.spikePct, u.spikeCount = nil, 0, 0
 
 	return result
+}
+
+// Spike is told each second's CPU, and reads the process table when the
+// second is busy enough to be worth naming (see spikeFloor). What each line
+// used since the previous read, less what it uses in the background, is its
+// share of the spike.
+func (u *UsageReader) Spike(cpu float64) {
+	if u.prev == nil || cpu < spikeFloor || cpu < u.spikePct+spikeStep || u.spikeCount >= spikeReads {
+		return
+	}
+	u.spikeCount++
+
+	now := time.Now()
+	current := readUsageProcs(u.last)
+	elapsed := now.Sub(u.lastAt).Seconds()
+	groups := tally(current, u.last, u.services)
+	u.last, u.lastAt = current, now
+
+	if list := spikeShares(groups, u.rate, elapsed, cpu); list != nil {
+		u.spike, u.spikePct = list, cpu
+	}
+}
+
+// spikeShares splits cpu percent between the lines by what each used above
+// its background rate; nil when nothing stood out.
+func spikeShares(groups map[string]*usageGroup, rate map[string]float64, elapsed, cpu float64) []UsageShare {
+	total := 0.0
+	for name, g := range groups {
+		g.ticks = max(0, g.ticks-rate[name]*elapsed)
+		total += g.ticks
+	}
+	if total == 0 {
+		return nil
+	}
+
+	list := []UsageShare{}
+	for _, g := range groups {
+		if g.ticks > 0 {
+			share := g.share
+			share.Percent, share.Spike = cpu*g.ticks/total, true
+			list = append(list, share)
+		}
+	}
+
+	top := topShares(list)
+	rest := cpu
+	for i := range top {
+		rest -= top[i].Percent
+		top[i].Percent = round(top[i].Percent)
+	}
+	if rest = round(rest); rest > 0 {
+		top = append(top, UsageShare{Name: "Everything else", Percent: rest, Spike: true})
+	}
+	return top
 }
 
 func topShares(list []UsageShare) []UsageShare {

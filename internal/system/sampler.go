@@ -31,14 +31,15 @@ type Window struct {
 	MemoryPeak    float64
 }
 
-// Tick takes one reading.
-func (s *Sampler) Tick() {
+// Tick takes one reading and returns the CPU percent, or -1 when unknown.
+func (s *Sampler) Tick() float64 {
 	cpu := s.cpu.Read()
 
 	var memory Metrics
 	readMemory(&memory)
 
 	s.observe(cpu, memory.MemoryPercent, memory.MemoryTotal > 0)
+	return cpu
 }
 
 func (s *Sampler) observe(cpu, memory float64, memoryKnown bool) {

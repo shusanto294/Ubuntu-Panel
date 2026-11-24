@@ -52,3 +52,34 @@ func TestParseUsageStat(t *testing.T) {
 		t.Errorf("kernel thread read as %q", p.name)
 	}
 }
+
+func TestSpikeShares(t *testing.T) {
+	// Over 10s, mysql ran at its usual 2 ticks/s; php jumped well above its 1.
+	groups := map[string]*usageGroup{
+		"MySQL": {share: UsageShare{Name: "MySQL"}, ticks: 20},
+		"PHP":   {share: UsageShare{Name: "PHP"}, ticks: 310},
+		"idle":  {share: UsageShare{Name: "idle"}},
+	}
+	got := spikeShares(groups, map[string]float64{"MySQL": 2, "PHP": 1}, 10, 60)
+	if len(got) != 1 || got[0].Name != "PHP" || got[0].Percent != 60 || !got[0].Spike {
+		t.Fatalf("got %+v", got)
+	}
+
+	// More than usageTop lines: the rest is one line, and all of it adds up.
+	groups = map[string]*usageGroup{}
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		groups[n] = &usageGroup{share: UsageShare{Name: n}, ticks: 10}
+	}
+	got = spikeShares(groups, nil, 1, 70)
+	sum := 0.0
+	for _, s := range got {
+		sum += s.Percent
+	}
+	if len(got) != usageTop+1 || got[usageTop].Name != "Everything else" || sum != 70 {
+		t.Fatalf("got %+v sum %v", got, sum)
+	}
+
+	if spikeShares(map[string]*usageGroup{"x": {ticks: 5}}, map[string]float64{"x": 5}, 1, 50) != nil {
+		t.Fatal("background alone should name nothing")
+	}
+}

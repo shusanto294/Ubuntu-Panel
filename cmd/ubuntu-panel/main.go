@@ -258,9 +258,10 @@ func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 	var watcher system.Sampler
 
 	// What used the CPU and memory, read once a minute — not every second —
-	// for the graphs' tooltips. The first read only sets the baseline.
+	// for the graphs' tooltips, plus a few times more in a minute with a CPU
+	// spike, to name its cause. The first read only sets the baseline.
 	var usage system.UsageReader
-	usage.Read(nil)
+	usage.Read(siteServices(ctx, db))
 
 	second := time.NewTicker(time.Second)
 	defer second.Stop()
@@ -277,12 +278,12 @@ func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-second.C:
-			watcher.Tick()
+			usage.Spike(watcher.Tick())
 			continue
 		case <-minute.C:
 		}
 
-		watcher.Tick()
+		usage.Spike(watcher.Tick())
 		window := watcher.Take()
 		metrics := system.Read()
 

@@ -240,7 +240,8 @@ const breakdown = computed(() => {
 
     const top = point.top;
     let heading;
-    if (point.live) heading = 'In the last recorded minute';
+    if (top?.some((i) => i.spike)) heading = props.bucketSeconds > 60 ? 'At its busiest second' : 'At the busiest second';
+    else if (point.live) heading = 'In the last recorded minute';
     else if (props.bucketSeconds > 60) heading = props.kind === 'cpu' ? 'In its busiest minute' : 'At its fullest minute';
     else heading = props.kind === 'cpu' ? 'Over this minute' : 'At this minute';
 
