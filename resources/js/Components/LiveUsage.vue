@@ -227,6 +227,7 @@ const points = (key) => {
         t: point.t,
         v: point[key],
         p: point[`${key}_peak`] ?? null,
+        top: point[`${key}_top`] ?? null,
     }));
 
     const last = recorded.length ? recorded[recorded.length - 1].t : 0;
@@ -244,6 +245,31 @@ const points = (key) => {
 };
 
 const bucketSeconds = computed(() => series.value?.bucket_seconds ?? 60);
+
+// The newest recorded breakdown, for the live tip of the line: it is at most
+// a minute old, and says so.
+const latestTop = (key) => {
+    const recorded = series.value?.points ?? [];
+    for (let i = recorded.length - 1; i >= 0; i--) {
+        if (recorded[i][`${key}_top`]) return recorded[i][`${key}_top`];
+    }
+    return null;
+};
+
+// What is using the disk: measured by the server when the disk graph is first
+// hovered (and kept there for ten minutes), never on a clock.
+const disk = ref({ items: null, loading: false, error: '', measuredAt: 0 });
+
+const measureDisk = async () => {
+    if (disk.value.loading || (disk.value.items && Date.now() / 1000 - disk.value.measuredAt < 600)) return;
+    disk.value = { ...disk.value, loading: true, error: '' };
+    try {
+        const { data } = await window.axios.get(route('system.disk-usage'));
+        disk.value = { items: data.items ?? [], loading: false, error: '', measuredAt: data.measured_at ?? 0 };
+    } catch {
+        disk.value = { ...disk.value, loading: false, error: 'Could not measure the disk.' };
+    }
+};
 
 const load = computed(() => metrics.value?.load ?? null);
 const cores = computed(() => metrics.value?.cpu?.cores ?? null);
@@ -306,7 +332,9 @@ const loadTone = computed(() => {
             <UsageGraph
                 label="CPU"
                 color="#4f46e5"
+                kind="cpu"
                 :points="points('cpu')"
+                :current-top="latestTop('cpu')"
                 :current="metrics?.cpu?.usage ?? null"
                 :detail="cores ? `${cores} core${cores === 1 ? '' : 's'}` : ''"
                 :bucket-seconds="bucketSeconds"
@@ -315,7 +343,9 @@ const loadTone = computed(() => {
             <UsageGraph
                 label="Memory"
                 color="#0d9488"
+                kind="memory"
                 :points="points('memory')"
+                :current-top="latestTop('memory')"
                 :current="metrics?.memory?.percent ?? null"
                 :detail="
                     metrics
@@ -328,7 +358,10 @@ const loadTone = computed(() => {
             <UsageGraph
                 label="Disk"
                 color="#ea580c"
+                kind="disk"
                 :points="points('disk')"
+                :disk="disk"
+                @hover-start="measureDisk"
                 :current="metrics?.disk?.percent ?? null"
                 :detail="
                     metrics

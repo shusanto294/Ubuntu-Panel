@@ -21,7 +21,15 @@ const props = defineProps({
     // Seconds a point covers; a wider gap than this means the panel was down.
     bucketSeconds: { type: Number, default: 60 },
     loading: { type: Boolean, default: false },
+    // 'cpu' | 'memory' | 'disk': what the tooltip's breakdown is.
+    kind: { type: String, default: '' },
+    // CPU / memory: the newest recorded breakdown, for the live tip.
+    currentTop: { type: Array, default: null },
+    // Disk: { items, loading, error, measuredAt }, measured on first hover.
+    disk: { type: Object, default: null },
 });
+
+const emit = defineEmits(['hover-start']);
 
 const HEIGHT = 132;
 const PAD = { top: 10, right: 8, bottom: 20, left: 30 };
@@ -58,6 +66,7 @@ const plot = computed(() => ({
 const series = computed(() => {
     const out = props.points.map((p) => ({
         t: p.t,
+        top: p.top ?? null,
         v:
             p.v === null || p.v === undefined
                 ? null
@@ -69,7 +78,7 @@ const series = computed(() => {
     // The live reading is the line's last point, so the line ends where the
     // number above it is now.
     if (props.current !== null && props.current !== undefined) {
-        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, live: true });
+        out.push({ t: Math.floor(Date.now() / 1000), v: props.current, live: true, top: props.currentTop });
     }
 
     return out;
@@ -199,8 +208,55 @@ const onMove = (event) => {
         }
     }
 
+    if (nearest && !hover.value) emit('hover-start');
     hover.value = nearest ? { point: nearest, x: x(nearest.t), y: y(nearest.v) } : null;
 };
+
+const size = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
+const diskSize = (b) => {
+    const gb = b / 1024 ** 3;
+    return gb >= 1 ? `${gb.toFixed(gb >= 100 ? 0 : 1)} GB` : `${Math.round(b / 1024 ** 2)} MB`;
+};
+
+/**
+ * What the tooltip lists under the figure: the processes and sites that used
+ * the CPU or memory in that minute, or what is using the disk now.
+ */
+const breakdown = computed(() => {
+    if (!hover.value) return null;
+    const point = hover.value.point;
+
+    if (props.kind === 'disk') {
+        const d = props.disk;
+        if (!d || (d.loading && !d.items)) return { heading: 'Using the disk now', note: 'Measuring…', rows: [] };
+        if (d.error && !d.items) return { heading: 'Using the disk now', note: d.error, rows: [] };
+        return {
+            heading: 'Using the disk now',
+            rows: (d.items ?? []).map((i) => ({ name: i.name, site: i.site, value: diskSize(i.bytes), pct: i.pct })),
+        };
+    }
+
+    if (props.kind !== 'cpu' && props.kind !== 'memory') return null;
+
+    const top = point.top;
+    let heading;
+    if (point.live) heading = 'In the last recorded minute';
+    else if (props.bucketSeconds > 60) heading = props.kind === 'cpu' ? 'In its busiest minute' : 'At its fullest minute';
+    else heading = props.kind === 'cpu' ? 'Over this minute' : 'At this minute';
+
+    if (!top?.length) return { heading, note: 'Nothing recorded for this point.', rows: [] };
+
+    return {
+        heading,
+        rows: top.map((i) => ({
+            name: i.name,
+            site: i.site,
+            value: props.kind === 'memory' ? size(i.mb ?? 0) : `${i.pct.toFixed(1)}%`,
+            pct: props.kind === 'memory' ? i.pct : null,
+            count: i.n > 1 ? i.n : 0,
+        })),
+    };
+});
 
 const hoverTime = computed(() =>
     hover.value
@@ -219,7 +275,7 @@ const hoverTime = computed(() =>
 const tooltipStyle = computed(() => {
     if (!hover.value) return {};
 
-    const half = 50;
+    const half = breakdown.value ? 116 : 50;
     const clamped = Math.max(half, Math.min(width.value - half, hover.value.x));
 
     return hover.value.y < HEIGHT / 2
@@ -344,11 +400,31 @@ const tone = computed(() => {
 
             <div
                 v-if="hover"
-                class="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-center text-[11px] text-white shadow"
+                class="pointer-events-none absolute z-10 -translate-x-1/2 rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white shadow"
+                :class="breakdown ? 'w-[232px] text-left' : 'whitespace-nowrap text-center'"
                 :style="tooltipStyle"
             >
                 <span class="font-semibold tabular-nums">{{ hover.point.v.toFixed(1) }}%</span>
-                <span class="block text-[10px] text-slate-300">{{ hover.point.live ? 'now' : hoverTime }}</span>
+                <span :class="breakdown ? 'ml-1.5 text-[10px] text-slate-300' : 'block text-[10px] text-slate-300'">
+                    {{ hover.point.live ? 'now' : hoverTime }}
+                </span>
+
+                <div v-if="breakdown" class="mt-1 border-t border-white/15 pt-1">
+                    <p class="text-[10px] text-slate-400">{{ breakdown.heading }}</p>
+                    <p v-if="breakdown.note" class="text-[10px] text-slate-300">{{ breakdown.note }}</p>
+                    <div
+                        v-for="row in breakdown.rows"
+                        :key="row.name"
+                        class="flex items-baseline justify-between gap-2 leading-snug"
+                    >
+                        <span class="min-w-0 truncate" :class="row.site ? 'text-sky-300' : ''">
+                            {{ row.name }}<span v-if="row.count" class="text-slate-400"> ×{{ row.count }}</span>
+                        </span>
+                        <span class="shrink-0 tabular-nums text-slate-200">
+                            {{ row.value }}<span v-if="row.pct !== null && row.pct !== undefined" class="text-slate-400"> · {{ row.pct.toFixed(0) }}%</span>
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <div

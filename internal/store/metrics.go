@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strconv"
 	"time"
@@ -69,6 +70,10 @@ type MetricSample struct {
 	Disk, Swap, Load   float64
 
 	MemoryUsed, MemoryTotal, DiskUsed, DiskTotal int64
+
+	// TopCPU and TopMemory are the minute's biggest users, as JSON; empty
+	// when there is nothing to say (the first minute has no CPU to compare).
+	TopCPU, TopMemory string
 }
 
 // RecordMetrics stores one sample for the graphs. Called once a minute by the
@@ -88,11 +93,11 @@ func (s *Store) RecordMetrics(sample MetricSample) error {
 	_, err := s.db.Exec(
 		`INSERT INTO metric_samples
 		    (cpu_percent, cpu_max, memory_percent, memory_max, disk_percent, swap_percent,
-		     memory_used, memory_total, disk_used, disk_total, load_1, sampled_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     memory_used, memory_total, disk_used, disk_total, load_1, top_cpu, top_memory, sampled_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cpu, cpuPeak, sample.Memory, math.Max(sample.Memory, sample.MemoryPeak),
 		sample.Disk, sample.Swap, sample.MemoryUsed, sample.MemoryTotal,
-		sample.DiskUsed, sample.DiskTotal, sample.Load,
+		sample.DiskUsed, sample.DiskTotal, sample.Load, nullText(sample.TopCPU), nullText(sample.TopMemory),
 		time.Now().UTC().Format("2006-01-02 15:04:05"))
 
 	return err
@@ -159,6 +164,45 @@ func (s *Store) MetricHistory(ctx context.Context, key string) map[string]any {
 				"disk_used":    whole(diskUsed),
 				"disk_total":   whole(diskTotal),
 			})
+		}
+	}
+
+	// What was using the CPU and memory in each point: for a point covering
+	// several minutes, the minute whose CPU (or memory) went highest — the one
+	// that explains the top of the line. SQLite returns the other columns of
+	// the row that max() picked.
+	tops := func(column, peak string) map[int64]json.RawMessage {
+		found := map[int64]json.RawMessage{}
+		rows, err := s.db.QueryContext(ctxOrBackground(ctx),
+			`SELECT (strftime('%s', sampled_at) / ?) AS bucket, max(`+peak+`), `+column+`
+			   FROM metric_samples
+			  WHERE sampled_at >= ? AND `+column+` IS NOT NULL
+			  GROUP BY bucket`,
+			window.Bucket, from.Format("2006-01-02 15:04:05"))
+		if err != nil {
+			return found
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var bucket int64
+			var peakValue nullFloat
+			var top string
+			if rows.Scan(&bucket, &peakValue, &top) == nil && json.Valid([]byte(top)) {
+				found[bucket*int64(window.Bucket)] = json.RawMessage(top)
+			}
+		}
+		return found
+	}
+
+	cpuTops := tops("top_cpu", "coalesce(cpu_max, cpu_percent)")
+	memoryTops := tops("top_memory", "coalesce(memory_max, memory_percent)")
+	for _, point := range points {
+		t := point["t"].(int64)
+		if top, ok := cpuTops[t]; ok {
+			point["cpu_top"] = top
+		}
+		if top, ok := memoryTops[t]; ok {
+			point["memory_top"] = top
 		}
 	}
 

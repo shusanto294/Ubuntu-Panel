@@ -550,6 +550,12 @@ var migrations = []string{
 	// The Redis database a Node site was given, 1-15; 0 is not connected.
 	// Database 0 is where the WordPress object caches live, under prefixes.
 	`ALTER TABLE sites ADD COLUMN redis_db INTEGER NOT NULL DEFAULT 0`,
+
+	// The minute's five biggest users of the CPU and of memory, as JSON, read
+	// from the process table once a minute (system/usage.go) for the graphs'
+	// tooltips. NULL for minutes from before, or with nothing to say.
+	`ALTER TABLE metric_samples ADD COLUMN top_cpu TEXT`,
+	`ALTER TABLE metric_samples ADD COLUMN top_memory TEXT`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

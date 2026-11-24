@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -171,5 +172,26 @@ func TestOldBreakdownColumnsAreDropped(t *testing.T) {
 	                 WHERE name IN ('cpu_spike', 'memory_usage', 'disk_usage')`).Scan(&left)
 	if left != 0 {
 		t.Fatalf("%d breakdown columns left", left)
+	}
+}
+
+// Each point carries what used the CPU and memory in its busiest minute.
+func TestHistoryCarriesTheBreakdownOfTheBusiestMinute(t *testing.T) {
+	st := metricStore(t)
+
+	st.RecordMetrics(MetricSample{CPU: 10, CPUPeak: 20, Memory: 40,
+		TopCPU: `[{"name":"quiet","n":1,"pct":5}]`, TopMemory: `[{"name":"mysql","n":1,"pct":30,"mb":300}]`})
+	st.RecordMetrics(MetricSample{CPU: 50, CPUPeak: 95, Memory: 30,
+		TopCPU: `[{"name":"busy","n":3,"pct":45}]`})
+
+	window := MetricRanges[1] // 24h: both minutes fall in one 15-minute point
+	points := st.MetricHistory(context.Background(), window.Key)["points"].([]map[string]any)
+	last := points[len(points)-1]
+
+	if got := string(last["cpu_top"].(json.RawMessage)); got != `[{"name":"busy","n":3,"pct":45}]` {
+		t.Errorf("cpu_top = %s, want the busier minute's", got)
+	}
+	if got := string(last["memory_top"].(json.RawMessage)); got != `[{"name":"mysql","n":1,"pct":30,"mb":300}]` {
+		t.Errorf("memory_top = %s, want the minute memory went highest", got)
 	}
 }

@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -256,6 +257,11 @@ func run(configPath string) error {
 func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 	var watcher system.Sampler
 
+	// What used the CPU and memory, read once a minute — not every second —
+	// for the graphs' tooltips. The first read only sets the baseline.
+	var usage system.UsageReader
+	usage.Read(nil)
+
 	second := time.NewTicker(time.Second)
 	defer second.Stop()
 
@@ -285,12 +291,26 @@ func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 			memory, memoryPeak = metrics.MemoryPercent, metrics.MemoryPercent
 		}
 
+		top := usage.Read(siteServices(ctx, db))
+		topCPU, topMemory := "", ""
+		if len(top.CPU) > 0 {
+			if encoded, err := json.Marshal(top.CPU); err == nil {
+				topCPU = string(encoded)
+			}
+		}
+		if len(top.Memory) > 0 {
+			if encoded, err := json.Marshal(top.Memory); err == nil {
+				topMemory = string(encoded)
+			}
+		}
+
 		err := db.RecordMetrics(store.MetricSample{
 			CPU: window.CPUAverage, CPUPeak: window.CPUPeak,
 			Memory: memory, MemoryPeak: memoryPeak,
 			Disk: metrics.DiskPercent, Swap: metrics.SwapPercent, Load: metrics.Load[0],
 			MemoryUsed: int64(metrics.MemoryUsed), MemoryTotal: int64(metrics.MemoryTotal),
 			DiskUsed: int64(metrics.DiskUsed), DiskTotal: int64(metrics.DiskTotal),
+			TopCPU: topCPU, TopMemory: topMemory,
 		})
 		if err != nil {
 			log.Warn("could not record the minute's metrics", "error", err)
@@ -301,6 +321,18 @@ func sample(ctx context.Context, db *store.Store, log *slog.Logger) {
 			pruned = time.Now()
 		}
 	}
+}
+
+// siteServices maps each site's systemd service to its domain, so a Node
+// site's processes are counted under its name.
+func siteServices(ctx context.Context, db *store.Store) map[string]string {
+	services := map[string]string{}
+	if sites, err := db.Sites(ctx); err == nil {
+		for _, site := range sites {
+			services[site.ServiceName()] = site.Domain
+		}
+	}
+	return services
 }
 
 // prune clears out what nobody came back for, hourly: sessions, and the

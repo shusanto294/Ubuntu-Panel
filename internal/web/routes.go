@@ -57,6 +57,7 @@ func (a *App) routes() *router {
 	rt.get("/notifications/{notification}", "notifications.show", authenticated, a.notificationShow)
 	rt.get("/system/metrics", "system.metrics", authenticated, a.metricsEndpoint)
 	rt.get("/system/metrics/history", "system.metrics.history", authenticated, a.metricHistory)
+	rt.get("/system/disk-usage", "system.disk-usage", authenticated, a.diskUsageEndpoint)
 	rt.get("/system/credentials", "system.credentials", authenticated, a.credentials)
 	rt.patch("/system/settings", "system.settings", authenticated, a.updateSettings)
 	rt.get("/system/updates", "system.updates", authenticated, a.checkUpdates)
