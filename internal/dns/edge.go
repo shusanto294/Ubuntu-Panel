@@ -77,6 +77,10 @@ type EdgeRule struct {
 
 	RateLimit *RateLimit `json:"ratelimit,omitempty"`
 
+	// ActionParameters, when set, replace the rule's own: what a redirect
+	// sends the visitor to. Left nil, a rule keeps whatever it has.
+	ActionParameters map[string]any `json:"-"`
+
 	// Raw is the rule as Cloudflare sent it: an update starts from it, so
 	// whatever the panel's form does not show — logging, a custom response,
 	// the products a skip rule skips — survives being edited here. Kept with
@@ -214,6 +218,10 @@ func edgeRuleBody(existing map[string]any, rule EdgeRule) map[string]any {
 	body["expression"] = rule.Expression
 	body["action"] = rule.Action
 	body["enabled"] = rule.Enabled
+
+	if rule.ActionParameters != nil {
+		body["action_parameters"] = rule.ActionParameters
+	}
 
 	// A skip rule has to say what it skips. Made here, it skips the rest of
 	// the custom rules — the "allow this, whatever comes after" rule.

@@ -257,6 +257,13 @@ func (a *App) routes() *router {
 	rt.post("/edge/bulk/access/update", "edge.bulk.access.update", authenticated, a.edgeBulkAccessUpdate)
 	rt.post("/edge/bulk/access/delete", "edge.bulk.access.destroy", authenticated, a.edgeBulkAccessDestroy)
 	rt.post("/edge/bulk/level", "edge.bulk.level", authenticated, a.edgeBulkLevel)
+	// Redirects Cloudflare answers at its edge, for any domain it holds —
+	// whether or not a site here serves it.
+	rt.get("/redirects", "redirects.index", authenticated, a.redirectsIndex)
+	rt.get("/dns-accounts/{account}/redirects", "redirects.list", authenticated, a.redirectsList)
+	rt.post("/dns-accounts/{account}/redirects", "redirects.store", authenticated, a.redirectsStore)
+	rt.patch("/dns-accounts/{account}/redirects/{rule}", "redirects.update", authenticated, a.redirectsUpdate)
+	rt.delete("/dns-accounts/{account}/redirects/{rule}", "redirects.destroy", authenticated, a.redirectsDestroy)
 	rt.get("/security/notfound", "security.notfound", authenticated, a.notFoundShow)
 	rt.post("/security/notfound", "security.notfound.save", authenticated, a.notFoundSave)
 	rt.delete("/security/notfound/{block}", "security.notfound.lift", authenticated, a.notFoundLift)
