@@ -241,6 +241,7 @@ func (s *Service) Deploy(ctx context.Context, siteID int64) error {
 
 	if runner.Run(s.recipe(ctx, site)) {
 		s.Store.SetSiteStatus(site.ID, "active", "")
+		s.PurgeCache(ctx, site.ID) // a redeploy must not keep serving the old build's pages
 
 		return nil
 	}
@@ -396,6 +397,8 @@ func (s *Service) Restart(ctx context.Context, siteID int64) error {
 		fmt.Sprintf("sudo systemctl restart %s; sleep 2; sudo systemctl status %s --no-pager --lines=20",
 			service, service))
 
+	list.AddFn("Empty the page cache", s.purgePageCache(ctx, site.ID)).Optional()
+
 	if !tasks.New(s.Store, taskID).Run(list) {
 		return errors.New("the service did not restart")
 	}
@@ -428,7 +431,14 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 
 	list := &tasks.List{}
 
-	list.Add("Pull the latest commit", FetchCommand(site, root, branch))
+	// Everything that rebuilds is in this group, so an unmoved branch skips it.
+	const build = "build"
+
+	list.AddFn("Check for new commits", func(runner *tasks.Runner) (string, error) {
+		return pullNeeded(runner, site, branch, build), nil
+	})
+
+	list.Add("Pull the latest commit", FetchCommand(site, root, branch)).Group(build)
 
 	if site.Type == "laravel" {
 		list.Add("Update dependencies and migrate",
@@ -439,7 +449,7 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 					"php%s artisan migrate --force && "+
 					"php%s artisan config:cache && "+
 					"php%s artisan route:cache",
-					root, site.PHPVersion, site.PHPVersion, site.PHPVersion))))
+					root, site.PHPVersion, site.PHPVersion, site.PHPVersion)))).Group(build)
 	}
 
 	if site.IsProxied() {
@@ -455,30 +465,66 @@ func (s *Service) Pull(ctx context.Context, siteID int64) error {
 		s.connectionSteps(list, site)
 
 		list.AddFn("Reinstall dependencies", s.siteCommand(ctx, site.ID, root,
-			fmt.Sprintf("npm install%s --no-audit --no-fund", omit)))
+			fmt.Sprintf("npm install%s --no-audit --no-fund", omit))).Group(build)
 
 		if site.BuildCommand != "" {
-			list.AddFn("Rebuild", s.siteCommand(ctx, site.ID, root, site.BuildCommand))
+			list.AddFn("Rebuild", s.siteCommand(ctx, site.ID, root, site.BuildCommand)).Group(build)
 		}
 
 		// Written again before the restart, and the unit with it: a site
 		// deployed before the panel had environment variables has a unit
 		// that does not name the file yet.
-		list.AddFn("Write the environment", s.refreshServiceEnv(ctx, site.ID))
+		list.AddFn("Write the environment", s.refreshServiceEnv(ctx, site.ID)).Group(build)
 
 		service := site.ServiceName()
 
 		list.Add("Restart the service",
-			fmt.Sprintf("sudo systemctl restart %s; sleep 2; sudo systemctl is-active %s", service, service))
+			fmt.Sprintf("sudo systemctl restart %s; sleep 2; sudo systemctl is-active %s", service, service)).Group(build)
 	}
 
-	list.AddFn("Record the commit", s.recordCommit(ctx, site.ID))
+	list.AddFn("Record the commit", s.recordCommit(ctx, site.ID)).Group(build)
+
+	// Outside the group: a page cache filled before this fix still holds the
+	// old build's pages, and "up to date" must not leave them being served.
+	list.AddFn("Empty the page cache", s.purgePageCache(ctx, site.ID)).Optional()
 
 	if !tasks.New(s.Store, taskID).Run(list) {
 		return errors.New("the pull did not complete")
 	}
 
 	return nil
+}
+
+// pullNeeded skips the rebuild group when the remote branch is at the commit
+// the site last built successfully and the checkout is still on it. LastCommit
+// is only recorded after a build succeeds, so a failed build is retried.
+func pullNeeded(runner *tasks.Runner, site *store.Site, branch, group string) string {
+	remote := RemoteHead(site, branch)
+
+	if remote == "" {
+		return "Could not ask the repository for its latest commit; pulling anyway."
+	}
+
+	if remote != site.LastCommit || LocalHead(site) != remote {
+		return fmt.Sprintf("New commit %s on %s.", remote, branch)
+	}
+
+	runner.SkipGroup(group)
+
+	serving := remote
+	if subject := LocalSubject(site); subject != "" {
+		serving += " — " + subject
+	}
+
+	return "Everything is up to date. Still serving " + serving + ". Nothing to rebuild."
+}
+
+// purgePageCache empties the site's nginx page cache, so the next visitor gets
+// the build that is running rather than a page rendered by the previous one.
+func (s *Service) purgePageCache(ctx context.Context, siteID int64) func(*tasks.Runner) (string, error) {
+	return func(runner *tasks.Runner) (string, error) {
+		return "", s.PurgeCache(ctx, siteID)
+	}
 }
 
 // checkRepository is the pre-flight, as a step.
