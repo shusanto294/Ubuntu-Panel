@@ -27,3 +27,13 @@ func TestDuplicateRedirect(t *testing.T) {
 		t.Error("no copy should mean no clash")
 	}
 }
+
+func TestHostedProblem(t *testing.T) {
+	hosted := []string{"site.com", "www.site.com"}
+	if hostedProblem(hosted, dns.Redirect{Hosts: []string{"mail.com", "www.site.com"}}) == "" {
+		t.Error("a redirect for a hosted site's www was let through")
+	}
+	if hostedProblem(hosted, dns.Redirect{Hosts: []string{"shop.site.com"}}) != "" {
+		t.Error("a subdomain with no site was refused")
+	}
+}

@@ -34,6 +34,10 @@ type redirectZone struct {
 	Ruleset   string         `json:"ruleset"`
 	Rules     []dns.EdgeRule `json:"rules"`
 	FetchedAt int64          `json:"fetched_at"`
+
+	// Error is Cloudflare refusing the read. It is kept like an answer, so a
+	// refused zone is not asked again on every visit — only on Refresh.
+	Error string `json:"error,omitempty"`
 }
 
 func (a *App) cachedRedirects(ctx context.Context, zoneID string) (redirectZone, bool) {
@@ -63,6 +67,10 @@ func (a *App) keepRedirects(ctx context.Context, zone redirectZone) {
 
 // redirectsAnswer is a zone as the page draws it.
 func redirectsAnswer(zone redirectZone) map[string]any {
+	if zone.Error != "" {
+		return map[string]any{"zone_id": zone.ZoneID, "zone_name": zone.ZoneName, "redirects": []dns.Redirect{},
+			"error": zone.Error, "fetched_at": zone.FetchedAt}
+	}
 	return map[string]any{
 		"account":    zone.Account,
 		"zone_id":    zone.ZoneID,
@@ -75,14 +83,7 @@ func redirectsAnswer(zone redirectZone) map[string]any {
 // redirectsFailed answers a refusal, saying which permission a token made
 // only for DNS is missing when that is what Cloudflare means.
 func (a *App) redirectsFailed(w http.ResponseWriter, err error) {
-	message := err.Error()
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "authentication") || strings.Contains(lower, "not authorized") ||
-		strings.Contains(lower, "permission") || strings.Contains(lower, "unauthorized") {
-		message += " — the API token needs Zone · Single Redirect · Edit (as well as Zone · DNS · Edit) on this zone."
-	}
-
-	body := map[string]any{"error": message}
+	body := map[string]any{"error": redirectsProblem(err)}
 	var notProxied *dns.NotProxiedError
 	if errors.As(err, &notProxied) {
 		body["needs_proxy"] = !notProxied.Mail
@@ -91,12 +92,29 @@ func (a *App) redirectsFailed(w http.ResponseWriter, err error) {
 	a.writeJSON(w, http.StatusUnprocessableEntity, body)
 }
 
+func redirectsProblem(err error) string {
+	message := err.Error()
+	if tokenRefused(err) {
+		message += " — the API token needs Zone · Single Redirect · Edit (as well as Zone · DNS · Edit) on this zone."
+	}
+	return message
+}
+
+// tokenRefused is Cloudflare saying the token may not do this, which stays
+// true until the token changes — unlike a timeout, which is worth retrying.
+func tokenRefused(err error) bool {
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "authenticat") || strings.Contains(lower, "not authorized") ||
+		strings.Contains(lower, "permission") || strings.Contains(lower, "unauthorized")
+}
+
 // redirectsIndex is the page: the Cloudflare credentials to pick zones from.
 // The zones and their redirects are asked for by the page itself.
 func (a *App) redirectsIndex(w http.ResponseWriter, r *http.Request) {
 	a.Render.Render(w, r, "Redirects/Index", inertia.Props{
 		"accounts": a.edgeAccounts(r.Context(), userFrom(r.Context()).ID),
 		"codes":    dns.RedirectCodes,
+		"hosted":   a.hostedNames(r.Context()),
 	})
 }
 
@@ -186,8 +204,9 @@ func hostOf(target string) string {
 // from, and the copy itself.
 func (a *App) knownRedirects(ctx context.Context, zoneID string) (*dns.Ruleset, redirectZone) {
 	zone, ok := a.cachedRedirects(ctx, zoneID)
-	if !ok {
-		return nil, zone
+	if !ok || zone.Error != "" {
+		// No good copy: the write reads Cloudflare's ruleset itself.
+		return nil, redirectZone{ZoneName: zone.ZoneName}
 	}
 	return &dns.Ruleset{ID: zone.Ruleset, Rules: zone.Rules}, zone
 }
@@ -242,6 +261,9 @@ func (a *App) redirectsStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	redirect, problem := redirectInput(input, zone.ZoneName)
+	if problem == "" {
+		problem = hostedProblem(a.hostedNames(r.Context()), redirect)
+	}
 	if problem == "" {
 		problem = duplicateRedirect(known, redirect, "")
 	}
@@ -322,6 +344,9 @@ func (a *App) redirectsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		redirect, problem := redirectInput(input, zone.ZoneName)
+		if problem == "" {
+			problem = hostedProblem(a.hostedNames(r.Context()), redirect)
+		}
 		if problem == "" {
 			problem = duplicateRedirect(known, redirect, ruleID)
 		}
@@ -418,9 +443,11 @@ func duplicateRedirect(known *dns.Ruleset, redirect dns.Redirect, except string)
 
 // redirectsAll is every zone's redirects, from the copies, so the page can
 // say which domains already redirect. A zone never read before is read from
-// Cloudflare once here; after that only a write or Refresh reads it again.
+// Cloudflare once here — a refused token is kept too — and after that only a write
+// or ?refresh=1 reads it again.
 func (a *App) redirectsAll(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	refresh := r.URL.Query().Get("refresh") == "1"
 	accounts, err := a.Store.DNSAccounts(ctx, userFrom(ctx).ID)
 	if err != nil {
 		a.writeJSON(w, http.StatusOK, map[string]any{"zones": map[string]any{}})
@@ -444,7 +471,7 @@ func (a *App) redirectsAll(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, z := range zones {
-			if zone, ok := a.cachedRedirects(ctx, z.ID); ok {
+			if zone, ok := a.cachedRedirects(ctx, z.ID); ok && !refresh {
 				out[z.ID] = redirectsAnswer(zone)
 				continue
 			}
@@ -455,16 +482,18 @@ func (a *App) redirectsAll(w http.ResponseWriter, r *http.Request) {
 				gate <- struct{}{}
 				defer func() { <-gate }()
 
-				answer := map[string]any{"zone_id": z.ID, "zone_name": z.Name, "redirects": []dns.Redirect{}}
+				zone := redirectZone{Account: account.ID, ZoneID: z.ID, ZoneName: z.Name, FetchedAt: time.Now().Unix()}
 				set, err := dns.New(a.Store, account).ReadRuleset(z.ID, dns.PhaseRedirect)
 				if err != nil {
-					answer["error"] = err.Error()
+					zone.Error = redirectsProblem(err)
 				} else {
-					zone := redirectZone{Account: account.ID, ZoneID: z.ID, ZoneName: z.Name,
-						Ruleset: set.ID, Rules: orEmpty(set.Rules), FetchedAt: time.Now().Unix()}
-					a.keepRedirects(ctx, zone)
-					answer = redirectsAnswer(zone)
+					zone.Ruleset, zone.Rules = set.ID, orEmpty(set.Rules)
 				}
+				// A timeout or outage is asked again next visit; a refused token is kept.
+				if err == nil || tokenRefused(err) {
+					a.keepRedirects(ctx, zone)
+				}
+				answer := redirectsAnswer(zone)
 
 				mu.Lock()
 				out[z.ID] = answer
@@ -475,4 +504,34 @@ func (a *App) redirectsAll(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	a.writeJSON(w, http.StatusOK, map[string]any{"zones": out})
+}
+
+// hostedNames are the hostnames the sites on this panel answer for — each
+// domain, its www and its aliases — which a redirect must not take over.
+func (a *App) hostedNames(ctx context.Context) []string {
+	names := []string{}
+	sites, err := a.Store.Sites(ctx)
+	if err != nil {
+		return names
+	}
+	for _, site := range sites {
+		for _, name := range append([]string{site.Domain}, site.Aliases...) {
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name != "" {
+				names = append(names, name, "www."+strings.TrimPrefix(name, "www."))
+			}
+		}
+	}
+	return names
+}
+
+// hostedProblem refuses a redirect for a hostname a site here serves:
+// Cloudflare would answer its visitors before they ever reached the site.
+func hostedProblem(hosted []string, redirect dns.Redirect) string {
+	for _, host := range redirect.Hosts {
+		if slices.Contains(hosted, host) {
+			return host + " has a website on this panel. Remove the website first (Sites), then add the redirect."
+		}
+	}
+	return ""
 }
