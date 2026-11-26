@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shusanto294/Ubuntu-Panel/internal/dns"
@@ -240,6 +242,9 @@ func (a *App) redirectsStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	redirect, problem := redirectInput(input, zone.ZoneName)
+	if problem == "" {
+		problem = duplicateRedirect(known, redirect, "")
+	}
 	if problem != "" {
 		a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": problem})
 		return
@@ -317,6 +322,9 @@ func (a *App) redirectsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		redirect, problem := redirectInput(input, zone.ZoneName)
+		if problem == "" {
+			problem = duplicateRedirect(known, redirect, ruleID)
+		}
 		if problem != "" {
 			a.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": problem})
 			return
@@ -384,4 +392,87 @@ func (a *App) redirectsDestroy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.redirectsWritten(w, r, zone, set, "deleted: "+ruleID, "Redirect deleted.", nil)
+}
+
+// duplicateRedirect says which redirect already sends one of these hostnames
+// and paths somewhere, so the same domain is not redirected twice. except is
+// the rule being edited.
+func duplicateRedirect(known *dns.Ruleset, redirect dns.Redirect, except string) string {
+	if known == nil {
+		return ""
+	}
+
+	for _, have := range dns.ParseRedirects(*known) {
+		if have.ID == except || !have.Managed || have.PathMode != redirect.PathMode || have.Path != redirect.Path {
+			continue
+		}
+		for _, host := range redirect.Hosts {
+			if slices.Contains(have.Hosts, host) {
+				return host + redirect.Path + " already redirects to " + have.Target + " — edit that redirect instead."
+			}
+		}
+	}
+
+	return ""
+}
+
+// redirectsAll is every zone's redirects, from the copies, so the page can
+// say which domains already redirect. A zone never read before is read from
+// Cloudflare once here; after that only a write or Refresh reads it again.
+func (a *App) redirectsAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	accounts, err := a.Store.DNSAccounts(ctx, userFrom(ctx).ID)
+	if err != nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"zones": map[string]any{}})
+		return
+	}
+
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		out  = map[string]any{}
+		gate = make(chan struct{}, 4) // Cloudflare allows 1200 calls per 5 minutes; stay well under.
+	)
+
+	for _, account := range accounts {
+		if !dns.SupportsEdgeRules(account.Provider) {
+			continue
+		}
+		zones, _, err := a.accountZones(ctx, account, false)
+		if err != nil {
+			continue
+		}
+
+		for _, z := range zones {
+			if zone, ok := a.cachedRedirects(ctx, z.ID); ok {
+				out[z.ID] = redirectsAnswer(zone)
+				continue
+			}
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				gate <- struct{}{}
+				defer func() { <-gate }()
+
+				answer := map[string]any{"zone_id": z.ID, "zone_name": z.Name, "redirects": []dns.Redirect{}}
+				set, err := dns.New(a.Store, account).ReadRuleset(z.ID, dns.PhaseRedirect)
+				if err != nil {
+					answer["error"] = err.Error()
+				} else {
+					zone := redirectZone{Account: account.ID, ZoneID: z.ID, ZoneName: z.Name,
+						Ruleset: set.ID, Rules: orEmpty(set.Rules), FetchedAt: time.Now().Unix()}
+					a.keepRedirects(ctx, zone)
+					answer = redirectsAnswer(zone)
+				}
+
+				mu.Lock()
+				out[z.ID] = answer
+				mu.Unlock()
+			}()
+		}
+	}
+	wg.Wait()
+
+	a.writeJSON(w, http.StatusOK, map[string]any{"zones": out})
 }

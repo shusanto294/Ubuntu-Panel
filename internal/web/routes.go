@@ -261,6 +261,7 @@ func (a *App) routes() *router {
 	// Redirects Cloudflare answers at its edge, for any domain it holds —
 	// whether or not a site here serves it.
 	rt.get("/redirects", "redirects.index", authenticated, a.redirectsIndex)
+	rt.get("/redirects/all", "redirects.all", authenticated, a.redirectsAll)
 	rt.get("/dns-accounts/{account}/redirects", "redirects.list", authenticated, a.redirectsList)
 	rt.post("/dns-accounts/{account}/redirects", "redirects.store", authenticated, a.redirectsStore)
 	rt.patch("/dns-accounts/{account}/redirects/{rule}", "redirects.update", authenticated, a.redirectsUpdate)

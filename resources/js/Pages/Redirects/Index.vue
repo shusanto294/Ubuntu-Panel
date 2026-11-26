@@ -8,7 +8,9 @@ import { ago, card, field, smallButton } from '@/Components/Security/ui';
 /*
  * Redirects Cloudflare answers at its edge, for any domain on a connected
  * Cloudflare account — a site here or not. Pick a domain, see its redirects,
- * add one. Adding makes the hostname resolve through Cloudflare when it does
+ * add one — or tick several domains and add the same redirect to all of them.
+ * Every zone's redirects come from the panel's copy (redirects.all), so the
+ * list can say which domains already redirect. Adding makes the hostname resolve through Cloudflare when it does
  * not already, since Cloudflare can only redirect a request it sees.
  */
 const props = defineProps({
@@ -31,8 +33,14 @@ const loadingZones = ref(false);
 const zoneId = ref('');
 const zoneFilter = ref('');
 
-const list = ref([]);
-const fetchedAt = ref(0);
+// zone id → its redirects as the panel's copy has them, or { error }.
+const summary = ref({});
+const summaryLoading = ref(false);
+const picked = ref([]); // zone ids ticked for a bulk add
+const hideRedirected = ref(false);
+
+const list = computed(() => summary.value[zoneId.value]?.redirects ?? []);
+const fetchedAt = computed(() => summary.value[zoneId.value]?.fetched_at ?? 0);
 const loading = ref(false);
 const listError = ref('');
 
@@ -40,10 +48,22 @@ const message = ref('');
 const notes = ref([]);
 
 const zone = computed(() => zones.value.find((z) => z.id === zoneId.value) ?? null);
+const redirectCount = (z) => summary.value[z.id]?.redirects?.length ?? 0;
+const apexRedirect = (z) =>
+    (summary.value[z.id]?.redirects ?? []).find((r) => r.managed && r.path_mode === 'all' && r.hosts.includes(z.name));
 const visibleZones = computed(() => {
     const q = zoneFilter.value.trim().toLowerCase();
-    return q ? zones.value.filter((z) => z.name.includes(q) || z.id === zoneId.value) : zones.value;
+    return zones.value.filter((z) => (!q || z.name.includes(q)) && !(hideRedirected.value && redirectCount(z)));
 });
+const allVisiblePicked = computed(
+    () => visibleZones.value.length > 0 && visibleZones.value.every((z) => picked.value.includes(z.id)),
+);
+const pickVisible = () => {
+    const ids = visibleZones.value.map((z) => z.id);
+    picked.value = allVisiblePicked.value
+        ? picked.value.filter((id) => !ids.includes(id))
+        : [...new Set([...picked.value, ...ids])];
+};
 const multipleAccounts = computed(() => new Set(zones.value.map((z) => z.account)).size > 1);
 
 const failure = (e, fallback) => e?.response?.data?.error ?? fallback;
@@ -73,16 +93,30 @@ const loadZones = async (refresh = false) => {
             }
             zoneId.value = all.some((z) => z.id === remembered) ? remembered : (all[0]?.id ?? '');
         }
+        picked.value = picked.value.filter((id) => all.some((z) => z.id === id));
     } catch (e) {
         zoneErrors.value = [failure(e, 'Could not list the Cloudflare domains.')];
     } finally {
         loadingZones.value = false;
     }
+    loadSummary();
+};
+
+// Reads only the panel's copy; a domain never read before is read once.
+const loadSummary = async () => {
+    summaryLoading.value = true;
+    try {
+        const { data } = await window.axios.get(route('redirects.all'));
+        summary.value = data.zones ?? {};
+    } catch (e) {
+        listError.value = failure(e, 'Could not read the redirects.');
+    } finally {
+        summaryLoading.value = false;
+    }
 };
 
 const take = (data) => {
-    list.value = data.redirects ?? [];
-    fetchedAt.value = data.fetched_at ?? 0;
+    if (data.zone_id) summary.value = { ...summary.value, [data.zone_id]: data };
 };
 
 const loadRedirects = async (refresh = false) => {
@@ -94,12 +128,9 @@ const loadRedirects = async (refresh = false) => {
         const { data } = await window.axios.get(route('redirects.list', zone.value.account), {
             params: { zone_id: zone.value.id, zone_name: zone.value.name, ...(refresh ? { refresh: 1 } : {}) },
         });
-        if (asked === zoneId.value) take(data);
+        take(data);
     } catch (e) {
-        if (asked === zoneId.value) {
-            list.value = [];
-            listError.value = failure(e, 'Cloudflare did not answer.');
-        }
+        if (asked === zoneId.value) listError.value = failure(e, 'Cloudflare did not answer.');
     } finally {
         loading.value = false;
     }
@@ -108,14 +139,13 @@ const loadRedirects = async (refresh = false) => {
 watch(zoneId, (id) => {
     message.value = '';
     notes.value = [];
-    closeForm();
-    list.value = [];
+    listError.value = '';
+    if (editing.value) closeForm(); // an edit belongs to the domain it was opened on
     try {
         if (id) window.localStorage.setItem(STORAGE_KEY, id);
     } catch {
         // Only a convenience.
     }
-    loadRedirects();
 });
 
 onMounted(() => {
@@ -143,13 +173,42 @@ const editing = ref(null); // the redirect being edited, or null
 const formError = ref('');
 const needsProxy = ref(false);
 const saving = ref(false);
+const targets = ref([]); // the zones a new redirect goes to
+const results = ref([]); // { name, error } from a bulk add
 
-const host = computed(() => {
+const hostFor = (z) => {
     const sub = form.sub.trim().toLowerCase().replace(/\.+$/, '');
-    return sub ? `${sub}.${zone.value?.name ?? ''}` : (zone.value?.name ?? '');
-});
+    return sub ? `${sub}.${z?.name ?? ''}` : (z?.name ?? '');
+};
+const host = computed(() => hostFor(targets.value[0] ?? zone.value));
+const suffix = computed(() => (targets.value.length > 1 ? 'each domain' : (targets.value[0] ?? zone.value)?.name));
+
+// The redirect a zone already has for this hostname and path, as the server
+// would refuse it (duplicateRedirect in redirects.go).
+const formPath = () => {
+    if (form.path_mode === 'all') return '';
+    const path = form.path.trim();
+    return form.path_mode === 'prefix' ? `${path.replace(/\*$/, '').replace(/\/+$/, '')}/` : path;
+};
+const clash = (z) => {
+    const hosts = [hostFor(z)];
+    if (form.include_www && !hosts[0].startsWith('www.')) hosts.push(`www.${hosts[0]}`);
+    const mode = form.path_mode === 'prefix' && formPath() === '/' ? 'all' : form.path_mode;
+    const path = mode === 'all' ? '' : formPath();
+    return (summary.value[z.id]?.redirects ?? []).find(
+        (r) =>
+            r.managed &&
+            r.id !== editing.value?.id &&
+            r.path_mode === mode &&
+            (r.path ?? '') === path &&
+            r.hosts.some((h) => hosts.includes(h)),
+    );
+};
+const clashes = computed(() => targets.value.filter((z) => clash(z)));
 
 const openNew = () => {
+    targets.value = picked.value.length ? zones.value.filter((z) => picked.value.includes(z.id)) : [zone.value];
+    results.value = [];
     Object.assign(form, blank());
     editing.value = null;
     formError.value = '';
@@ -172,6 +231,8 @@ const openEdit = (r) => {
         enabled: r.enabled,
     });
     editing.value = r;
+    targets.value = [zone.value];
+    results.value = [];
     formError.value = '';
     needsProxy.value = false;
     formOpen.value = true;
@@ -189,14 +250,14 @@ const report = (data) => {
 };
 
 const submit = async () => {
-    if (!zone.value) return;
+    if (!targets.value.length) return;
     formError.value = '';
     saving.value = true;
 
-    const body = {
-        zone_id: zone.value.id,
-        zone_name: zone.value.name,
-        host: host.value,
+    const body = (z) => ({
+        zone_id: z.id,
+        zone_name: z.name,
+        host: hostFor(z),
         include_www: form.include_www,
         path_mode: form.path_mode,
         path: form.path,
@@ -206,20 +267,59 @@ const submit = async () => {
         keep_query: form.keep_query,
         proxy: form.proxy,
         enabled: form.enabled,
-    };
+    });
 
-    try {
-        const { data } = editing.value
-            ? await window.axios.patch(route('redirects.update', { account: zone.value.account, rule: editing.value.id }), body)
-            : await window.axios.post(route('redirects.store', zone.value.account), body);
-        report(data);
-        closeForm();
-    } catch (e) {
-        formError.value = failure(e, 'Cloudflare did not take the redirect.');
-        needsProxy.value = needsProxy.value || !!e?.response?.data?.needs_proxy;
-    } finally {
-        saving.value = false;
+    if (editing.value) {
+        try {
+            const { data } = await window.axios.patch(
+                route('redirects.update', { account: zone.value.account, rule: editing.value.id }),
+                body(zone.value),
+            );
+            report(data);
+            closeForm();
+        } catch (e) {
+            formError.value = failure(e, 'Cloudflare did not take the redirect.');
+            needsProxy.value = needsProxy.value || !!e?.response?.data?.needs_proxy;
+        } finally {
+            saving.value = false;
+        }
+        return;
     }
+
+    // One domain after another, so each answer lands in the copy before the next.
+    const done = [];
+    const failed = [];
+    let allNotes = [];
+    for (const z of targets.value) {
+        if (clash(z)) continue;
+        try {
+            const { data } = await window.axios.post(route('redirects.store', z.account), body(z));
+            take(data);
+            done.push(z.name);
+            allNotes = allNotes.concat(data.notes ?? []);
+        } catch (e) {
+            failed.push({ zone: z, error: failure(e, 'Cloudflare did not take the redirect.') });
+            needsProxy.value = needsProxy.value || !!e?.response?.data?.needs_proxy;
+        }
+    }
+    saving.value = false;
+
+    const skipped = targets.value.length - done.length - failed.length;
+    message.value = done.length
+        ? `Redirect added to ${done.length === 1 ? done[0] : `${done.length} domains`}.` +
+          (skipped ? ` ${skipped} skipped — they already redirect.` : '')
+        : '';
+    notes.value = allNotes;
+    picked.value = picked.value.filter((id) => !targets.value.some((z) => z.id === id && done.includes(z.name)));
+
+    if (!failed.length) {
+        closeForm();
+        return;
+    }
+    // Keep the form open on the ones that failed, so a retry sends only those.
+    targets.value = failed.map((f) => f.zone);
+    results.value = failed.map((f) => ({ name: f.zone.name, error: f.error }));
+    formError.value = failed.length === 1 ? failed[0].error : `${failed.length} domains were refused — see below.`;
 };
 
 const busy = ref({});
@@ -301,7 +401,7 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                     class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
                     @click="openNew"
                 >
-                    Add a redirect
+                    {{ picked.length > 1 ? `Add a redirect to ${picked.length} domains` : 'Add a redirect' }}
                 </button>
             </div>
         </template>
@@ -323,28 +423,87 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
         </div>
 
         <div v-else class="space-y-6">
-            <!-- Domain picker -->
+            <!-- Domain picker: click a name to see its redirects, tick several to add one redirect to all. -->
             <div :class="card">
                 <div class="flex flex-wrap items-end gap-3">
                     <label class="min-w-0 flex-1 basis-64">
-                        <span class="text-xs font-medium text-slate-700">Domain</span>
-                        <select v-model="zoneId" :class="field" :disabled="loadingZones && !zones.length">
-                            <option v-if="!zones.length" value="">
-                                {{ loadingZones ? 'Reading your Cloudflare domains…' : 'No domains found' }}
-                            </option>
-                            <option v-for="z in visibleZones" :key="z.id" :value="z.id">
-                                {{ z.name }}{{ multipleAccounts ? ` — ${z.account_label}` : '' }}
-                            </option>
-                        </select>
-                    </label>
-                    <label v-if="zones.length > 10" class="basis-48">
-                        <span class="text-xs font-medium text-slate-700">Filter</span>
-                        <input v-model="zoneFilter" type="search" placeholder="example.com" :class="field" />
+                        <span class="text-xs font-medium text-slate-700">Domains</span>
+                        <input
+                            v-model="zoneFilter"
+                            type="search"
+                            placeholder="Search your Cloudflare domains"
+                            :class="field"
+                            autocapitalize="off"
+                            spellcheck="false"
+                        />
                     </label>
                     <button type="button" :class="smallButton" :disabled="loadingZones" @click="loadZones(true)">
                         {{ loadingZones ? 'Reading…' : 'Reload domains' }}
                     </button>
                 </div>
+                <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-700">
+                    <label class="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            class="rounded border-slate-300 text-brand-600"
+                            :checked="allVisiblePicked"
+                            :disabled="!visibleZones.length"
+                            @change="pickVisible"
+                        />
+                        Select all shown
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input v-model="hideRedirected" type="checkbox" class="rounded border-slate-300 text-brand-600" />
+                        Hide domains that already redirect
+                    </label>
+                    <span v-if="picked.length" class="text-slate-500">
+                        {{ picked.length }} selected ·
+                        <button type="button" class="text-brand-600 hover:underline" @click="picked = []">clear</button>
+                    </span>
+                    <span v-if="summaryLoading" class="text-xs text-slate-400">Checking which domains redirect…</span>
+                </div>
+
+                <p v-if="!zones.length" class="mt-3 text-sm text-slate-500">
+                    {{ loadingZones ? 'Reading your Cloudflare domains…' : 'No domains found.' }}
+                </p>
+                <p v-else-if="!visibleZones.length" class="mt-3 text-sm text-slate-500">No domain matches.</p>
+                <ul v-else class="mt-3 max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg ring-1 ring-slate-200">
+                    <li
+                        v-for="z in visibleZones"
+                        :key="z.id"
+                        class="flex items-center gap-3 px-3 py-2 text-sm"
+                        :class="z.id === zoneId ? 'bg-brand-50' : 'hover:bg-slate-50'"
+                    >
+                        <input
+                            v-model="picked"
+                            type="checkbox"
+                            :value="z.id"
+                            class="rounded border-slate-300 text-brand-600"
+                            :aria-label="`Select ${z.name}`"
+                        />
+                        <button type="button" class="min-w-0 flex-1 truncate text-left" @click="zoneId = z.id">
+                            <span class="font-medium text-slate-900">{{ z.name }}</span>
+                            <span v-if="multipleAccounts" class="text-xs text-slate-400"> — {{ z.account_label }}</span>
+                        </button>
+                        <span
+                            v-if="apexRedirect(z)"
+                            class="max-w-[50%] truncate rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700"
+                            :title="apexRedirect(z).target"
+                        >
+                            → {{ apexRedirect(z).target }}
+                        </span>
+                        <span v-else-if="redirectCount(z)" class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                            {{ redirectCount(z) }} redirect{{ redirectCount(z) === 1 ? '' : 's' }}
+                        </span>
+                        <span
+                            v-else-if="summary[z.id]?.error"
+                            class="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-700"
+                            :title="summary[z.id].error"
+                        >
+                            could not read
+                        </span>
+                    </li>
+                </ul>
                 <p v-for="e in zoneErrors" :key="e" class="mt-2 text-xs text-rose-600">{{ e }}</p>
             </div>
 
@@ -360,6 +519,11 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                     <button type="button" class="text-sm text-slate-500 hover:underline" @click="closeForm">Cancel</button>
                 </div>
 
+                <div v-if="targets.length > 1" class="text-sm text-slate-700">
+                    Adding to {{ targets.length }} domains:
+                    <span class="text-slate-500">{{ targets.map((z) => z.name).join(', ') }}</span>
+                </div>
+
                 <div>
                     <span class="text-xs font-medium text-slate-700">From</span>
                     <div class="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 shadow-sm focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500">
@@ -371,14 +535,14 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                             autocapitalize="off"
                             spellcheck="false"
                         />
-                        <span class="flex items-center bg-slate-50 px-3 text-sm text-slate-600">.{{ zone.name }}</span>
+                        <span class="flex items-center bg-slate-50 px-3 text-sm text-slate-600">.{{ suffix }}</span>
                     </div>
                     <p class="mt-1 text-xs text-slate-500">
-                        Leave it empty for {{ zone.name }}, or type a subdomain such as <code>mail</code> or <code>shop</code>.
+                        Leave it empty for {{ suffix === 'each domain' ? 'the domain itself' : suffix }}, or type a subdomain such as <code>mail</code> or <code>shop</code>.
                     </p>
                     <label v-if="!host.startsWith('www.')" class="mt-2 flex items-center gap-2 text-sm text-slate-700">
                         <input v-model="form.include_www" type="checkbox" class="rounded border-slate-300 text-brand-600" />
-                        Also redirect www.{{ host }}
+                        Also redirect www.{{ targets.length > 1 ? 'each domain' : host }}
                     </label>
                 </div>
 
@@ -450,8 +614,23 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
 
                 <p class="rounded-lg bg-slate-50 px-3 py-2 font-mono text-xs break-all text-slate-600">{{ example }}</p>
 
+                <div v-if="clashes.length" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+                    <template v-if="clashes.length === targets.length && targets.length === 1">
+                        {{ hostFor(clashes[0]) }} already redirects to {{ clash(clashes[0]).target }} — edit that redirect instead.
+                    </template>
+                    <template v-else>
+                        These already redirect and will be skipped:
+                        <span v-for="z in clashes" :key="z.id" class="block text-xs">
+                            {{ hostFor(z) }} → {{ clash(z).target }}
+                        </span>
+                    </template>
+                </div>
+
                 <div v-if="formError" class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
                     {{ formError }}
+                    <span v-for="f in results.length > 1 ? results : []" :key="f.name" class="mt-1 block text-xs">
+                        {{ f.name }}: {{ f.error }}
+                    </span>
                 </div>
                 <label v-if="needsProxy" class="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
                     <input v-model="form.proxy" type="checkbox" class="mt-0.5 rounded border-amber-400 text-brand-600" />
@@ -474,10 +653,10 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                     </button>
                     <button
                         type="submit"
-                        :disabled="saving"
+                        :disabled="saving || clashes.length === targets.length"
                         class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 disabled:opacity-60"
                     >
-                        {{ saving ? 'Saving…' : editing ? 'Save redirect' : 'Add redirect' }}
+                        {{ saving ? 'Saving…' : editing ? 'Save redirect' : targets.length > 1 ? `Add to ${targets.length - clashes.length} domains` : 'Add redirect' }}
                     </button>
                 </div>
             </form>
@@ -497,12 +676,12 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                     </button>
                 </div>
 
-                <p v-if="listError" class="mx-5 mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200 sm:mx-6">
-                    {{ listError }}
+                <p v-if="listError || summary[zoneId]?.error" class="mx-5 mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200 sm:mx-6">
+                    {{ listError || summary[zoneId]?.error }}
                 </p>
 
-                <p v-if="loading && !list.length" class="px-5 py-8 text-center text-sm text-slate-400 sm:px-6">Reading Cloudflare…</p>
-                <div v-else-if="!list.length && !listError" class="px-5 py-10 text-center sm:px-6">
+                <p v-if="(loading || summaryLoading) && !list.length" class="px-5 py-8 text-center text-sm text-slate-400 sm:px-6">Reading Cloudflare…</p>
+                <div v-else-if="!list.length && !listError && !summary[zoneId]?.error" class="px-5 py-10 text-center sm:px-6">
                     <p class="text-sm text-slate-600">No redirects on {{ zone.name }} yet.</p>
                     <button type="button" class="mt-2 text-sm font-medium text-brand-600 hover:underline" @click="openNew">
                         Add the first one
