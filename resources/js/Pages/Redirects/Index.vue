@@ -399,6 +399,40 @@ const submit = async () => {
 
 const busy = ref({});
 
+// The ticked domains that redirect as a whole, for "Remove redirects".
+const removable = computed(() => pickedZones.value.filter((z) => apexRedirect(z)));
+
+// Removes each domain's whole-domain redirect, one after another.
+const removeRedirects = async (list) => {
+    const ok = await confirmDanger(
+        list.length === 1 ? `Remove the redirect on ${list[0].name}?` : `Remove the redirects on ${list.length} domains?`,
+        `${list.map((z) => z.name).join(', ')} will stop redirecting. Their DNS records stay.`,
+    );
+    if (!ok) return;
+
+    savingAll.value = true;
+    message.value = '';
+    notes.value = [];
+    let removed = 0;
+    for (const z of list) {
+        const have = apexRedirect(z);
+        if (!have) continue;
+        rows[z.id].error = '';
+        try {
+            const { data } = await window.axios.delete(route('redirects.destroy', { account: z.account, rule: have.id }), {
+                params: { zone_id: z.id, zone_name: z.name },
+            });
+            take(data);
+            rows[z.id].target = '';
+            removed++;
+        } catch (e) {
+            rows[z.id].error = failure(e, 'Cloudflare refused the change.');
+        }
+    }
+    savingAll.value = false;
+    if (removed) message.value = `Removed ${removed} redirect${removed === 1 ? '' : 's'}.`;
+};
+
 const toggle = async (r) => {
     busy.value = { ...busy.value, [r.id]: true };
     try {
@@ -627,6 +661,14 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                         </p>
                         <p v-else-if="apexRedirect(z)" class="mt-1 text-[11px] text-emerald-700">
                             Already redirects to {{ apexRedirect(z).target }} — saving a new address changes it.
+                            <button
+                                type="button"
+                                class="ml-1 text-rose-600 hover:underline"
+                                :disabled="savingAll"
+                                @click="removeRedirects([z])"
+                            >
+                                Remove redirect
+                            </button>
                         </p>
                         <p v-else-if="summary[z.id]?.error" class="mt-1 text-[11px] text-amber-700">
                             Could not read its redirects: {{ summary[z.id].error }}
@@ -667,7 +709,16 @@ const off = 'bg-white ring-slate-200 hover:bg-slate-50';
                     </span>
                 </label>
 
-                <div class="flex justify-end">
+                <div class="flex flex-wrap justify-end gap-2">
+                    <button
+                        v-if="removable.length > 1"
+                        type="button"
+                        :disabled="savingAll"
+                        class="rounded-xl px-4 py-2.5 text-sm font-medium text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-50 disabled:opacity-60"
+                        @click="removeRedirects(removable)"
+                    >
+                        Remove redirects ({{ removable.length }})
+                    </button>
                     <button
                         type="submit"
                         :disabled="savingAll"

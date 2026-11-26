@@ -115,6 +115,24 @@ func SyncForSite(ctx context.Context, st *store.Store, site *store.Site) (string
 		st.SetSiteDNS(site.ID, zoneID, string(encoded))
 	}
 
+	// A redirect left on these names (often from before the site existed)
+	// would answer every visit in Cloudflare and the site would never be seen.
+	if SupportsEdgeRules(account.Provider) {
+		hosts := site.Hostnames()
+		hosts = append(hosts, "www."+strings.TrimPrefix(site.Domain, "www."))
+		lines, removed, err := client.ClearRedirectsFor(zoneID, hosts)
+		for _, line := range lines {
+			fmt.Fprintln(&log, line)
+		}
+		if err != nil {
+			fmt.Fprintf(&log, "redirect: could not check for redirects on this domain: %v\n", err)
+		}
+		if removed {
+			// The Redirects page's copy of this zone (redirectsKey in web/redirects.go).
+			st.ForgetEdgeCache(ctx, "redirects:"+zoneID)
+		}
+	}
+
 	return log.String(), failure
 }
 

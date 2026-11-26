@@ -87,3 +87,20 @@ func TestDashboardRuleIsNotManaged(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+func TestRedirectedHost(t *testing.T) {
+	site := []string{"a.com", "www.a.com"}
+
+	if got := redirectedHost(Redirect{Managed: true, Hosts: []string{"www.a.com"}}, site); got != "www.a.com" {
+		t.Errorf("www redirect not caught: %q", got)
+	}
+	if got := redirectedHost(Redirect{Managed: true, Hosts: []string{"shop.a.com"}}, site); got != "" {
+		t.Errorf("another hostname's redirect caught: %q", got)
+	}
+	if got := redirectedHost(Redirect{Expression: `(http.host eq "a.com" and ip.src ne 1.1.1.1)`}, site); got != "a.com" {
+		t.Errorf("a dashboard rule naming the host was not noticed: %q", got)
+	}
+	if got := redirectedHost(Redirect{Expression: `(http.host eq "ba.com")`}, site); got != "" {
+		t.Errorf("ba.com was taken for a.com: %q", got)
+	}
+}

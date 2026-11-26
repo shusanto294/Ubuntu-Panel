@@ -341,3 +341,52 @@ func (c *Client) EnsureProxied(zoneID, zoneName string, hosts []string, proxy bo
 
 	return done, nil
 }
+
+// ClearRedirectsFor removes the panel-made redirects that send any of these
+// hostnames elsewhere, so a site published on them is not hidden behind a
+// redirect Cloudflare answers first. A rule made in Cloudflare's dashboard is
+// left alone — its expression cannot be read safely — but mentioned. Answers
+// one line per redirect, for the deployment log, and whether any went.
+func (c *Client) ClearRedirectsFor(zoneID string, hosts []string) ([]string, bool, error) {
+	set, err := c.ReadRuleset(zoneID, PhaseRedirect)
+	if err != nil {
+		return nil, false, err
+	}
+
+	lines := []string{}
+	removed := false
+
+	for _, redirect := range ParseRedirects(set) {
+		match := redirectedHost(redirect, hosts)
+		if match == "" {
+			continue
+		}
+
+		if !redirect.Managed {
+			lines = append(lines, "redirect: "+match+" may still be redirected by a rule made in Cloudflare ("+
+				redirect.Description+") — remove it there if the site does not load.")
+			continue
+		}
+
+		next, err := c.RemoveEdgeRule(zoneID, PhaseRedirect, &set, redirect.ID)
+		if err != nil {
+			return lines, removed, fmt.Errorf("could not remove the redirect of %s to %s: %w", match, redirect.Target, err)
+		}
+		set, removed = next, true
+		lines = append(lines, "redirect: removed "+strings.Join(redirect.Hosts, ", ")+" → "+redirect.Target+
+			" so the site answers instead")
+	}
+
+	return lines, removed, nil
+}
+
+// redirectedHost is the first of hosts a redirect catches, or "".
+func redirectedHost(redirect Redirect, hosts []string) string {
+	for _, host := range hosts {
+		if slices.Contains(redirect.Hosts, host) ||
+			(!redirect.Managed && strings.Contains(redirect.Expression, quote(host))) {
+			return host
+		}
+	}
+	return ""
+}
